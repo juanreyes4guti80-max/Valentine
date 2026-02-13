@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title> Que es para ti, hecho pa ti, escrito pa ti, cantado a ti y cualquier otro adjetivo que termine en ti </title>
+
+<style>
+body{
+    height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    font-family:'Comic Sans MS', cursive;
+    margin:0;
+    overflow:hidden;
+
+    background-image:
+        linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.60)),
+        url("fotoconsarah.jpg");
+
+    background-size:cover;
+    background-position:center;
+    background-repeat:no-repeat;
+}
+
+/* CONTENEDOR */
+.contenedor{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:40px;
+}
+
+/* CORAZON */
+.heart{
+    position:relative;
+    width:300px;
+    height:270px;
+    transform: rotate(-45deg);
+    background:#ff4fa3;
+    animation: latido 1.2s infinite;
+    box-shadow:0 0 40px #ff85c2;
+    cursor:pointer;
+    transition:.4s;
+    z-index:1;
+}
+
+.heart:hover{
+    box-shadow:
+        0 0 40px #ff85c2,
+        0 0 80px #ff4fa3,
+        0 0 120px #ffb3d9,
+        0 0 180px #fff;
+}
+
+.heart::before,
+.heart::after{
+    content:"";
+    position:absolute;
+    width:300px;
+    height:270px;
+    background:#ff4fa3;
+    border-radius:50%;
+    z-index:1;
+}
+
+.heart::before{ top:-150px; left:0; }
+.heart::after{ left:150px; top:0; }
+
+/* TEXTO */
+.texto{
+    position:absolute;
+    top:52%;
+    left:52%;
+    transform: translate(-50%, -50%) rotate(45deg);
+    text-align:center;
+    width:240px;
+    color:white;
+    font-size:25px;
+    font-weight:bold;
+    text-shadow:0 0 12px white,0 0 22px #ffd6ec;
+    line-height:1.25;
+    pointer-events:none;
+    z-index:10;
+    animation: latidoTexto 1.2s infinite;
+}
+
+/* BOTONES */
+.botones{
+    display:flex;
+    gap:80px;
+    margin-top:80px;
+}
+
+button{
+    font-size:26px;
+    padding:14px 40px;
+    border:none;
+    border-radius:20px;
+    cursor:pointer;
+    transition:.25s;
+}
+
+.si{
+    background:#ff4fa3;
+    color:white;
+    box-shadow:0 0 20px #ff85c2;
+}
+
+.no{
+    background:#eee;
+}
+
+button:hover{ transform:scale(1.3); }
+
+/* MENSAJE FINAL */
+#mensajeFinal{
+    position:fixed;
+    top:50%;
+    left:50%;
+    transform:translate(-50%,-50%);
+    font-size:90px;
+    color:white;
+    text-shadow:0 0 25px black;
+    pointer-events:none;
+}
+
+/* ANIMACIONES */
+@keyframes latido{
+    0%{ transform:rotate(-45deg) scale(1); }
+    50%{ transform:rotate(-45deg) scale(1.12); }
+    100%{ transform:rotate(-45deg) scale(1); }
+}
+
+@keyframes latidoTexto{
+    0%{ transform:translate(-50%, -50%) rotate(45deg) scale(1); }
+    50%{ transform:translate(-50%, -50%) rotate(45deg) scale(1.12); }
+    100%{ transform:translate(-50%, -50%) rotate(45deg) scale(1); }
+}
+</style>
+</head>
+
+<body>
+
+<div class="contenedor">
+
+    <div class="heart" onclick="crearCorazones(30)">
+        <div class="texto">
+            Sarah 💖<br><br>
+            ¿Quieres ser<br>
+            mi San Valentín?<br><br>
+            — Juan
+        </div>
+    </div>
+
+    <div class="botones">
+        <button class="si" onclick="respuestaSi()">Sí</button>
+        <button class="no" onclick="respuestaNo()">No</button>
+    </div>
+
+</div>
+
+<div id="mensajeFinal"></div>
+
+<script>
+
+/* crear corazones */
+function crearCorazones(cantidad){
+    for(let i=0;i<cantidad;i++){
+        lanzarCorazon(window.innerWidth/2, window.innerHeight/2);
+    }
+}
+
+function lanzarCorazon(x,y){
+    let c=document.createElement("div");
+    c.innerHTML="❤";
+    c.style.position="absolute";
+    c.style.fontSize=(20+Math.random()*40)+"px";
+    c.style.color=`hsl(${330+Math.random()*20},100%,70%)`;
+    c.style.left=x+"px";
+    c.style.top=y+"px";
+    document.body.appendChild(c);
+
+    let ang=Math.random()*2*Math.PI;
+    let dist=300+Math.random()*600;
+
+    c.animate([
+        {transform:"translate(0,0) scale(.6)",opacity:1},
+        {transform:`translate(${Math.cos(ang)*dist}px,${Math.sin(ang)*dist}px) scale(2.2)`,opacity:0}
+    ],{duration:1800+Math.random()*900,easing:"ease-out"});
+
+    setTimeout(()=>c.remove(),2600);
+}
+
+/* SI */
+function respuestaSi(){
+    document.querySelector(".botones").style.display="none";
+    document.getElementById("mensajeFinal").innerHTML="💖";
+
+    setInterval(()=>{
+        for(let i=0;i<25;i++){
+            lanzarCorazon(Math.random()*window.innerWidth,Math.random()*window.innerHeight);
+        }
+    },200);
+}
+
+/* NO */
+function respuestaNo(){
+    document.querySelector(".botones").style.display="none";
+    document.querySelector(".heart").style.display="none";
+    document.getElementById("mensajeFinal").innerHTML="💔";
+}
+</script>
+
+</body>
+</html>
+
+
