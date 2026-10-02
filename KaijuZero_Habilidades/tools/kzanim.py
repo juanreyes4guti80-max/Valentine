@@ -467,6 +467,17 @@ class Rig:
                 n_t = orth(self.frame_of(fo) @ self.palm_rest[side], f_t)
             Rh = rot_from_frames(self.palm_local[side], Vector((0, 1, 0)), n_t, f_t)
             Mh = Rh.to_4x4()
+        # límite anatómico de muñeca (no aplica a armas: la hoja manda)
+        lim = S.get("wrist_limit", self.p.get("wrist_limit", 60.0))
+        if "blade" not in S and "_grip_orient" not in S and lim:
+            R3 = Mh.to_3x3().normalized()
+            fh = nrm(R3.col[1])
+            ang = math.degrees(fh.angle(fd))
+            if ang > lim:
+                ax = fh.cross(fd)
+                if ax.length > 1e-6:
+                    Rc = Matrix.Rotation((ang - lim) * D2R, 3, nrm(ax))
+                    Mh = (Rc @ R3).to_4x4()
         Mh.translation = self.posed(ha).translation
         self.set_world_matrix(ha, Mh)
         upd()
