@@ -83,8 +83,8 @@ def A1_FireSlash():
         "spine": (-9, 0, 0),
         "neck": (-2, 0, 0),
         "gaze": (-6, 0, 0),
-        "arm": {"R": {"space": "mid", "hand": (0.03, 0.06, 0.8), "elbow": (1, 0.25, 0.0), "clav": (16, 4),
-                      "blade": (0, -0.12, 1), "edge": (0, -1, 0)},
+        "arm": {"R": {"space": "mid", "hand": (0.03, 0.04, 0.62), "elbow": (1, 0.15, -0.1), "clav": (16, 4),
+                      "blade": (0, -0.15, 1)},
                 "L": {"space": "grip", "rel": "R", "spacing": 0.95, "elbow": (1, 0.25, -0.1), "clav": (14, 4)}},
         "arm_order": ("R", "L"),
         "fingers": {"R": FIST, "L": FIST},
@@ -97,7 +97,7 @@ def A1_FireSlash():
     OVER2 = K.deep_merge(OVER, {
         "root": {"loc": (-0.01, -0.04, -0.06), "rot": (-3, 0, 0)},
         "spine": (-12, 0, 0),
-        "arm": {"R": {"hand": (0.03, 0.0, 0.85), "clav": (20, 2), "blade": (0, -0.22, 1)}},
+        "arm": {"R": {"hand": (0.03, 0.0, 0.67), "clav": (20, 2), "blade": (0, -0.25, 1)}},
         "gaze": (-3, 0, 0),
     })
     k.append((0.98, OVER2))
@@ -106,8 +106,8 @@ def A1_FireSlash():
         "root": {"loc": (0.0, -0.005, -0.06), "rot": (-1, 0, 0)},
         "spine": (-16, 0, 0),
         "gaze": (2, 0, 0),
-        "arm": {"R": {"space": "mid", "hand": (0.02, -0.06, 0.62), "elbow": (0.8, 0.7, 0.3), "clav": (18, -2),
-                      "blade": (0, -0.77, -0.64), "edge": (0, 0.64, -0.77)}},
+        "arm": {"R": {"space": "mid", "hand": (0.02, -0.06, 0.52), "elbow": (0.8, 0.7, 0.3), "clav": (18, -2),
+                      "blade": (0, -0.8, -0.6)}},
         "foot": {"L": {"loc": (0.03, 0.09, 0.05), "rot": (8, 8, 0)}},
         "tail": {"pitch": -6},
     }))
@@ -116,8 +116,8 @@ def A1_FireSlash():
         "root": {"loc": (0.0, 0.09, -0.09), "rot": (8, 0, 0)},
         "spine": (8, 0, 0),
         "gaze": (10, 0, 0),
-        "arm": {"R": {"space": "mid", "hand": (0.02, 0.5, 0.45), "elbow": (0.9, 0.1, -0.4), "clav": (10, 8),
-                      "blade": (0, 0.34, 0.94), "edge": (0, -0.94, 0.34)}},
+        "arm": {"R": {"space": "mid", "hand": (0.02, 0.5, 0.42), "elbow": (0.9, 0.1, -0.4), "clav": (10, 8),
+                      "blade": (0, 0.34, 0.94)}},
         "foot": {"L": {"loc": (0.03, 0.24, 0.02), "rot": (-8, 8, 0)}},
         "tail": {"pitch": 12},
     }))
@@ -127,8 +127,8 @@ def A1_FireSlash():
         "spine": (34, 2, 0),
         "neck": (-6, 0, 0),
         "gaze": (24, 0, 0),
-        "arm": {"R": {"space": "mid", "hand": (0.02, 0.92, -0.25), "elbow": (1, -0.3, -0.4), "clav": (-4, 14),
-                      "blade": (0, 0.86, -0.51), "edge": (-0.5, -0.35, -0.8)}},
+        "arm": {"R": {"space": "mid", "hand": (0.02, 0.8, -0.55), "elbow": (1, -0.3, -0.4), "clav": (-4, 14),
+                      "blade": (0, 0.95, -0.3)}},
         "foot": {"L": {"loc": (0.04, 0.27, 0), "rot": (0, 8, 0)},
                  "R": {"loc": (0.03, -0.05, 0), "rot": (14, 10, 0)}},
         "tail": {"pitch": 30, "curl": -10},
@@ -138,13 +138,13 @@ def A1_FireSlash():
     k.append((1.37, K.deep_merge(IMPACT, {
         "root": {"loc": (0.0, 0.155, -0.185), "rot": (17, 2, 0)},
         "spine": (37, 2, 0),
-        "arm": {"R": {"hand": (0.02, 0.92, -0.2)}},
+        "arm": {"R": {"hand": (0.02, 0.8, -0.52)}},
         "tail": {"pitch": 36, "curl": -4},
     })))
     k.append((1.78, K.deep_merge(IMPACT, {
         "root": {"loc": (0.0, 0.145, -0.175), "rot": (16, 1, 0)},
         "spine": (35, 1, 0),
-        "arm": {"R": {"hand": (0.02, 0.95, -0.21)}},
+        "arm": {"R": {"hand": (0.02, 0.83, -0.52)}},
         "tail": {"pitch": 28, "curl": 4},
     })))
     # 9) Recuperación: la cabeza sube primero, el peso vuelve atrás, saca la hoja
@@ -153,8 +153,8 @@ def A1_FireSlash():
         "spine": (20, 0, 0),
         "neck": (0, 0, 0),
         "gaze": (6, 0, 0),
-        "arm": {"R": {"space": "mid", "hand": (0.02, 0.72, -0.35), "elbow": (1, -0.4, -0.3), "clav": (0, 8),
-                      "blade": (0, 0.9, -0.3), "edge": (-0.5, -0.2, -0.8)}},
+        "arm": {"R": {"space": "mid", "hand": (0.02, 0.7, -0.45), "elbow": (1, -0.4, -0.3), "clav": (0, 8),
+                      "blade": (0, 0.97, -0.1)}},
         "foot": {"R": {"loc": (0.03, -0.04, 0), "rot": (0, 8, 0)}},
         "tail": {"pitch": 16, "curl": 0},
     }))
@@ -453,9 +453,9 @@ def _a4_charge(level):
         "neck": (0, 6, 0),
         "gaze": (8, 0, 0),
         "arm": {"R": {"space": "root", "hand": (0.46, -0.1 - 0.06 * L, 0.14), "elbow": (0.6, -1, 0.2), "clav": (4, -6),
-                      "hand_space": "char", "palm": (0.1, 0.1, 1), "fingers": (0.4, -0.7, 0.1)},
+                      "hand_space": "char", "palm": (0.1, 0.1, 1)},
                 "L": {"space": "root", "hand": (-0.4, -0.1 - 0.06 * L, 0.36), "elbow": (0.4, -0.2, -1), "clav": (4, 8),
-                      "hand_space": "char", "palm": (0.1, -0.1, -1), "fingers": (-0.4, -0.7, -0.1)}},
+                      "hand_space": "char", "palm": (0.1, -0.1, -1)}},
         "fingers": {s: {"curl": 0.45, "claw": 0.35, "spread": 12, "thumb": 0.3} for s in ("L", "R")},
         "foot": {"L": {"loc": (0.04, 0.05, 0), "rot": (0, 4, 0)},
                  "R": {"loc": (0.07, -0.24, 0), "rot": (0, 32, 0)}},
@@ -469,9 +469,9 @@ BEAM = {
     "neck": (-4, 0, 0),
     "gaze": (12, 0, 0),
     "arm": {"R": {"space": "mid", "hand": (0.0, 0.9, -0.12), "elbow": (1, -0.2, -0.6), "clav": (4, 14),
-                  "hand_space": "char", "palm": (0, 1, 0.1), "fingers": (0.2, 0.25, -1)},
+                  "hand_space": "char", "palm": (0.1, 0.83, 0.55), "fingers": (0.15, 0.55, -0.83)},
             "L": {"space": "mid", "hand": (0.0, 0.9, 0.03), "elbow": (1, -0.2, -0.6), "clav": (4, 14),
-                  "hand_space": "char", "palm": (0, 1, -0.1), "fingers": (0.2, 0.25, 1)}},
+                  "hand_space": "char", "palm": (0.1, 0.83, -0.55), "fingers": (0.15, 0.55, 0.83)}},
     "fingers": {s: {"curl": 0.15, "claw": 0.6, "spread": 26, "thumb": 0.2} for s in ("L", "R")},
     "foot": {"L": {"loc": (0.04, 0.05, 0), "rot": (0, 4, 0)},
              "R": {"loc": (0.07, -0.24, 0), "rot": (10, 32, 0)}},

@@ -9,6 +9,7 @@ from mathutils import Vector, Matrix
 import mock_rig
 import kzanim as K
 import kz_kit
+import kz_retarget
 import preview
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/kz_out"
@@ -19,6 +20,10 @@ os.makedirs(OUT, exist_ok=True)
 
 ob = mock_rig.build_mock()
 rig = K.Rig(ob)
+rig.reset()
+rig.apply(kz_kit.IDLE)
+CAP = K.capture(rig)  # en el rig real: frame 0 de su Idle
+rig.reset()
 
 
 def make_sword(rig, side="R", length=1.05):
@@ -60,7 +65,8 @@ def make_sword(rig, side="R", length=1.05):
 def build(fn):
     spec = fn()
     loop = spec.get("loop", False)
-    act = K.build_action(rig, spec["name"], spec["keys"], fps=kz_kit.FPS, loop=loop)
+    keys = kz_retarget.retarget(spec["keys"], kz_kit.IDLE, CAP, rig)
+    act = K.build_action(rig, spec["name"], keys, fps=kz_kit.FPS, loop=loop)
     f0, f1 = int(act.frame_range[0]), int(act.frame_range[1])
     groups = K.bone_groups(rig)
     for g, lag in (spec.get("lags") or {}).items():

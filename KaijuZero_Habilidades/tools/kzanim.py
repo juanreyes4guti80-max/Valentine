@@ -115,6 +115,9 @@ class Rig:
         self.rest = {b.name: b.matrix_local.copy() for b in self.bones}
         self._calibrate()
         self.prev_q = {}
+        # base de pies/polos (se reemplaza por el idle capturado)
+        self.foot_base = {s: self.rest[self.p["foot_ik"][s]].copy() for s in ("L", "R") if self.p["foot_ik"][s] in self.pb}
+        self.pole_base = {s: self.rest[self.p["pole"][s]].copy() for s in ("L", "R") if self.p["pole"][s] in self.pb}
 
     # ------------------------------------------------------------------ util
     def cv(self, v, side=None, frame=None):
@@ -238,9 +241,13 @@ class Rig:
         if p["hips"] in self.pb:
             self.set_local_rot_from_world(p["hips"], self.R(*P.get("hips", (0, 0, 0))))
         # 3) columna (rotación total repartida)
-        sp = P.get("spine", (0, 0, 0))
-        for bn, w in zip(p["spine"], p["spine_w"]):
-            self.set_local_rot_from_world(bn, self.R(sp[0] * w, sp[1] * w, sp[2] * w))
+        if "spine_per" in P:
+            for bn, v in zip(p["spine"], P["spine_per"]):
+                self.set_local_rot_from_world(bn, self.R(*v))
+        else:
+            sp = P.get("spine", (0, 0, 0))
+            for bn, w in zip(p["spine"], p["spine_w"]):
+                self.set_local_rot_from_world(bn, self.R(sp[0] * w, sp[1] * w, sp[2] * w))
         if p["neck"] in self.pb:
             self.set_local_rot_from_world(p["neck"], self.R(*P.get("neck", (0, 0, 0))))
         upd()
@@ -276,9 +283,9 @@ class Rig:
         if fk not in self.pb:
             return
         H = self.root_h
-        B = self.rest[fk]
+        B = self.foot_base[side]
         pos = B.translation + self.cv(S.get("loc", (0, 0, 0)), side) * H
-        rot = S.get("rot", (0, 0, 0))  # pitch(punta abajo +), yaw(+ hacia fuera), roll(+ borde externo arriba)
+        rot = S.get("rot", (0, 0, 0))  # pitch(+ punta abajo), yaw(+ punta hacia fuera), roll(+ borde externo arriba)
         sgn = 1 if side == "L" else -1
         Rw = self.R(rot[0], rot[1] * sgn, rot[2] * sgn)
         M = (Rw @ B.to_3x3().normalized()).to_4x4()
@@ -286,14 +293,13 @@ class Rig:
         self.set_world_matrix(fk, M)
         upd()
         pl = self.p["pole"][side]
-        if pl in self.pb:
-            Bp = self.rest[pl]
+        if pl in self.pb and side in self.pole_base:
+            Bp = self.pole_base[side]
             rel = Bp.translation - B.translation
             knee = S.get("knee", 0.0)  # + rodilla hacia fuera (grados)
-            Rk = Matrix.Rotation(rot[1] * sgn * D2R, 3, self.UP) @ Matrix.Rotation(-knee * sgn * D2R, 3, self.UP)
-            ppos = pos + Rk @ rel
+            Rk = Matrix.Rotation((rot[1] - knee) * sgn * D2R, 3, self.UP)
             Mp = Bp.copy()
-            Mp.translation = ppos
+            Mp.translation = pos + Rk @ rel
             self.set_world_matrix(pl, Mp)
 
     # cola ------------------------------------------------------------------
@@ -324,7 +330,10 @@ class Rig:
         p = self.p
         cl = p["clav"][side]
         up, fo, ha = p["arm"][side]
-        if cl in self.pb:
+        if cl in self.pb and "clav_q" in S and "clav" not in S:
+            self._set_q(cl, Quaternion(S["clav_q"]))
+            upd()
+        elif cl in self.pb:
             sh = S.get("clav", (0, 0))  # (elevar, adelantar) en grados
             out = nrm(self.head_rest(up) - self.head_rest(cl))
             Rw = Matrix.Identity(3)
@@ -359,8 +368,13 @@ class Rig:
             other = S["rel"]
             gR, ax_b, nO, fO, wrist_off = self.grip_frame(other)
             gL = gR - ax_b * S.get("spacing", 0.9) * self.hand_len(other)
-            n_t, f_t = nO, -fO
-            T = gL - f_t * wrist_off[0] - n_t * wrist_off[1]
+            best = None
+            for n_t, f_t in ((nO, -fO), (-nO, fO)):
+                Tc = gL - f_t * wrist_off[0] - n_t * wrist_off[1]
+                score = f_t.dot(nrm(Tc - Sh))
+                if best is None or score > best[0]:
+                    best = (score, n_t, f_t, Tc)
+            _, n_t, f_t, T = best
             S = dict(S)
             S["_grip_orient"] = (n_t, f_t)
         elif space == "hand":  # relativo a la otra mano (ya resuelta)
@@ -412,19 +426,25 @@ class Rig:
         palm = S.get("palm")
         fing = S.get("fingers")
         if "blade" in S:
-            # orientar la mano para que la hoja apunte a `blade` (espacio personaje por defecto)
+            # mano orientada para que la hoja apunte a `blade`. Si no se da `edge`,
+            # se elige la palma que deja la muñeca lo más recta posible
+            # (dedos continuando el antebrazo).
             bs = S.get("blade_space", "char")
             bfr = Matrix.Identity(3) if bs == "char" else chest
             a_t = nrm(self.cv(S["blade"], side, bfr))
-            hint = S.get("edge", (0, 0, 1))  # hacia dónde mira la palma (aprox.)
-            n_t = orth(self.cv(hint, side, bfr), a_t)
             tilt = self.p.get("grip_tilt", 20.0) * D2R
-            if side == "R":
-                t_t = Matrix.Rotation(-tilt, 3, n_t) @ a_t
-                f_t = nrm(n_t.cross(t_t))
+            if "edge" in S:
+                n_t = orth(self.cv(S["edge"], side, bfr), a_t)
             else:
-                t_t = Matrix.Rotation(tilt, 3, n_t) @ a_t
-                f_t = nrm(t_t.cross(n_t))
+                f_id = orth(fd, a_t)
+                n_t = nrm(a_t.cross(f_id)) if side == "R" else nrm(f_id.cross(a_t))
+                other = "L" if side == "R" else "R"
+                OS = P.get("arm", {}).get(other, {})
+                if OS.get("space") == "grip" and OS.get("rel") == side:
+                    n_t = self._best_twist(side, other, OS, a_t, n_t, fd, chest, W)
+                if "twist" in S:
+                    n_t = Matrix.Rotation(S["twist"] * D2R, 3, a_t) @ n_t
+            t_t, f_t = self._blade_frame(side, a_t, n_t)
             Rh = rot_from_frames(self.palm_local[side], Vector((0, 1, 0)), n_t, f_t)
             Mh = Rh.to_4x4()
         elif "_grip_orient" in S:
@@ -450,6 +470,55 @@ class Rig:
         Mh.translation = self.posed(ha).translation
         self.set_world_matrix(ha, Mh)
         upd()
+
+    def _ik(self, side, Sh, T, pole_dir):
+        a, b = self.seg[side]
+        d_vec = T - Sh
+        d = max(min(d_vec.length, (a + b) * 0.999), abs(a - b) * 1.001 + 1e-6)
+        u = nrm(d_vec)
+        v = orth(pole_dir, u)
+        cos_a = max(-1.0, min(1.0, (a * a + d * d - b * b) / (2 * a * d)))
+        sin_a = math.sqrt(1 - cos_a * cos_a)
+        E = Sh + (u * cos_a + v * sin_a) * a
+        W = Sh + u * d
+        return E, W, nrm(E - Sh), nrm(W - E)
+
+    def _blade_frame(self, side, a_t, n_t):
+        tilt = self.p.get("grip_tilt", 20.0) * D2R
+        if side == "R":
+            t_t = Matrix.Rotation(-tilt, 3, n_t) @ a_t
+            f_t = nrm(n_t.cross(t_t))
+        else:
+            t_t = Matrix.Rotation(tilt, 3, n_t) @ a_t
+            f_t = nrm(t_t.cross(n_t))
+        return t_t, f_t
+
+    def _best_twist(self, side, other, OS, a_t, n0, fd, chest, W):
+        """Gira la mano principal alrededor de la hoja para que AMBAS muñecas
+        queden lo más rectas posible (agarre a dos manos)."""
+        p = self.p
+        Sh_o = self.posed(p["arm"][other][0]).translation
+        hl = self.hand_len(side)
+        wrist_off = (0.42 * hl, 0.18 * hl)
+        pole_o = self.cv(OS.get("elbow", (0.3, -0.2, -1.0)), other, chest)
+        best = None
+        for k in range(-18, 18):
+            phi = k * 10 * D2R
+            n_t = Matrix.Rotation(phi, 3, a_t) @ n0
+            t_t, f_t = self._blade_frame(side, a_t, n_t)
+            wr = math.degrees(fd.angle(f_t))
+            g = W + f_t * wrist_off[0] + n_t * wrist_off[1]
+            ax = nrm(t_t * math.cos(p.get("grip_tilt", 20.0) * D2R) + f_t * math.sin(p.get("grip_tilt", 20.0) * D2R))
+            gL = g - ax * OS.get("spacing", 0.9) * self.hand_len(other)
+            wl = 999
+            for nn, ff in ((n_t, -f_t), (-n_t, f_t)):
+                Tc = gL - ff * wrist_off[0] - nn * wrist_off[1]
+                _, _, _, fdo = self._ik(other, Sh_o, Tc, pole_o)
+                wl = min(wl, math.degrees(fdo.angle(ff)))
+            cost = max(wr, wl) + 0.1 * (wr + wl)
+            if best is None or cost < best[0]:
+                best = (cost, n_t)
+        return best[1]
 
     def hand_len(self, side):
         ha = self.p["arm"][side][2]
@@ -494,6 +563,12 @@ class Rig:
         if not F:
             F = {}
         chains = self.p["fingers"][side]
+        SEM = ("curl", "claw", "spread", "thumb", "per")
+        if "raw" in F and not any(k in F for k in SEM):
+            for bn, q in F["raw"].items():
+                if bn in self.pb:
+                    self._set_q(bn, Quaternion(q))
+            return
         curl = F.get("curl", 0.1)       # 0 abierta .. 1 puño
         claw = F.get("claw", 0.0)       # garra: base extendida, puntas flexionadas
         spread = F.get("spread", 0.0)   # grados de abanico
@@ -606,7 +681,7 @@ def build_action(rig, name, keys, fps=60, loop=False, lags=None, ease=None):
     pose = {}
     frames = []
     for t, P, *opt in keys:
-        pose = deep_merge(pose, P)
+        pose = merge_pose(pose, P)
         f = round(t * fps)
         rig.apply(pose)
         rig.key_all(f)
@@ -742,3 +817,156 @@ def add_markers(act, marks, fps):
     for name, t in marks:
         m = act.pose_markers.new(name)
         m.frame = round(t * fps)
+
+
+# ======================================================================
+# Captura: pose actual del rig -> pose semántica (para reproducir el Idle real)
+# ======================================================================
+
+def _decompose(rig, Rw):
+    """Rotación en ejes del armature -> (pitch, yaw, roll) de Rig.R()."""
+    C = Matrix((rig.LEFT, rig.FWD, rig.UP)).transposed()  # columnas
+    M = C.inverted() @ Rw @ C
+    e = M.to_euler("YXZ")
+    # C es una reflexión (LEFT, FWD, UP es zurdo): invierte el sentido de cada giro
+    return (-e.x / D2R, -e.z / D2R, e.y / D2R)
+
+
+def _local_world_rot(rig, bn):
+    pb = rig.pb[bn]
+    if pb.rotation_mode == "QUATERNION":
+        q = pb.rotation_quaternion.copy()
+    elif pb.rotation_mode == "AXIS_ANGLE":
+        a = pb.rotation_axis_angle
+        q = Quaternion(Vector(a[1:]), a[0])
+    else:
+        q = pb.rotation_euler.to_quaternion()
+    B = rig.rest3(bn)
+    return B @ q.to_matrix() @ B.inverted()
+
+
+def _local_q(rig, bn):
+    pb = rig.pb[bn]
+    if pb.rotation_mode == "QUATERNION":
+        return tuple(pb.rotation_quaternion)
+    if pb.rotation_mode == "AXIS_ANGLE":
+        a = pb.rotation_axis_angle
+        return tuple(Quaternion(Vector(a[1:]), a[0]))
+    return tuple(pb.rotation_euler.to_quaternion())
+
+
+def _side_coords(rig, v, side, frame=None):
+    if frame is not None:
+        v = frame.inverted() @ v
+    lx = rig.LEFT if side in (None, "L") else -rig.LEFT
+    return (v.dot(lx), v.dot(rig.FWD), v.dot(rig.UP))
+
+
+def capture(rig):
+    """Lee la pose evaluada actual y devuelve una pose semántica equivalente.
+    Los pies quedan como base (rig.foot_base) y en la pose valen 0."""
+    p = rig.p
+    upd()
+    P = {}
+    H = rig.root_h
+    rn = p["root"]
+    B = rig.rest3(rn)
+    loc = B @ rig.pb[rn].location
+    P["root"] = {"loc": tuple(x / H for x in _side_coords(rig, loc, None)),
+                 "rot": _decompose(rig, _local_world_rot(rig, rn))}
+    if p["hips"] in rig.pb:
+        P["hips"] = _decompose(rig, _local_world_rot(rig, p["hips"]))
+    P["spine_per"] = [_decompose(rig, _local_world_rot(rig, bn)) for bn in p["spine"]]
+    if p["neck"] in rig.pb:
+        P["neck"] = _decompose(rig, _local_world_rot(rig, p["neck"]))
+    if p["head"] in rig.pb:
+        P["gaze"] = _decompose(rig, rig.frame_of(p["head"]))
+    chest = rig.frame_of(p["spine"][-1]) if p["spine"] else Matrix.Identity(3)
+    P["arm"] = {}
+    P["fingers"] = {}
+    for side in ("L", "R"):
+        up, fo, ha = p["arm"][side]
+        a, b = rig.seg[side]
+        L = a + b
+        Sh = rig.posed(up).translation
+        E = rig.posed(fo).translation
+        W = rig.posed(ha).translation
+        u = nrm(W - Sh)
+        pole = E - (Sh + u * (E - Sh).dot(u))
+        R3 = rig.posed(ha).to_3x3().normalized()
+        n = R3 @ rig.palm_local[side]
+        f = R3.col[1]
+        S = {"space": "chest",
+             "hand": tuple(x / L for x in _side_coords(rig, W - Sh, side, chest)),
+             "elbow": _side_coords(rig, nrm(pole) if pole.length > 1e-6 else -rig.UP, side, chest),
+             "hand_space": "chest",
+             "palm": _side_coords(rig, nrm(n), side, chest),
+             "fingers": _side_coords(rig, nrm(f), side, chest)}
+        cl = p["clav"][side]
+        if cl in rig.pb:
+            S["clav_q"] = _local_q(rig, cl)
+        P["arm"][side] = S
+        raw = {}
+        for chain in p["fingers"][side].values():
+            for bn in chain:
+                raw[bn] = _local_q(rig, bn)
+        P["fingers"][side] = {"raw": raw}
+    rig.foot_base = {}
+    rig.pole_base = {}
+    P["foot"] = {}
+    for side in ("L", "R"):
+        fk = p["foot_ik"][side]
+        if fk in rig.pb:
+            rig.foot_base[side] = rig.posed(fk).copy()
+            P["foot"][side] = {"loc": (0, 0, 0), "rot": (0, 0, 0), "knee": 0.0}
+        pl = p["pole"][side]
+        if pl in rig.pb:
+            rig.pole_base[side] = rig.posed(pl).copy()
+    per = []
+    for bn in p["tail"]:
+        pitch, yaw, roll = _decompose(rig, _local_world_rot(rig, bn))
+        per.append((pitch, -yaw))
+    if per:
+        P["tail"] = {"per": per}
+    return P
+
+
+def merge_pose(pose, P):
+    """Herencia de poses con reglas de precedencia (lo nuevo anula representaciones viejas)."""
+    out = deep_merge(pose, P)
+    if "spine" in P:
+        out.pop("spine_per", None)
+    if "spine_per" in P:
+        out.pop("spine", None)
+    if "gaze" in P:
+        out.pop("head", None)
+    if "head" in P:
+        out.pop("gaze", None)
+    for side, A in P.get("arm", {}).items():
+        S = out["arm"][side]
+        if "clav" in A:
+            S.pop("clav_q", None)
+        if "clav_q" in A:
+            S.pop("clav", None)
+        if "blade" in A or "space" in A and A.get("space") == "grip":
+            S.pop("palm", None); S.pop("fingers", None)
+        if "palm" in A or "fingers" in A:
+            S.pop("blade", None); S.pop("edge", None)
+        if A.get("space") and A.get("space") != "grip":
+            S.pop("rel", None); S.pop("spacing", None)
+        if "hand" in A and "space" not in A and S.get("space") == "grip":
+            S["space"] = "chest"
+    for side, F in P.get("fingers", {}).items():
+        if any(k in F for k in ("curl", "claw", "spread", "thumb", "per")):
+            out["fingers"][side].pop("raw", None)
+        elif "raw" in F:
+            for k in ("curl", "claw", "spread", "thumb", "per"):
+                out["fingers"][side].pop(k, None)
+    T = P.get("tail", {})
+    if T:
+        if "per" in T:
+            for k in ("pitch", "yaw", "curl", "swing"):
+                out["tail"].pop(k, None)
+        elif any(k in T for k in ("pitch", "yaw", "curl", "swing")):
+            out["tail"].pop("per", None)
+    return out
