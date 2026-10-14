@@ -21,6 +21,8 @@ V.__index = function(t, k)
 	if k == "Unit" then local m = math.sqrt(t.X ^ 2 + t.Y ^ 2 + t.Z ^ 2); return v3(t.X / m, t.Y / m, t.Z / m) end
 	return rawget(V, k)
 end
+function V.Dot(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end
+function V.Cross(a, b) return v3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X) end
 M.Vector3 = { new = v3, xAxis = v3(1, 0, 0), yAxis = v3(0, 1, 0), zAxis = v3(0, 0, 1), zero = v3(0, 0, 0) }
 M.Vector2 = { new = function(x, y) return { X = x, Y = y } end }
 
@@ -37,6 +39,7 @@ local function mulMM(a, b)
 end
 local function transpose(r) return { r[1], r[4], r[7], r[2], r[5], r[8], r[3], r[6], r[9] } end
 local I = { 1, 0, 0, 0, 1, 0, 0, 0, 1 }
+C.__add = function(a, b) return mat(a.r, a.p + b) end
 C.__mul = function(a, b)
 	if getmetatable(b) == C then return mat(mulMM(a.r, b.r), a.p + mulMV(a.r, b.p)) end
 	return a.p + mulMV(a.r, b)
@@ -46,6 +49,7 @@ C.__index = function(t, k)
 	if k == "Rotation" then return mat(t.r, v3()) end
 	if k == "UpVector" then return mulMV(t.r, v3(0, 1, 0)) end
 	if k == "LookVector" then return mulMV(t.r, v3(0, 0, -1)) end
+	if k == "RightVector" then return mulMV(t.r, v3(1, 0, 0)) end
 	if k == "PointToWorldSpace" then return function(self, v) return self.p + mulMV(self.r, v) end end
 	if k == "PointToObjectSpace" then return function(self, v) return mulMV(transpose(self.r), v - self.p) end end
 	if k == "VectorToWorldSpace" then return function(self, v) return mulMV(self.r, v) end end
@@ -60,6 +64,12 @@ M.CFrame = {
 		return mat(I, v3(x or 0, y or 0, z or 0))
 	end,
 	Angles = function(a, b, c) return mat(mulMM(mulMM(rx(a), ry(b)), rz(c)), v3()) end,
+	lookAt = function(at, target)
+		local f = (target - at).Unit                  -- LookVector = -Z
+		local r = f:Cross(v3(0, 1, 0)).Unit           -- RightVector = X
+		local u = r:Cross(f)                          -- UpVector = Y
+		return mat({ r.X, u.X, -f.X, r.Y, u.Y, -f.Y, r.Z, u.Z, -f.Z }, at)
+	end,
 	fromAxisAngle = function(ax, ang)
 		local u = ax.Unit; local c, s = math.cos(ang), math.sin(ang); local t = 1 - c
 		return mat({ t * u.X * u.X + c, t * u.X * u.Y - s * u.Z, t * u.X * u.Z + s * u.Y,
@@ -117,7 +127,7 @@ M.task = {
 
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
-	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0 }
+	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0 }
 local live = {}
 local function isDestroyed(o)
 	while o do
@@ -140,7 +150,9 @@ function Inst.new(class)
 				M.stats.emits += 1; M.stats.emitted += n
 				-- dónde se emitió (el contenedor de prueba está en el origen y sin rotar)
 				local c = props.Parent
-				local pos = c.ClassName == "Attachment" and c.Position or (c.CFrame and c.CFrame.p)
+				local pos = c.ClassName == "Attachment" and (c.WorldPosition or c.Position) or (c.CFrame and c.CFrame.p)
+				M.stats.emitPos = M.stats.emitPos or {}
+				if pos then table.insert(M.stats.emitPos, pos) end
 				if pos then
 					M.stats.emitMinZ = math.min(M.stats.emitMinZ, pos.Z)
 					M.stats.emitMaxZ = math.max(M.stats.emitMaxZ, pos.Z)
@@ -148,6 +160,14 @@ function Inst.new(class)
 			end end
 			if k == "Destroy" then return function() rawset(self, "__destroyed", true); props.Parent = nil; M.stats.destroyed += 1 end end
 			if k == "IsA" then return function(_, c) return c == class or (c == "BasePart" and class == "Part") end end
+			if k == "Raycast" then return function(_, origin, dirv, params)
+				M.stats.raycasts += 1
+				-- suelo plano en y = 0 (si el rayo lo cruza)
+				if origin.Y >= 0 and origin.Y + dirv.Y <= 0 then
+					return { Position = v3(origin.X, 0, origin.Z) }
+				end
+				return nil
+			end end
 			if k == "Position" and class == "Part" then return props.CFrame and props.CFrame.p end
 			if k == "Parent" then
 				if rawget(self, "__destroyed") then return nil end
@@ -169,6 +189,12 @@ function Inst.new(class)
 	return o
 end
 M.Instance = Inst
+M.RaycastParams = { new = function() return {} end }
+M.typeof = function(v)
+	if getmetatable(v) == V then return "Vector3" end
+	if type(v) == "table" and rawget(v, "__props") then return "Instance" end
+	return typeof(v)
+end
 M.workspace = Inst.new("Workspace")
 M.workspace.CurrentCamera = { CFrame = M.CFrame.new(0, 10, 30) }
 
@@ -222,6 +248,7 @@ end
 function M.reset()
 	now = 0; delays = {}; waiting = {}; heart = {}; renders = {}; live = {}
 	for k in M.stats do M.stats[k] = 0 end
+	M.stats.emitPos = {}
 end
 function M.liveCount()
 	local n = 0

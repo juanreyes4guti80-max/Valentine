@@ -1,14 +1,17 @@
-"""PAREDES DE LLAMAS con detonación (H1 y H3), en versión normal e IGNITION.
+"""H3 — LAS ROCAS DEL RAYO DETONAN EN UNA PARED DE LLAMAS (normal e IGNITION).
 
-Filosofía: detonación seca (destello, onda de choque, polvo, rocas en llamas) y, a lo largo de una
-línea recta, muchos picos de fuego de alturas variadas que brotan del suelo, se sostienen y se
-hunden de vuelta. Cada pico va en capas (exterior rojo-naranja que da las puntas, cuerpo naranja,
-núcleo amarillo-blanco), así el color nunca se quema a blanco. Humo oscuro arriba, suelo
-brillando y quemado abajo. Ignition = carmesí (núcleo blanco-rosado), más grande en H1 y deja
-marcas de fuego.
+Filosofía: todas las rocas detonan A LA VEZ (destello, onda de choque, polvo, esquirlas en llamas)
+y cada una levanta su racimo de picos de fuego; juntos forman una pared de llamas en línea recta.
+Cada pico va en capas (exterior rojo-naranja que da las puntas, cuerpo naranja, núcleo
+amarillo-blanco) para que el color nunca se queme a blanco. Brota del suelo de golpe, se sostiene
+firme (sin rebotar) y se hunde al apagarse. En la última roca, el remate: un pilar gigante.
+Ignition = carmesí con núcleo blanco-rosado y deja marcas de fuego en cada roca.
 
-Todo se posiciona sobre la línea con emisiones (t, n, u, lado, alto): u = fracción del largo
-(hacia adelante), lado y alto en studs. Un emisor por tipo de capa y altura de pico.
+Las posiciones son RELATIVAS A CADA ROCA, porque en el juego las rocas las pone el rayo:
+  "rock_emit":  variantes [[(t, n, du, lado, alto), ...], ...]; la roca i usa la variante i % n
+  "final_emit": [(t, n, du, lado, alto), ...] solo en la última roca (el final del rayo)
+du = desplazamiento a lo largo de la línea en unidades de la separación entre rocas; lado y alto en
+studs. Las capas de emisión continua usan "rock_stream"/"final_stream" con (retraso, du, lado, alto).
 """
 import math
 import random
@@ -72,13 +75,36 @@ def _r(v, k):
     return round(v * k, 3)
 
 
+class RockPlaces:
+    """Dónde emite una capa, relativo a las rocas: variantes que se reparten entre las rocas
+    (la roca i usa la variante i % n) y lugares extra en la última roca (el remate)."""
+
+    def __init__(self, variants=None, final=None):
+        self.variants = variants or []   # [[(t, du, lado), ...], ...]
+        self.final = final or []         # [(t, du, lado), ...]
+
+    def E(self, dts, n, y):
+        out = {}
+        if self.variants:
+            out["rock_emit"] = [[(round(t + dt, 3), n, round(du, 4), round(sd, 2), round(y, 2))
+                                 for (t, du, sd) in var for dt in dts] for var in self.variants]
+        if self.final:
+            out["final_emit"] = [(round(t + dt, 3), n, round(du, 4), round(sd, 2), round(y, 2))
+                                 for (t, du, sd) in self.final for dt in dts]
+        return out
+
+
+EACH = RockPlaces(variants=[[(0.0, 0.0, 0.0)]])     # en cada roca
+LAST = RockPlaces(final=[(0.0, 0.0, 0.0)])          # solo en la última roca
+
+
 # ----------------------------------------------------------------------------- detonación
-def detonation_layers(tag, pal, H0, places, n_rocks=8, big=True, burn=1.2):
-    """Detonación: destello, anillos, polvo, domo de fuego, chispas y rocas.
-    places = [(t, u), ...] sobre la línea; un solo emisor por capa aunque haya varios lugares."""
+def detonation_layers(tag, pal, H0, P, n_rocks=8, big=True, burn=1.2):
+    """Detonación: destello, anillos, polvo, domo de fuego, chispas y esquirlas en llamas.
+    P = RockPlaces (en qué rocas y dónde); un solo emisor por capa aunque haya varias rocas."""
 
     def E(dt, n, y):
-        return {"emit": [(round(p[0] + dt, 3), n, p[1], 0.0, round(y, 2)) for p in places]}
+        return P.E((dt,), n, y)
     L = []
     L.append(dict(name=f"{tag}_FlashBurst", texture="fx_burst_a", lifetime=(0.1, 0.13),
                   size=[(0, _r(0.25, H0)), (0.3, _r(0.95, H0)), (1, _r(1.05, H0))],
@@ -173,106 +199,57 @@ def detonation_layers(tag, pal, H0, places, n_rocks=8, big=True, burn=1.2):
     return L
 
 
-def burn_marks(tag, pal, spots, t0, t_end, k=1.0):
-    """Marcas de fuego que quedan ardiendo (Ignition). spots: (u, lado, tamaño[, retraso]) sobre la línea;
-    cada marca se enciende en t0 + retraso y se apaga en t_end + retraso."""
-    L = []
-    t00, t_end0 = t0, t_end
-    for i, spot in enumerate(spots):
-        a, b, s = spot[:3]
-        dt = spot[3] if len(spot) > 3 else 0.0
-        t0, t_end = round(t00 + dt, 3), round(t_end0 + dt, 3)
-        sc = s * k
-        pos = {"line_u": a, "offset": (b, 0.6, 0)}
-        pos_hi = {"line_u": a, "offset": (b, 3, 0)}
-        glow_e = {"emit": [(t0, 1, a, b, 0.3)]}
-        box = {"type": "Box", "size": (_r(6, sc), 0.2, _r(6, sc))}
-        L += [
-            dict(name=f"{tag}_BurnGlow{i}", decal=True, texture="fx_glow", orientation="VelocityPerpendicular",
-                 direction="Top", speed=(0.01, 0.01), lifetime=(t_end - t0 + 0.3, t_end - t0 + 0.3),
-                 size=[(0, 0), (0.04, _r(13, sc)), (0.75, _r(10, sc)), (1, 0)],
-                 transparency=[(0, 0.35), (0.8, 0.55), (1, 1)], color=pal["glow"], light_emission=0.8,
-                 **glow_e),
-            dict(name=f"{tag}_BurnFlames{i}", texture="fx_fire_2x2", flipbook=STATIC2x2,
-                 orientation="VelocityParallel", shape=box, direction="Top", spread=(8, 8),
-                 speed=(_r(7, sc), _r(13, sc)), drag=2, lifetime=(0.4, 0.62),
-                 size=[(0, _r(4, sc), sc), (0.3, _r(11, sc), _r(3, sc)), (1, _r(7, sc), _r(2, sc))],
-                 transparency=[(0, 0.05), (0.6, 0.15), (1, 1)], color=pal["lick"], light_emission=0.35,
-                 brightness=1.6, stream=[(t0, t0 + 0.55 * (t_end - t0), 14, 5), (t0 + 0.55 * (t_end - t0), t_end, 5, 0)],
-                 **pos),
-            dict(name=f"{tag}_BurnBase{i}", texture="kk_fire_01", shape=box, direction="Top", spread=(20, 20),
-                 speed=(2, 5), drag=2, lifetime=(0.35, 0.55),
-                 size=[(0, _r(3, sc), sc), (0.4, _r(6, sc), _r(1.5, sc)), (1, _r(4, sc), sc)],
-                 transparency=[(0, 0.1), (0.6, 0.3), (1, 1)], color=pal["fire"], light_emission=0.45,
-                 brightness=1.5, rotation=(0, 360), rot_speed=(-60, 60), stream=[(t0, t_end, 9, 0)], **pos),
-            dict(name=f"{tag}_BurnSmoke{i}", texture="kk_smoke_04", direction="Top", spread=(15, 15),
-                 speed=(6, 12), drag=1.2, accel=(0, 6, 0), lifetime=(1.2, 1.7),
-                 size=[(0, _r(3, sc), sc), (1, _r(13, sc), _r(3, sc))], transparency=[(0, 0.6), (0.3, 0.45), (1, 1)],
-                 color=pal["wisp"], rotation=(0, 360), rot_speed=(-30, 30), zoffset=-2,
-                 stream=[(t0 + 0.15, t_end + 0.1, 3, 1)], **pos_hi),
-        ]
-    return L
 
-
-# ----------------------------------------------------------------------------- PARED DE LLAMAS
+# ----------------------------------------------------------------------------- picos de fuego
 # Geometría de las texturas de llama (fracción del tamaño del sprite, medida en el alfa):
 # base de la llama bajo el centro / punta sobre el centro.
 TEX_GEOM = {"kk_muzzle_04": (0.40, 0.31), "kk_muzzle_01": (0.418, 0.283), "kk_muzzle_05": (0.40, 0.133)}
 
 
-def rising_flame(tex, Hv, life=0.67):
-    """Llama que brota del suelo, se sostiene y se HUNDE de vuelta al morir (la base nunca flota).
-    Hv = altura visible de la punta en el máximo. Devuelve tamaño, altura de emisión y física."""
+def steady_flame(tex, Hv, life):
+    """Llama que brota de golpe (≈3 cuadros), se SOSTIENE sin rebotar y se hunde mientras se apaga.
+    Sin velocidad inicial ni arrastre: solo una aceleración suave hacia abajo que casi no se nota
+    al principio (t²) y hunde la llama al final, así su base nunca flota.
+    Hv = altura visible de la punta; life = (min, max) de vida."""
     bf, tf = TEX_GEOM[tex]
     S = Hv / (bf + tf)
-    c = bf * S                      # centro con la base justo en el suelo
-    k = 20 * math.log(2)            # Drag 20
-    rate = 0.8 * c * 0.67 / life    # hundimiento final
-    rise = 0.53 * c
-    return {
-        "size": [(0, _r(0.55, S)), (0.1, _r(1.0, S)), (0.25, _r(1.04, S)), (0.6, _r(0.97, S)), (1, _r(0.66, S))],
-        "y": 0.64 * c,
-        "speed": (_r(rise * k - rate, 1), _r(rise * k - rate, 1)),
-        "drag": 20, "accel": (0, -_r(rate * k, 1), 0),
-    }
+    c = bf * S                                  # centro con la base justo en el suelo
+    lm = (life[0] + life[1]) / 2
+    return {"size": [(0, _r(0.62, S)), (0.08, _r(1.0, S)), (0.55, _r(1.03, S)), (1, _r(0.62, S))],
+            "y": c, "accel": (0, -_r(0.9 * c / lm ** 2, 1), 0)}
 
 
-def spike_layers(tag, pal, H, places, pulses=(0.0, 0.3), lick_pulses=(0.0, 0.12, 0.24, 0.36, 0.48)):
+def spike_layers(tag, pal, H, P, life=(0.75, 0.85)):
     """Pico de fuego en capas: exterior rojo-naranja alto (da las puntas), cuerpo naranja y núcleo
-    amarillo-blanco abajo. Brota del suelo con un estallido y se hunde al apagarse.
-    places = (t, u, lado) sobre la línea."""
-
-    def em(dts, n, y):
-        return [(round(t + dt, 3), n, round(u, 4), round(sd, 2), round(y, 2)) for (t, u, sd) in places for dt in dts]
-
+    amarillo-blanco abajo. Un solo pulso: brota con un estallido, se sostiene y se hunde."""
+    E = P.E
     L = []
-    o = rising_flame("kk_muzzle_04", H)
+    o = steady_flame("kk_muzzle_04", H, life)
     L.append({"name": f"{tag}_Outer", "texture": "kk_muzzle_04", "orientation": "FacingCameraWorldUp",
-              "emit": em(pulses, 1, o["y"]), "direction": "Top", "speed": o["speed"], "drag": o["drag"],
-              "accel": o["accel"], "lifetime": (0.62, 0.72), "size": o["size"],
-              "transparency": [(0, 0.1), (0.08, 0), (0.55, 0.04), (0.8, 0.35), (1, 1)], "color": pal["sp_outer"],
-              "light_emission": 0.08, "brightness": 1.1, "rotation": (-4, 4)})
-    b = rising_flame("kk_muzzle_01", 0.62 * H)
+              **E((0.0,), 1, o["y"]), "accel": o["accel"], "lifetime": life, "size": o["size"],
+              "transparency": [(0, 0.12), (0.06, 0), (0.6, 0.04), (0.85, 0.4), (1, 1)], "color": pal["sp_outer"],
+              "light_emission": 0.08, "brightness": 1.1, "rotation": (-3, 3)})
+    lb = (round(life[0] - 0.04, 3), round(life[1] - 0.04, 3))
+    b = steady_flame("kk_muzzle_01", 0.62 * H, lb)
     L.append({"name": f"{tag}_Body", "texture": "kk_muzzle_01", "orientation": "FacingCameraWorldUp",
-              "emit": em(tuple(p + 0.02 for p in pulses), 1, b["y"]), "direction": "Top", "speed": b["speed"],
-              "drag": b["drag"], "accel": b["accel"], "lifetime": (0.6, 0.7), "size": b["size"],
-              "transparency": [(0, 0.1), (0.08, 0), (0.55, 0.05), (0.8, 0.4), (1, 1)], "color": pal["sp_body"],
-              "light_emission": 0.2, "brightness": 1.25, "rotation": (-7, 7), "zoffset": 0.5})
-    c = rising_flame("kk_muzzle_01", 0.34 * H)
+              **E((0.015,), 1, b["y"]), "accel": b["accel"], "lifetime": lb, "size": b["size"],
+              "transparency": [(0, 0.12), (0.06, 0), (0.55, 0.05), (0.8, 0.4), (1, 1)], "color": pal["sp_body"],
+              "light_emission": 0.2, "brightness": 1.25, "rotation": (-6, 6), "zoffset": 0.5})
+    lc = (round(life[0] - 0.08, 3), round(life[1] - 0.08, 3))
+    c = steady_flame("kk_muzzle_01", 0.34 * H, lc)
     L.append({"name": f"{tag}_Core", "texture": "kk_muzzle_01", "orientation": "FacingCameraWorldUp",
-              "emit": em(tuple(p + 0.03 for p in pulses), 1, c["y"]), "direction": "Top", "speed": c["speed"],
-              "drag": c["drag"], "accel": c["accel"], "lifetime": (0.55, 0.65), "size": c["size"],
-              "transparency": [(0, 0.15), (0.08, 0.05), (0.5, 0.1), (0.8, 0.5), (1, 1)], "color": pal["sp_core"],
-              "light_emission": 0.45, "brightness": 1.35, "rotation": (-8, 8), "zoffset": 1})
-    # lenguas que trepan por el pico y se sueltan arriba (parpadeo de la silueta)
+              **E((0.02,), 1, c["y"]), "accel": c["accel"], "lifetime": lc, "size": c["size"],
+              "transparency": [(0, 0.15), (0.06, 0.05), (0.5, 0.1), (0.8, 0.5), (1, 1)], "color": pal["sp_core"],
+              "light_emission": 0.45, "brightness": 1.35, "rotation": (-7, 7), "zoffset": 1})
+    # lenguas que trepan por el pico y se sueltan arriba (vida en la silueta, sin mover el pico)
     L.append({"name": f"{tag}_Licks", "texture": "kk_muzzle_05", "orientation": "VelocityParallel",
-              "emit": em(lick_pulses, 2, 0.1 * H), "direction": "Top", "spread": (6, 6),
+              **E((0.04, 0.16, 0.28, 0.4), 2, 0.1 * H), "direction": "Top", "spread": (6, 6),
               "speed": (_r(1.2, H), _r(2.4, H)), "drag": 4, "lifetime": (0.25, 0.4),
               "size": [(0, _r(0.12, H)), (0.3, _r(0.3, H)), (1, _r(0.14, H))],
               "transparency": [(0, 0.1), (0.6, 0.2), (1, 1)], "color": pal["sp_outer"],
               "light_emission": 0.15, "brightness": 1.2, "zoffset": 0.3})
     # fuego denso al pie: une los picos en una banda continua
-    L.append({"name": f"{tag}_Foot", "texture": "kk_fire_01", "emit": em(lick_pulses[:4], 2, 0.06 * H),
+    L.append({"name": f"{tag}_Foot", "texture": "kk_fire_01", **E((0.0, 0.15, 0.3), 2, 0.06 * H),
               "shape": {"type": "Box", "size": (_r(0.2, H), 0.5, _r(0.2, H))},
               "direction": "Top", "spread": (12, 12), "speed": (_r(0.2, H), _r(0.8, H)), "drag": 3,
               "accel": (0, _r(0.3, H), 0), "lifetime": (0.4, 0.6),
@@ -282,18 +259,18 @@ def spike_layers(tag, pal, H, places, pulses=(0.0, 0.3), lick_pulses=(0.0, 0.12,
               "zoffset": 1.5})
     # estallido al nacer + raya incandescente que sube disparada
     L.append({"name": f"{tag}_Pop", "texture": "fx_burst_fan", "orientation": "FacingCameraWorldUp",
-              "emit": em((0.0,), 1, 0.2 * H), "lifetime": (0.18, 0.22),
+              **E((0.0,), 1, 0.2 * H), "lifetime": (0.16, 0.2),
               "size": [(0, _r(0.2, H)), (0.3, _r(0.55, H)), (1, _r(0.62, H))],
-              "transparency": [(0, 0), (0.4, 0.3), (1, 1)], "color": pal["hot"],
-              "light_emission": 0.5, "brightness": 1.3, "zoffset": 2})
+              "transparency": [(0, 0.3), (0.4, 0.5), (1, 1)], "color": pal["hot"],
+              "light_emission": 0.25, "brightness": 1.15, "zoffset": 2})
     L.append({"name": f"{tag}_Streak", "texture": "fx_line", "orientation": "VelocityParallel",
-              "emit": em((0.0,), 1, 0.05 * H), "direction": "Top", "spread": (2, 2),
+              **E((0.0,), 1, 0.05 * H), "direction": "Top", "spread": (2, 2),
               "speed": (_r(4.0, H), _r(5.0, H)), "drag": 8, "lifetime": (0.2, 0.26),
               "size": [(0, _r(0.6, H), _r(0.1, H)), (1, _r(0.8, H), _r(0.1, H))],
               "transparency": [(0, 0), (0.5, 0.25), (1, 1)], "color": pal["core"],
               "light_emission": 1.0, "brightness": 1.5})
     # brasas que se desprenden
-    L.append({"name": f"{tag}_Embers", "texture": "kk_flare_01", "emit": em((0.12, 0.4), 2, 0.5 * H),
+    L.append({"name": f"{tag}_Embers", "texture": "kk_flare_01", **E((0.1, 0.35), 2, 0.5 * H),
               "shape": {"type": "Box", "size": (_r(0.15, H), _r(0.7, H), _r(0.15, H))},
               "direction": "Top", "spread": (40, 40), "speed": (_r(0.1, H), _r(0.5, H)), "drag": 1.6,
               "accel": (0, _r(0.25, H), 0), "lifetime": (0.6, 1.0),
@@ -302,92 +279,52 @@ def spike_layers(tag, pal, H, places, pulses=(0.0, 0.3), lick_pulses=(0.0, 0.12,
     return L
 
 
-def wall_places(n, u0, u1, t_start, sweep, seed, side_jit=1.2):
-    """Picos a lo largo de la línea: alturas MUY variadas (borde dramático) y algunos picos 'estrella'."""
+CLASSES = (1.4, 1.0, 0.74, 0.52)       # alturas de pico relativas a Hb
+
+
+def rock_wall(tag, pal, Hb, seed, n_var=3, per_rock=4, life=(0.75, 0.85), extra_final=None):
+    """Racimos de picos (uno por roca) que juntos forman la pared. El pico más alto va en la roca y
+    los más bajos hacia los lados; todos nacen casi a la vez (≤ 0.02 s de diferencia).
+    Hay n_var variantes del racimo para que la pared no se vea repetida."""
     g = random.Random(seed)
-    ph = g.uniform(0, 6.28)
-    cls = {1.4: [], 1.0: [], 0.74: [], 0.52: []}
-    for i in range(n):
-        f = i / max(1, n - 1)
-        u = u0 + (u1 - u0) * f + g.uniform(-0.3, 0.3) * (u1 - u0) / max(1, n - 1)
-        u = round(min(1.0, max(0.0, u)), 4)
-        t = round(t_start + sweep * f + g.uniform(0, 0.05), 3)
-        side = round(g.uniform(-side_jit, side_jit), 2)
-        h = 0.72 + 0.22 * math.sin(f * math.pi * 3.1 + ph) + g.uniform(-0.2, 0.2)
-        if g.random() < 0.14:
-            c = 1.4
-        else:
-            c = 1.0 if h > 0.86 else (0.74 if h > 0.64 else 0.52)
-        cls[c].append((t, u, side))
-    return cls
-
-
-def flame_wall(tag, pal, Hb, L0, u0, u1, t_start, sweep, n_pillars, seed, pulses=(0.0, 0.3)):
-    """Pared de llamas: muchos picos de alturas variadas que se tocan en la base + humo oscuro
-    que brota de las puntas mientras arde."""
-    L = []
-    g = random.Random(seed + 99)
-    smk = []
-    last = max(pulses)
-    for c, places in wall_places(n_pillars, u0, u1, t_start, sweep, seed).items():
-        if not places:
-            continue
-        H = round(Hb * c, 1)
-        L += spike_layers(f"{tag}S{int(c * 100)}", pal, H, places, pulses=pulses,
-                          lick_pulses=tuple(round(i * 0.12, 2) for i in range(int((last + 0.36) / 0.12) + 1)))
-        for (t, u, sd) in places:
-            for dt in (0.3, 0.55, 0.8) + ((1.05,) if last > 0.4 else ()):
-                smk.append((round(t + dt + g.uniform(0, 0.08), 3), 1, u, round(sd + g.uniform(-1.5, 1.5), 2),
-                            round(H * g.uniform(0.6, 0.95), 2)))
-    smk.sort()
-    L.append({"name": f"{tag}_WallSmoke", "texture": "kk_smoke_08", "emit": smk, "direction": "Top",
-              "spread": (25, 25), "speed": (_r(0.08, Hb), _r(0.35, Hb)), "drag": 1.0,
-              "accel": (0, _r(0.15, Hb), 0), "lifetime": (1.3, 1.9),
-              "size": [(0, _r(0.16, Hb), _r(0.04, Hb)), (0.35, _r(0.4, Hb), _r(0.08, Hb)), (1, _r(0.6, Hb), _r(0.1, Hb))],
-              "transparency": [(0, 0.8), (0.12, 0.45), (0.5, 0.6), (0.8, 0.85), (1, 1)], "color": pal["wsmoke"],
-              "rotation": (0, 360), "rot_speed": (-20, 20), "zoffset": _r(-0.3, Hb)})
-    return L
-
-
-def rock_wall(tag, pal, Hb, L0, rocks, seed, per_rock=4, pulses=(0.0, 0.3), extra=None):
-    """Pared de llamas que nace de rocas que detonan en cadena: cada roca levanta su racimo de
-    picos (el más alto en la roca, más bajos hacia los lados) y el racimo se abre en ~0.1 s.
-    rocks = [(t_detonación, u), ...]"""
-    g = random.Random(seed)
-    cls = {1.4: [], 1.0: [], 0.74: [], 0.52: []}
-    gap = 1.0 / max(1, len(rocks) - 1) if len(rocks) > 1 else 0.2
-    for (tr, ur) in rocks:
+    places = {c: RockPlaces(variants=[[] for _ in range(n_var)], final=[]) for c in CLASSES}
+    smk = [[] for _ in range(n_var)]
+    smk_final = []
+    puffs = (0.22, 0.42, 0.62)
+    for v in range(n_var):
         for j in range(per_rock):
-            # reparte los picos en [-gap/2, gap/2] alrededor de la roca
             f = (j + 0.5) / per_rock - 0.5
-            du = f * gap * 1.05 + g.uniform(-0.12, 0.12) * gap / per_rock
-            u = round(min(1.0, max(0.0, ur + du)), 4)
-            d = abs(du) / (gap / 2)
-            t = round(tr + 0.12 * d + g.uniform(0, 0.03), 3)
+            du = f * 1.05 + g.uniform(-0.12, 0.12) / per_rock
+            d = abs(du) / 0.5
             if d < 0.3:
                 c = 1.4 if g.random() < 0.45 else 1.0
             elif d < 0.65:
                 c = 1.0 if g.random() < 0.4 else 0.74
             else:
                 c = 0.74 if g.random() < 0.35 else 0.52
-            cls[c].append((t, u, round(g.uniform(-1.2, 1.2), 2)))
-    for c, places in (extra or {}).items():     # picos del remate que comparten emisor con la pared
-        cls[c] += places
+            t = round(g.uniform(0, 0.02), 3)
+            sd = round(g.uniform(-1.2, 1.2), 2)
+            places[c].variants[v].append((t, du, sd))
+            for dt in puffs:
+                smk[v].append((round(t + dt + g.uniform(0, 0.06), 3), 1, round(du, 4),
+                               round(sd + g.uniform(-1.5, 1.5), 2), round(Hb * c * g.uniform(0.6, 0.95), 2)))
+    for c, lst in (extra_final or {}).items():
+        places[c].final += lst
+        for (t, du, sd) in lst:
+            for dt in puffs:
+                smk_final.append((round(t + dt + g.uniform(0, 0.06), 3), 1, round(du, 4),
+                                  round(sd + g.uniform(-1.5, 1.5), 2), round(Hb * c * g.uniform(0.6, 0.95), 2)))
     L = []
-    smk = []
-    last = max(pulses)
-    for c, places in cls.items():
-        if not places:
-            continue
-        H = round(Hb * c, 1)
-        L += spike_layers(f"{tag}S{int(c * 100)}", pal, H, places, pulses=pulses,
-                          lick_pulses=tuple(round(i * 0.12, 2) for i in range(int((last + 0.36) / 0.12) + 1)))
-        for (t, u, sd) in places:
-            for dt in (0.3, 0.55, 0.8) + ((1.05,) if last > 0.4 else ()):
-                smk.append((round(t + dt + g.uniform(0, 0.08), 3), 1, u, round(sd + g.uniform(-1.5, 1.5), 2),
-                            round(H * g.uniform(0.6, 0.95), 2)))
-    smk.sort()
-    L.append({"name": f"{tag}_WallSmoke", "texture": "kk_smoke_08", "emit": smk, "direction": "Top",
+    for c in CLASSES:
+        P = places[c]
+        if any(P.variants) or P.final:
+            if not any(P.variants):
+                P = RockPlaces(final=P.final)
+            L += spike_layers(f"{tag}S{int(c * 100)}", pal, round(Hb * c, 1), P, life)
+    smoke = {"rock_emit": [sorted(v) for v in smk]}
+    if smk_final:
+        smoke["final_emit"] = sorted(smk_final)
+    L.append({"name": f"{tag}_WallSmoke", "texture": "kk_smoke_08", **smoke, "direction": "Top",
               "spread": (25, 25), "speed": (_r(0.08, Hb), _r(0.35, Hb)), "drag": 1.0,
               "accel": (0, _r(0.15, Hb), 0), "lifetime": (1.3, 1.9),
               "size": [(0, _r(0.16, Hb), _r(0.04, Hb)), (0.35, _r(0.4, Hb), _r(0.08, Hb)), (1, _r(0.6, Hb), _r(0.1, Hb))],
@@ -396,21 +333,28 @@ def rock_wall(tag, pal, Hb, L0, rocks, seed, per_rock=4, pulses=(0.0, 0.3), extr
     return L
 
 
-def final_pillar(tag, pal, Hp, t, u, pulses=(0.0, 0.3, 0.6)):
-    """Remate: un pilar gigante (pico muy alto) que revienta arriba en fuego y humo.
-    Los picos que lo rodean van en la pared (ver final_side_spikes)."""
-    L = spike_layers(f"{tag}P", pal, Hp, [(t, u, -1.0), (round(t + 0.03, 3), u, 1.0)], pulses=pulses,
-                     lick_pulses=tuple(round(i * 0.12, 2) for i in range(int((max(pulses) + 0.36) / 0.12) + 1)))
-    E = lambda dt, n, y: [(round(t + dt, 3), n, u, 0.0, round(y, 2))]
-    L.append({"name": f"{tag}_Cap", "texture": "kk_fire_02", "emit": E(0.14, 6, 0.85 * Hp) + E(0.42, 4, 0.82 * Hp),
+def final_side_spikes():
+    """Picos que rodean al pilar del remate (se abren a lo ancho de la línea); van en la pared."""
+    return {1.4: [(0.02, 0.0, -2.4), (0.03, 0.0, 2.2)],
+            1.0: [(0.04, 0.0, -4.6), (0.05, 0.0, 4.4), (0.03, -0.25, 0.8)]}
+
+
+def final_pillar(tag, pal, Hp, life=(0.9, 1.0)):
+    """Remate en la última roca: un pilar gigante que revienta arriba en fuego y humo."""
+    L = spike_layers(f"{tag}P", pal, Hp, RockPlaces(final=[(0.0, 0.0, -1.0), (0.02, 0.0, 1.0)]), life)
+
+    def E(evs):
+        return {"final_emit": [(dt, n, 0.0, 0.0, round(y, 2)) for (dt, n, y) in evs]}
+    L.append({"name": f"{tag}_Cap", "texture": "kk_fire_02", **E([(0.1, 6, 0.85 * Hp), (0.3, 4, 0.82 * Hp)]),
               "shape": {"type": "Sphere", "radius": _r(0.06, Hp), "style": "Surface"},
               "direction": "Top", "spread": (180, 180), "speed": (_r(0.08, Hp), _r(0.25, Hp)), "drag": 3,
               "accel": (0, _r(0.18, Hp), 0), "lifetime": (0.55, 0.75),
               "size": [(0, _r(0.14, Hp)), (0.3, _r(0.3, Hp)), (1, _r(0.38, Hp))],
               "transparency": [(0, 0), (0.55, 0.1), (0.85, 0.5), (1, 1)], "color": pal["dome"],
               "light_emission": 0.2, "brightness": 1.3, "rotation": (0, 360), "rot_speed": (-50, 50)})
-    L.append({"name": f"{tag}_Column", "texture": "kk_smoke_07", "emit": E(0.45, 3, 0.9 * Hp) + E(0.75, 3, 0.85 * Hp)
-              + E(1.05, 2, 0.8 * Hp), "direction": "Top", "spread": (30, 30), "speed": (_r(0.1, Hp), _r(0.25, Hp)),
+    L.append({"name": f"{tag}_Column", "texture": "kk_smoke_07",
+              **E([(0.35, 3, 0.9 * Hp), (0.6, 3, 0.85 * Hp), (0.85, 2, 0.8 * Hp)]),
+              "direction": "Top", "spread": (30, 30), "speed": (_r(0.1, Hp), _r(0.25, Hp)),
               "drag": 1.2, "accel": (0, _r(0.14, Hp), 0), "lifetime": (1.4, 1.9),
               "size": [(0, _r(0.18, Hp), _r(0.04, Hp)), (0.4, _r(0.4, Hp), _r(0.06, Hp)), (1, _r(0.55, Hp), _r(0.08, Hp))],
               "transparency": [(0, 0.7), (0.12, 0.4), (0.55, 0.55), (0.85, 0.85), (1, 1)], "color": pal["wsmoke"],
@@ -418,161 +362,187 @@ def final_pillar(tag, pal, Hp, t, u, pulses=(0.0, 0.3, 0.6)):
     return L
 
 
-def final_side_spikes(t, u):
-    """Picos que rodean al pilar del remate (se abren a lo ancho de la línea); van en la pared."""
-    return {1.4: [(round(t + 0.03, 3), u, -2.4), (round(t + 0.04, 3), u, 2.2)],
-            1.0: [(round(t + 0.06, 3), u, -4.6), (round(t + 0.07, 3), u, 4.4),
-                  (round(t + 0.05, 3), round(u - 0.03, 3), 0.8)]}
-
-
-def line_aftermath(tag, pal, L0, u0, u1, t_start, sweep, vis, H0=20, step=12, glow=1.3):
-    """Quemadura continua + brasas a lo largo de la línea."""
-    span = (u1 - u0) * L0
-    n = max(2, int(round(span / step)) + 1)
-    places = [(round(t_start + sweep * i / (n - 1), 3), round(u0 + (u1 - u0) * i / (n - 1), 4)) for i in range(n)]
-    L = [
+def rock_aftermath(tag, pal, H0, vis, glow):
+    """Suelo bajo cada roca: brillo mientras arde, quemadura que queda y brasas."""
+    return [
         dict(name=f"{tag}_GroundGlow", decal=True, texture="fx_glow", orientation="VelocityPerpendicular",
              direction="Top", speed=(0.01, 0.01), lifetime=(glow, glow),
              size=[(0, _r(0.4, H0)), (0.1, _r(1.5, H0)), (0.7, _r(1.4, H0)), (1, _r(1.2, H0))],
              transparency=[(0, 0.5), (0.1, 0.25), (0.6, 0.45), (1, 1)], color=pal["glow"], light_emission=0.8,
-             zoffset=-0.5, emit=[(round(t + 0.02, 3), 1, u, 0.0, 0.25) for t, u in places]),
+             zoffset=-0.5, **EACH.E((0.02,), 1, 0.25)),
         dict(name=f"{tag}_Scorch", decal=True, texture="kz_scorch", orientation="VelocityPerpendicular",
-             direction="Top", speed=(0.01, 0.01), lifetime=(vis - t_start, vis - t_start),
-             size=[(0, _r(0.3, H0)), (0.04, _r(1.0, H0)), (1, _r(1.05, H0))],
+             direction="Top", speed=(0.01, 0.01), lifetime=(vis, vis),
+             size=[(0, _r(0.3, H0)), (0.04, _r(1.05, H0)), (1, _r(1.1, H0))],
              transparency=[(0, 0.15), (0.8, 0.3), (1, 1)], rotation=(0, 360), zoffset=-1,
-             emit=[(round(t + 0.03, 3), 1, u, 0.0, 0.15) for t, u in places]),
+             **EACH.E((0.03,), 1, 0.15)),
         dict(name=f"{tag}_Embers", texture="kk_flare_01", direction="Top", spread=(60, 60),
              speed=(_r(0.4, H0), _r(1.2, H0)), drag=1.6, accel=(0, _r(0.6, H0), 0), lifetime=(0.8, 1.2),
              size=[(0, 0), (0.1, _r(0.12, H0), _r(0.04, H0)), (1, 0)], color=pal["ember"],
-             light_emission=1.0, brightness=1.6,
-             emit=[(round(t + 0.15, 3), 5, u, 0.0, round(0.6 * H0, 2)) for t, u in places]),
+             light_emission=1.0, brightness=1.6, **EACH.E((0.15,), 5, 0.6 * H0)),
     ]
-    return L
 
 
-def line_licks(tag, pal, spots, t0, t_end):
-    """Llamitas breves sobre la línea (versión normal)."""
-    L = []
-    for i, spot in enumerate(spots):
-        u, side, s = spot[:3]
-        dt = spot[3] if len(spot) > 3 else 0.0
-        L.append(dict(name=f"{tag}_Lick{i}", texture="fx_fire_2x2", flipbook=STATIC2x2,
-                      orientation="VelocityParallel", line_u=u, offset=(side, 0.6, 0),
-                      shape={"type": "Box", "size": (_r(5, s), 0.2, _r(5, s))}, direction="Top", spread=(8, 8),
-                      speed=(_r(6, s), _r(11, s)), drag=2, lifetime=(0.35, 0.55),
-                      size=[(0, _r(3, s), s), (0.3, _r(8, s), _r(2, s)), (1, _r(5, s), _r(1.5, s))],
-                      transparency=[(0, 0.05), (0.6, 0.15), (1, 1)], color=pal["lick"], light_emission=0.35,
-                      brightness=1.6, stream=[(round(t0 + dt, 3), round(t_end + dt, 3), 10, 0)]))
-    return L
+def _sources(var_sides, final_side, delay):
+    """Fuentes de emisión continua: una por roca (lado según la variante) y, si se pide, el remate."""
+    out = {"rock_stream": [[] if sd is None else [(delay, 0.0, sd, 0.0)] for sd in var_sides]}
+    if final_side is not None:
+        out["final_stream"] = [(delay, 0.0, final_side, 0.0)]
+    return out
 
 
-# ----------------------------------------------------------------------------- H1
-def h1_spec(ignition=False):
-    """H1: el tajo impacta y una PARED DE LLAMAS avanza rompiendo el suelo hacia adelante.
-    Uso: cf = punto de impacto en el suelo, mirando hacia adelante; largo en studs."""
-    pal = IGNITION if ignition else NORMAL
-    k = 1.35 if ignition else 1.0                 # Ignition: más grande (más alta y más larga)
-    tag = "I" if ignition else "N"
-    L0 = round(100 * k)
-    Hb = round(32 * k, 1)
-    t0, sweep = 0.05, (0.6 if ignition else 0.5)
-    g = random.Random(41)
-    L = []
-    # golpe de la espada: la detonación más fuerte, al inicio de la línea
-    L += detonation_layers(f"{tag}Hit", pal, round(42 * k, 1), [(0.0, 0.0)], n_rocks=6 if ignition else 4,
-                           burn=2.0 if ignition else 1.0)
-    # el suelo se rompe a lo largo del camino: chispazos, polvo y rocas que saltan
-    n_cr = 6 if ignition else 5
-    crack_places = [(round(t0 + sweep * (i + 1) / n_cr, 3), round((i + 1) / n_cr, 3)) for i in range(n_cr)]
-    L += [Ld for Ld in detonation_layers(f"{tag}Cr", pal, round(20 * k, 1), crack_places,
-                                         n_rocks=2, big=False, burn=1.4 if ignition else 0.8)
-          if not Ld["name"].endswith(("FlashStar", "Glow", "GroundRing"))]
-    # la pared
-    L += flame_wall(f"{tag}W", pal, Hb, L0, 0.0, 1.0, t0, sweep, 32 if ignition else 24, seed=17,
-                    pulses=(0.0, 0.3, 0.6) if ignition else (0.0, 0.3))
-    vis = 4.8 if ignition else 3.0
-    L += line_aftermath(f"{tag}A", pal, L0, 0.0, 1.0, t0, sweep, vis, H0=round(20 * k, 1),
-                        glow=1.7 if ignition else 1.25)
-    if ignition:
-        spots = [(round(i / 6 + g.uniform(-0.04, 0.04), 3), round(g.uniform(-3, 3), 2), round(1.0 + 0.6 * g.random(), 2))
-                 for i in range(7)]
-        # cada marca se enciende cuando su tramo de muro empieza a apagarse
-        spots = [(min(1.0, max(0.0, u)), sd, sc, round(sweep * min(1.0, max(0.0, u)), 3)) for u, sd, sc in spots]
-        L += burn_marks(f"{tag}Burn", pal, spots, 0.75, 4.4, k=1.15)
-    else:
-        spots = [(round(0.1 + 0.8 * i / 3, 3), round(g.uniform(-2, 2), 2), round(0.9 + 0.4 * g.random(), 2)) for i in range(4)]
-        spots = [(u, sd, sc, round(sweep * u, 3)) for u, sd, sc in spots]
-        L += line_licks(f"{tag}Lick", pal, spots, 0.6, 1.6)
-    return {
-        "name": "H1_ExplosionIgnition" if ignition else "H1_Explosion",
-        "doc": ("H1 IGNITION: pared de llamas carmesí, más alta y larga; deja marcas de fuego ~4 s. "
-                if ignition else "H1: el golpe levanta una pared de llamas que avanza rompiendo el suelo. ")
-               + "KaijuFireVFX.<nombre>(CFrame.lookAt(impacto, impacto + adelante), largo, escala, sacudida).",
-        "duration": 6.0 if ignition else 3.6,
-        "line": L0,
-        "shakes": [(0.0, 1.0, 0.9)],
-        "light": {"color": (255, 60, 90) if ignition else (255, 150, 60), "brightness": 6, "range": 60,
-                  "time": 1.8 if ignition else 1.3, "sweep": t0 + sweep},
-        "layers": L,
-    }
+def burn_marks(tag, pal, var_sides, t0, dur, final=True):
+    """Ignition: en cada roca queda una marca de fuego ardiendo dur segundos, desde t0."""
+    src = _sources(var_sides, 0.0 if final else None, t0)
+    box = {"type": "Box", "size": (6, 0.2, 6)}
+    glow_e = {"rock_emit": [[] if sd is None else [(t0, 1, 0.0, sd, 0.3)] for sd in var_sides]}
+    if final:
+        glow_e["final_emit"] = [(t0, 1, 0.0, 0.0, 0.3)]
+    k = 0.55 * dur
+    return [
+        dict(name=f"{tag}_BurnGlow", decal=True, texture="fx_glow", orientation="VelocityPerpendicular",
+             direction="Top", speed=(0.01, 0.01), lifetime=(dur + 0.3, dur + 0.3),
+             size=[(0, 0), (0.04, 14), (0.75, 11), (1, 0)],
+             transparency=[(0, 0.35), (0.8, 0.55), (1, 1)], color=pal["glow"], light_emission=0.8, **glow_e),
+        dict(name=f"{tag}_BurnFlames", texture="fx_fire_2x2", flipbook=STATIC2x2, orientation="VelocityParallel",
+             shape=box, direction="Top", spread=(8, 8), speed=(8, 14), drag=2, lifetime=(0.4, 0.62),
+             size=[(0, 4.4, 1.1), (0.3, 12, 3.3), (1, 7.7, 2.2)], offset=(0, 0.6, 0),
+             transparency=[(0, 0.05), (0.6, 0.15), (1, 1)], color=pal["lick"], light_emission=0.35,
+             brightness=1.6, stream=[(0, round(k, 3), 14, 5), (round(k, 3), dur, 5, 0)], **src),
+        dict(name=f"{tag}_BurnBase", texture="kk_fire_01", shape=box, direction="Top", spread=(20, 20),
+             speed=(2, 5), drag=2, lifetime=(0.35, 0.55), offset=(0, 0.6, 0),
+             size=[(0, 3.3, 1.1), (0.4, 6.6, 1.6), (1, 4.4, 1.1)],
+             transparency=[(0, 0.1), (0.6, 0.3), (1, 1)], color=pal["fire"], light_emission=0.45,
+             brightness=1.5, rotation=(0, 360), rot_speed=(-60, 60), stream=[(0, dur, 9, 0)], **src),
+        dict(name=f"{tag}_BurnSmoke", texture="kk_smoke_04", direction="Top", spread=(15, 15),
+             speed=(6, 12), drag=1.2, accel=(0, 6, 0), lifetime=(1.2, 1.7), offset=(0, 3, 0),
+             size=[(0, 3.3, 1.1), (1, 14, 3.3)], transparency=[(0, 0.6), (0.3, 0.45), (1, 1)],
+             color=pal["wisp"], rotation=(0, 360), rot_speed=(-30, 30), zoffset=-2,
+             stream=[(0.15, dur + 0.1, 3, 1)], **src),
+    ]
+
+
+def rock_licks(tag, pal, var_sides, t0, dur):
+    """Versión normal: llamitas breves en algunas rocas mientras se disipa el humo."""
+    return [dict(name=f"{tag}_Licks", texture="fx_fire_2x2", flipbook=STATIC2x2, orientation="VelocityParallel",
+                 shape={"type": "Box", "size": (5.5, 0.2, 5.5)}, direction="Top", spread=(8, 8),
+                 speed=(6.6, 12), drag=2, lifetime=(0.35, 0.55), offset=(0, 0.6, 0),
+                 size=[(0, 3.3, 1.1), (0.3, 8.8, 2.2), (1, 5.5, 1.6)],
+                 transparency=[(0, 0.05), (0.6, 0.15), (1, 1)], color=pal["lick"], light_emission=0.35,
+                 brightness=1.6, stream=[(0, dur, 10, 0)], **_sources(var_sides, None, t0))]
 
 
 # ----------------------------------------------------------------------------- H3
 def h3_spec(ignition=False):
-    """H3: las rocas que dejó el rayo detonan EN CADENA; cada una levanta su racimo de pilares y
-    juntas forman una PARED DE LLAMAS. Al final del rayo, el remate: un pilar gigante.
-    Uso: cf = inicio de la línea en el suelo, mirando hacia donde fue el rayo; largo en studs."""
+    """H3: las rocas que dejó el rayo detonan TODAS A LA VEZ; cada una levanta su racimo de pilares y
+    juntas forman una PARED DE LLAMAS. En la última roca (final del rayo), el pilar gigante.
+    Uso: KaijuFireVFX.H3_Detonation(rocas, escala, sacudida) con las posiciones (o Parts) de las rocas."""
     pal = IGNITION if ignition else NORMAL
     tag = "J" if ignition else "T"
-    g = random.Random(7)
-    L0 = 100
     Hb = 34 if ignition else 30
-    N = 7
-    us = [round(0.04 + 0.86 * i / (N - 1), 3) for i in range(N)]
-    t0, step = 0.1, 0.07                     # cadena: una roca cada 0.07 s
-    rocks = [(round(t0 + step * i, 3), u) for i, u in enumerate(us)]
+    life = (0.75, 0.85)
+    g = random.Random(7)
     L = []
-    # anticipación: cada roca se pone al rojo un instante antes de estallar
-    L.append(dict(name=f"{tag}_Heat", texture="fx_glow", lifetime=(0.14, 0.18),
-                  size=[(0, 3), (0.6, 10), (1, 7)], transparency=[(0, 0.55), (0.6, 0.35), (1, 1)],
-                  color=pal["glow"], light_emission=0.7, brightness=1.0,
-                  emit=[(round(t - 0.08, 3), 1, u, 0.0, 2.0) for t, u in rocks]))
-    L += [Ld for Ld in detonation_layers(f"{tag}D", pal, 24, rocks, n_rocks=2,
-                                         big=False, burn=1.4 if ignition else 0.8)
-          if not Ld["name"].endswith(("FlashStar", "Glow"))]
-    pulses = (0.0, 0.3, 0.6) if ignition else (0.0, 0.3)
-    t_fin = round(rocks[-1][0] + 0.12, 3)          # remate al final del rayo
-    L += rock_wall(f"{tag}W", pal, Hb, L0, rocks, seed=23, pulses=pulses,
-                   extra=final_side_spikes(round(t_fin + 0.02, 3), 1.0))
-    L += detonation_layers(f"{tag}Fin", pal, 44, [(t_fin, 1.0)], n_rocks=6, burn=2.0 if ignition else 1.0)
-    L += final_pillar(f"{tag}F", pal, round(Hb * 2.1, 1), round(t_fin + 0.02, 3), 1.0,
-                      pulses=(0.0, 0.3, 0.6) if ignition else (0.0, 0.3, 0.55))
-    vis = 4.4 if ignition else 3.0
-    L += line_aftermath(f"{tag}A", pal, L0, 0.0, 1.0, t0, step * (N - 1) / 0.86, vis, H0=22,
-                        glow=1.7 if ignition else 1.25)
+    # cada roca detona (sin anticipación: el instante de la llamada ES la explosión)
+    L += [Ld for Ld in detonation_layers(f"{tag}D", pal, 24, EACH, n_rocks=2, big=False,
+                                         burn=1.4 if ignition else 0.8)
+          if not Ld["name"].endswith(("FlashStar", "Glow", "ShockRing"))]   # 7 a la vez: sin anillos gigantes
+    L += rock_wall(f"{tag}W", pal, Hb, seed=23, life=life, extra_final=final_side_spikes())
+    # remate en la última roca
+    L += detonation_layers(f"{tag}Fin", pal, 44, LAST, n_rocks=6, burn=2.0 if ignition else 1.0)
+    L += final_pillar(f"{tag}F", pal, round(Hb * 2.1, 1), life=(0.9, 1.0))
+    L += rock_aftermath(f"{tag}A", pal, 22, vis=3.6 if ignition else 2.4, glow=1.5 if ignition else 1.1)
+    sides = [round(g.uniform(-2.5, 2.5), 2) for _ in range(3)]
     if ignition:
-        spots = [(u, round(g.uniform(-3, 3), 2), round(0.9 + 0.5 * g.random(), 2), round(t - t0, 3)) for t, u in rocks]
-        spots.append((1.0, 0.0, 1.5, round(t_fin - t0, 3)))
-        L += burn_marks(f"{tag}Burn", pal, spots, 0.8, 4.2)
+        L += burn_marks(f"{tag}Burn", pal, sides, t0=0.45, dur=3.0)
     else:
-        spots = [(us[i], round(g.uniform(-2, 2), 2), round(0.9 + 0.4 * g.random(), 2), round(rocks[i][0] - t0, 3))
-                 for i in (1, 3, 5)]
-        L += line_licks(f"{tag}Lick", pal, spots, 0.65, 1.7)
+        L += rock_licks(f"{tag}Lick", pal, [sides[0], None, sides[2]], t0=0.5, dur=1.1)
     return {
         "name": "H3_DetonationIgnition" if ignition else "H3_Detonation",
-        "doc": ("H3 IGNITION: las rocas detonan en una pared de llamas carmesí y dejan marcas de fuego. "
-                if ignition else "H3: las rocas de la línea detonan en cadena y levantan una pared de llamas. ")
-               + "KaijuFireVFX.<nombre>(CFrame.lookAt(inicio, inicio + direccion), largo, escala, sacudida).",
-        "duration": 6.2 if ignition else 3.9,
-        "line": L0,
-        "shakes": [(t0, 0.5, 0.5), (t_fin, 1.0, 0.8)],
-        "light": {"color": (255, 60, 90) if ignition else (255, 150, 60), "brightness": 5, "range": 50,
-                  "time": 1.8 if ignition else 1.3, "sweep": t_fin},
+        "doc": ("H3 IGNITION: las rocas detonan a la vez en una pared de llamas carmesí y dejan marcas de fuego. "
+                if ignition else "H3: las rocas del rayo detonan a la vez y levantan una pared de llamas. ")
+               + "KaijuFireVFX.<nombre>(rocas, escala, sacudida): rocas = lista de Vector3 (suelo) o de las Parts.",
+        "duration": 4.6 if ignition else 2.8,
+        # separación de diseño entre rocas (studs a escala 1) y límites; en el juego se usa la real
+        "rocks": {"gap": 14, "gap_min": 6, "gap_max": 34, "jitter": 0.03},
+        "preview_rocks": [(round(8 + 14 * i, 2), 0.0, round(0.8 * math.sin(i * 2.3), 2)) for i in range(7)],
+        "shakes": [(0.0, 1.0, 0.8)],
+        "light": {"color": (255, 60, 90) if ignition else (255, 150, 60), "brightness": 6, "range": 60,
+                  "time": 1.5 if ignition else 1.1},
         "layers": L,
     }
 
 
-H1_N = h1_spec(False)
-H1_I = h1_spec(True)
+# ----------------------------------------------------------------------------- vista previa
+def rock_layout(rocks, rcfg, scale=1.0, seed=3):
+    """Igual que en el módulo Luau: ordena las rocas a lo largo de la línea y calcula para cada una su
+    separación (gap) y su pequeño retraso aleatorio. rocks = puntos del suelo (x, y, z)."""
+    import numpy as np
+    P = [np.asarray(r, float) for r in rocks]
+    d = P[-1] - P[0]
+    d[1] = 0.0
+    n = np.linalg.norm(d)
+    dirv = d / n if n > 0.1 else np.array([0.0, 0.0, -1.0])
+    order = sorted(range(len(P)), key=lambda i: float((P[i] - P[0]) @ dirv))
+    P = [P[i] for i in order]
+    proj = [float((p - P[0]) @ dirv) for p in P]
+    g = random.Random(seed)
+    out = []
+    for i, p in enumerate(P):
+        ds = []
+        if i > 0:
+            ds.append(proj[i] - proj[i - 1])
+        if i < len(P) - 1:
+            ds.append(proj[i + 1] - proj[i])
+        gap = sum(ds) / len(ds) if ds else rcfg["gap"] * scale
+        gap = min(max(gap, rcfg["gap_min"] * scale), rcfg["gap_max"] * scale)
+        out.append({"pos": p, "gap": gap, "delay": g.uniform(0, rcfg["jitter"])})
+    right = np.cross(dirv, [0.0, 1.0, 0.0])
+    return out, dirv, right
+
+
+def expand_rocks(spec, rocks, scale=1.0, seed=3):
+    """Convierte la spec de rocas en una spec normal con posiciones absolutas ("points" y emisores
+    continuos con offset propio) para el simulador."""
+    import numpy as np
+    R, dirv, right = rock_layout(rocks, spec["rocks"], scale, seed)
+    up = np.array([0.0, 1.0, 0.0])
+
+    def world(r, du, sd, y):
+        return r["pos"] + dirv * (du * r["gap"]) + right * (sd * scale) + up * (y * scale)
+
+    def events(L, key_var, key_fin):
+        out = []
+        var = L.get(key_var) or []
+        for i, r in enumerate(R):
+            if var:
+                for ev in var[i % len(var)]:
+                    out.append((ev, r))
+        for ev in L.get(key_fin) or []:
+            out.append((ev, R[-1]))
+        return out
+
+    layers = []
+    rock_keys = ("rock_emit", "final_emit", "rock_stream", "final_stream")
+    for L in spec["layers"]:
+        base = {k: v for k, v in L.items() if k not in rock_keys}
+        if L.get("rock_stream") or L.get("final_stream"):
+            ox, oy, oz = L.get("offset", (0, 0, 0))       # en el marco de la roca, como en el módulo
+            for k, ((delay, du, sd, y), r) in enumerate(events(L, "rock_stream", "final_stream")):
+                p = (world(r, du, sd + ox, y + oy) - dirv * (oz * scale)) / scale
+                layers.append(dict(base, name=f"{L['name']}_{k}", offset=tuple(float(v) for v in p),
+                                   stream=[(w[0] + delay + r["delay"], w[1] + delay + r["delay"], w[2], w[3])
+                                           for w in L["stream"]]))
+            continue
+        pts = []
+        for (t, n, du, sd, y), r in events(L, "rock_emit", "final_emit"):
+            p = world(r, du, sd, y) / scale
+            pts.append((round(t + r["delay"], 4), n, float(p[0]), float(p[1]), float(p[2])))
+        if pts:
+            layers.append(dict(base, points=sorted(pts)))
+    flat = {k: v for k, v in spec.items() if k != "layers"}
+    flat["layers"] = layers
+    return flat
+
+
 H3_N = h3_spec(False)
 H3_I = h3_spec(True)

@@ -742,7 +742,9 @@ GIANT = {
         {"name": "GroundRing", "decal": True, "texture": "fx_shock_spiky", "emit": [(0.0, 1)], "offset": (0, 0.3, 0),
          "orientation": "VelocityPerpendicular", "direction": "Top", "speed": (0.01, 0.01),
          "lifetime": (0.55, 0.55), "size": [(0, 34), (0.2, 84), (0.6, 142), (1, 160)],
-         "transparency": [(0, 0.3), (0.35, 0.55), (1, 1)], "color": [(0, (255, 176, 90)), (1, (255, 120, 50))],
+         # en Roblox es un Decal (mezcla normal, no aditiva): más transparente para que se vea como
+         # un anillo de luz y no como un plato naranja
+         "transparency": [(0, 0.55), (0.35, 0.72), (1, 1)], "color": [(0, (255, 176, 90)), (1, (255, 120, 50))],
          "light_emission": 0.35, "brightness": 1.0, "rotation": (0, 360)},
         {"name": "GroundRing2", "decal": True, "texture": "kk_circle_03", "emit": [(0.06, 1)], "offset": (0, 0.25, 0),
          "orientation": "VelocityPerpendicular", "direction": "Top", "speed": (0.01, 0.01),
@@ -873,8 +875,81 @@ GIANT = {
     ] + ground_fire_clusters(),
 }
 
+# ============================================================================
+# H1 IGNITION: la misma explosión gigante, 1.5 veces más grande, 1.5 veces más intensa y carmesí
+# ============================================================================
+_G_MAP = [(0, 0), (32, 8), (60, 12), (104, 24), (160, 60), (218, 136), (246, 236), (255, 250)]
+_NEUTRAL = ("Dust", "Smoke", "Wisp", "Stem", "CapRing", "Scorch")     # humo y polvo: no son fuego
+_TRAILS = {   # las estelas de las rocas quedan naranja-rojizas (como en la captura de Ignition)
+    "MeteorFire": [(0, (255, 236, 200)), (0.3, (255, 130, 60)), (1, (200, 40, 30))],
+    "MeteorSmoke": [(0, (230, 70, 60)), (0.2, (80, 60, 64)), (1, (120, 112, 116))],
+}
+
+
+def _interp(x, table):
+    for (x0, y0), (x1, y1) in zip(table, table[1:]):
+        if x <= x1:
+            return y0 + (y1 - y0) * (x - x0) / max(x1 - x0, 1e-6)
+    return table[-1][1]
+
+
+def crimson(c, neutral=False):
+    """Color de fuego naranja -> carmesí (lo más claro queda blanco-rosado). En humo y polvo
+    (neutral) solo oscurece con un toque rojizo, salvo el brillo de fuego al nacer."""
+    r, g, b = c
+    if neutral and (max(c) - min(c)) / max(max(c), 1) < 0.4:
+        return (min(255, round(r * 0.72 + 4)), round(g * 0.68), round(b * 0.70))
+    g2 = _interp(g, _G_MAP)
+    b2 = min(255.0, g2 + 20 * (1 - g2 / 255))
+    return (round(r * (0.6 + 0.4 * r / 255)), round(g2), round(b2))
+
+
+def ignitionize(spec, name, size_k=1.5, k=1.5, doc=""):
+    """Versión Ignition de una explosión: colores carmesí, tamaño ×size_k (vía escala interna) e
+    intensidad ×k: más partículas en cada ráfaga, emisión continua más densa, más rocas, luz y
+    sacudida más fuertes. Los tiempos no cambian."""
+    out = _copy.deepcopy(spec)
+    out["name"] = name
+    out["doc"] = doc or out.get("doc", "")
+    out["scale_mult"] = size_k
+
+    def fix(L):
+        nm = L["name"]
+        if nm in _TRAILS:
+            L["color"] = _TRAILS[nm]
+        elif "color" in L:
+            neutral = any(w in nm for w in _NEUTRAL)
+            L["color"] = [(t, crimson(c, neutral)) for t, c in L["color"]]
+            if L.get("decal") and not neutral:      # en el suelo: rojo profundo y algo más sutil (no un plato rosado)
+                L["color"] = [(t, (round(r * 0.85), round(g * 0.5), round(b * 0.55))) for t, (r, g, b) in L["color"]]
+                L["transparency"] = [(t, v if v >= 1 else min(0.95, round(v + 0.1, 3))) + tuple(e)
+                                     for (t, v, *e) in L.get("transparency", [(0, 0), (1, 0)])]
+        # más partículas por ráfaga; el destello y el resplandor no se duplican (se quemarían a blanco)
+        if not L.get("decal") and not nm.startswith(("Flash", "Glow")):
+            L["emit"] = [(e[0], e[1] if e[1] == 1 else round(e[1] * k)) + tuple(e[2:]) for e in L.get("emit", [])]
+        if L.get("stream"):
+            L["stream"] = [(a, b, round(r0 * k, 2), round(r1 * k, 2)) for a, b, r0, r1 in L["stream"]]
+        for sub in L.get("trails", []) + L.get("land", []):
+            fix(sub)
+
+    for L in out["layers"]:
+        fix(L)
+        # con 1.5 veces más chispas, las rayas gruesas parecen pétalos: aquí van rayas finas
+        if L["name"] in ("Streaks", "GroundStreaks") and L["texture"] == "fx_line":
+            L["texture"] = "kk_trace_01"
+            L["size"] = [(t, round(v * 1.6, 2)) + tuple(round(x * 1.6, 2) for x in e) for (t, v, *e) in L["size"]]
+    out["light"] = dict(out["light"], color=(255, 60, 90), brightness=round(out["light"]["brightness"] * k, 2))
+    out["shakes"] = [(0.0, k, 1.1)]
+    return out
+
+
+GIANT_IGNITION = ignitionize(
+    GIANT, "GiantExplosionIgnition",
+    doc="H1 IGNITION: la explosión gigante en carmesí, 1.5 veces más grande y más intensa (más partículas, "
+        "más rocas, luz y sacudida más fuertes); el fuego carmesí queda en el suelo 5 s.")
+
 import vfx_pillars as _VP
 
-SPECS = {"H1_Explosion": _VP.H1_N, "H1_ExplosionIgnition": _VP.H1_I,
+SPECS = {"GiantExplosion": GIANT, "GiantExplosionIgnition": GIANT_IGNITION,
          "H3_Detonation": _VP.H3_N, "H3_DetonationIgnition": _VP.H3_I,
-         "GiantExplosion": GIANT, "Explosion": EXPLOSION, "ExplosionAnime": EXPLOSION_ANIME, "FireLine": FIRELINE}
+         "Explosion": EXPLOSION, "ExplosionAnime": EXPLOSION_ANIME, "FireLine": FIRELINE}
