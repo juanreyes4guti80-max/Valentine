@@ -880,9 +880,9 @@ GIANT = {
 # ============================================================================
 _G_MAP = [(0, 0), (32, 8), (60, 12), (104, 24), (160, 60), (218, 136), (246, 236), (255, 250)]
 _NEUTRAL = ("Dust", "Smoke", "Wisp", "Stem", "CapRing", "Scorch")     # humo y polvo: no son fuego
-_TRAILS = {   # las estelas de las rocas quedan naranja-rojizas (como en la captura de Ignition)
-    "MeteorFire": [(0, (255, 236, 200)), (0.3, (255, 130, 60)), (1, (200, 40, 30))],
-    "MeteorSmoke": [(0, (230, 70, 60)), (0.2, (80, 60, 64)), (1, (120, 112, 116))],
+_TRAILS = {   # las rocas que salen volando también arden en carmesí (igual que en la H3 Ignition)
+    "MeteorFire": [(0, (255, 236, 236)), (0.3, (255, 92, 104)), (1, (190, 24, 40))],
+    "MeteorSmoke": [(0, (210, 44, 56)), (0.2, (78, 58, 62)), (1, (118, 110, 114))],
 }
 
 
