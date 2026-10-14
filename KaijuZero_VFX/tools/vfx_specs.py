@@ -873,4 +873,8 @@ GIANT = {
     ] + ground_fire_clusters(),
 }
 
-SPECS = {"GiantExplosion": GIANT, "Explosion": EXPLOSION, "ExplosionAnime": EXPLOSION_ANIME, "FireLine": FIRELINE}
+import vfx_pillars as _VP
+
+SPECS = {"H1_Explosion": _VP.H1_N, "H1_ExplosionIgnition": _VP.H1_I,
+         "H3_Detonation": _VP.H3_N, "H3_DetonationIgnition": _VP.H3_I,
+         "GiantExplosion": GIANT, "Explosion": EXPLOSION, "ExplosionAnime": EXPLOSION_ANIME, "FireLine": FIRELINE}

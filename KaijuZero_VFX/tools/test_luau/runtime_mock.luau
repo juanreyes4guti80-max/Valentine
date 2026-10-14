@@ -21,7 +21,7 @@ V.__index = function(t, k)
 	if k == "Unit" then local m = math.sqrt(t.X ^ 2 + t.Y ^ 2 + t.Z ^ 2); return v3(t.X / m, t.Y / m, t.Z / m) end
 	return rawget(V, k)
 end
-M.Vector3 = { new = v3, xAxis = v3(1, 0, 0), yAxis = v3(0, 1, 0), zAxis = v3(0, 0, 1) }
+M.Vector3 = { new = v3, xAxis = v3(1, 0, 0), yAxis = v3(0, 1, 0), zAxis = v3(0, 0, 1), zero = v3(0, 0, 0) }
 M.Vector2 = { new = function(x, y) return { X = x, Y = y } end }
 
 -- CFrame (posición + matriz 3x3 por filas)
@@ -70,7 +70,10 @@ M.CFrame = {
 local Col = {}
 Col.__index = Col
 function Col:Lerp(o, u) return setmetatable({ R = self.R + (o.R - self.R) * u, G = self.G + (o.G - self.G) * u, B = self.B + (o.B - self.B) * u }, Col) end
-M.Color3 = { fromRGB = function(r, g, b)
+M.Color3 = { new = function(r, g, b)
+	assert(r >= 0 and g >= 0 and b >= 0, "Color3 negativo")
+	return setmetatable({ R = r, G = g, B = b }, Col) end,
+	fromRGB = function(r, g, b)
 	assert(r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255, "Color3 fuera de rango")
 	return setmetatable({ R = r / 255, G = g / 255, B = b / 255 }, Col) end }
 M.NumberRange = { new = function(a, b) b = b or a; assert(a <= b, "NumberRange min>max"); return { Min = a, Max = b } end }
@@ -113,7 +116,8 @@ M.task = {
 }
 
 -- instancias
-M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0 }
+M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
+	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0 }
 local live = {}
 local function isDestroyed(o)
 	while o do
@@ -134,6 +138,13 @@ function Inst.new(class)
 			if k == "Emit" then return function(_, n)
 				assert(props.Parent ~= nil, "Emit sin Parent")
 				M.stats.emits += 1; M.stats.emitted += n
+				-- dónde se emitió (el contenedor de prueba está en el origen y sin rotar)
+				local c = props.Parent
+				local pos = c.ClassName == "Attachment" and c.Position or (c.CFrame and c.CFrame.p)
+				if pos then
+					M.stats.emitMinZ = math.min(M.stats.emitMinZ, pos.Z)
+					M.stats.emitMaxZ = math.max(M.stats.emitMaxZ, pos.Z)
+				end
 			end end
 			if k == "Destroy" then return function() rawset(self, "__destroyed", true); props.Parent = nil; M.stats.destroyed += 1 end end
 			if k == "IsA" then return function(_, c) return c == class or (c == "BasePart" and class == "Part") end end
@@ -147,6 +158,10 @@ function Inst.new(class)
 		__newindex = function(self, k, v)
 			if k == "Rate" then M.stats.maxRate = math.max(M.stats.maxRate, v) end
 			if k == "Name" and v == "Rock" then M.stats.rocks += 1 end
+			if k == "CFrame" and type(v) == "table" and v.p then
+				M.stats.partMinZ = math.min(M.stats.partMinZ, v.p.Z)
+				M.stats.partMaxZ = math.max(M.stats.partMaxZ, v.p.Z)
+			end
 			props[k] = v
 		end,
 	})

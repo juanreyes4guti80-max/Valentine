@@ -255,7 +255,8 @@ def spawn_meteor(L, origin, rng, scale, Rf):
 
 
 def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration=None, seed=7,
-           ground_y=0.0, background=None, extra_draw=None, frame_rot=None, length=0.0, bloom=None):
+           ground_y=0.0, background=None, extra_draw=None, frame_rot=None, length=0.0, bloom=None,
+           only_frames=None):
     """frame_rot: rotación del contenedor (local->mundo). Emisiones (t, n, u, side, up):
     u = fracción a lo largo de la línea (adelante = -Z local), side = +X local, up = +Y."""
     rng = random.Random(seed)
@@ -271,15 +272,19 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
     meteors = []
     streams = []   # (L, origin, t_base)
     for L in spec["layers"]:
+        oL = o0 + Rf @ np.array([0.0, 0.0, -L.get("line_u", 0.0) * length])
         if L.get("stream"):
-            streams.append([L, o0 + Rf @ (np.asarray(L.get("stream_origin", (0, 0, 0)), float) * scale), 0.0, 0.0])
+            streams.append([L, oL, 0.0, 0.0])
         for ev in L.get("emit", []):
             t, n = ev[0], ev[1]
-            pos = o0.copy()
+            pos = oL.copy()
             if len(ev) > 2:
                 u, side, up = ev[2], ev[3], ev[4]
                 pos = o0 + Rf @ np.array([side * scale, up * scale, -u * length])
             events.append((t, n, L, pos))
+        for ev in L.get("points", []):   # (t, n, x, y, z): posición local absoluta
+            t, n, x, y, z = ev
+            events.append((t, n, L, o0 + Rf @ (np.array([x, y, z], float) * scale)))
     events.sort(key=lambda e: e[0])
     ei = 0
     dt = 1.0 / FPS
@@ -335,10 +340,15 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 continue
             alive.append(p)
         parts = alive
-        buf = bg.copy()
+        if only_frames is not None and fi not in only_frames:
+            stats.append(len(parts))
+            draw = False
+        else:
+            draw = True
+        buf = bg.copy() if draw else None
         # ordenar atrás -> adelante
         items = []
-        for p in parts:
+        for p in (parts if draw else []):
             d = cam.to_cam(p.pos)
             if d[2] <= 0.5:
                 continue
@@ -346,7 +356,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         items.sort(key=lambda x: -x[0])
         for _, p, d in items:
             draw_particle(buf, tb, cam, p, d, scale, ground_y)
-        for m in meteors:
+        for m in (meteors if draw else []):
             if m.dead:
                 continue
             pr = cam.project(m.pos)
@@ -358,13 +368,14 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             col = np.array(sp.get("color", (255, 255, 255)), float) / 255
             spr[..., :3] *= col
             draw_sprite(buf, spr, pr[0], pr[1], 0.0, 1.0)
-        if extra_draw:
-            extra_draw(buf, t)
-        if bloom:
-            buf = apply_bloom(buf, **bloom)
-        img = Image.fromarray((np.clip(buf, 0, 1) * 255).astype(np.uint8))
-        img.save(os.path.join(out_dir, f"{fi:04d}.png"))
-        stats.append(len(parts))
+        if draw:
+            if extra_draw:
+                extra_draw(buf, t)
+            if bloom:
+                buf = apply_bloom(buf, **bloom)
+            img = Image.fromarray((np.clip(buf, 0, 1) * 255).astype(np.uint8))
+            img.save(os.path.join(out_dir, f"{fi:04d}.png"))
+            stats.append(len(parts))
         # avanzar física
         for m in meteors:
             if m.dead:
@@ -383,6 +394,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             p.rot += p.rots * dt
             p.age += dt
     return stats
+
+
+def decal_glow(L):
+    """Multiplicador de Color3 de un Decal (igual que en el módulo Luau)."""
+    return round(1.0 + 1.5 * L.get("light_emission", 0.0), 3)
 
 
 def draw_particle(buf, tb, cam, p, d, scale, ground_y):
@@ -413,12 +429,37 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y):
     z = d[2]
     f = cam.f
     if ori == "VelocityPerpendicular":
+        if L.get("decal"):
+            # en Roblox es un Decal: sin LightEmission (mezcla alfa normal); el módulo sobre-ilumina
+            # su Color3 (>1) en proporción a light_emission para que brille con el Bloom
+            light, bright = 0.0, decal_glow(L)
         draw_flat(buf, tb, cam, p, L["texture"], layout, idx, size, col, tr, light, bright)
         return
     proj = cam.project(p.pos)
     if proj is None:
         return
     cx, cy, _ = proj
+    if ori == "FacingCameraWorldUp":
+        a = cam.project(p.pos + np.array([0, 1.0, 0]) * size / 2)
+        b = cam.project(p.pos - np.array([0, 1.0, 0]) * size / 2)
+        if a is None or b is None:
+            return
+        dx, dy = a[0] - b[0], a[1] - b[1]
+        ang = math.degrees(math.atan2(dx, -dy))
+        px = f * size / z
+        spr = tb.sprite(L["texture"], layout, idx, px, px, -ang + p.rot)
+        spr = spr.copy()
+        spr[..., :3] *= col
+        spr[..., 3] *= (1 - tr)
+
+        def mask_up(xa, ya, xb, yb):
+            us, vs = np.meshgrid(np.arange(xa, xb) + 0.5, np.arange(ya, yb) + 0.5)
+            x = (us - cam.W / 2) * z / f
+            y = -(vs - cam.H / 2) * z / f
+            wy = cam.C[1] + cam.R[0, 1] * x + cam.R[1, 1] * y + cam.R[2, 1] * z
+            return (wy > ground_y).astype(np.float32)
+        draw_sprite(buf, spr, cx, cy, light, bright, mask_up)
+        return
     if ori == "VelocityParallel":
         v = p.vel
         sp = np.linalg.norm(v)

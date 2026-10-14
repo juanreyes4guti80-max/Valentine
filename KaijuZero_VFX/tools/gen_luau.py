@@ -5,10 +5,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vfx_specs as SP
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "."
-os.makedirs(OUT, exist_ok=True)
-
-
 def lua(v, ind=0):
     pad = "\t" * ind
     if isinstance(v, bool):
@@ -32,6 +28,7 @@ def lua(v, ind=0):
 
 def norm_layer(L):
     """Rellena valores por defecto y traduce el flipbook 'estático aleatorio'."""
+    assert "points" not in L, f"{L['name']}: 'points' no está soportado en el módulo; usa 'emit' con (t, n, u, lado, alto)"
     o = dict(L)
     if o.get("type") == "meteor":
         o.setdefault("spread", (0, 0))
@@ -61,6 +58,7 @@ def norm_layer(L):
     o.setdefault("zoffset", 0)
     o.setdefault("orientation", "FacingCamera")
     o.setdefault("offset", (0, 0, 0))
+    o.setdefault("line_u", 0)
     o["size"] = [list(k) + [0] * (3 - len(k)) for k in o["size"]]
     o["transparency"] = [list(k) + [0] * (3 - len(k)) for k in o["transparency"]]
     o["color"] = [[k[0], list(k[1])] for k in o["color"]]
@@ -80,6 +78,25 @@ def norm_layer(L):
         else:
             o["shape"] = {"type": sh["type"], "radius": sh["radius"], "style": sh.get("style", "Volume")}
     return o
+
+
+def layer_end(L):
+    """Momento (s) en que muere la última partícula de la capa (cota superior para las rocas)."""
+    life = L.get("lifetime", (0, 0))[1]
+    ends = [ev[0] + life for ev in L.get("emit", [])]
+    ends += [w[1] + life for w in L.get("stream", [])]
+    if L.get("type") == "meteor":
+        after = 0.0
+        for T in L.get("trails", []):
+            after = max(after, T["lifetime"][1])
+        for T in L.get("land", []):
+            after = max(after, T["lifetime"][1] + max([w[1] for w in T.get("stream", [])] + [0]))
+        ends = [ev[0] + life + after for ev in L.get("emit", [])]
+    return max(ends) if ends else 0.0
+
+
+def spec_end(spec):
+    return max(layer_end(L) for L in spec["layers"])
 
 
 def textures_of(layers):
@@ -244,9 +261,15 @@ local function configureEmitter(L: Layer, scale: number): ParticleEmitter
 	return e
 end
 
+-- posición local de un punto de la línea: u = fracción del largo (hacia adelante = -Z), lado, alto
+local function linePos(u: number, side: number, up: number, scale: number, len: number): Vector3
+	return Vector3.new(side * scale, up * scale, -u * len)
+end
+
 -- crea el emisor con su "portador": Part (si tiene forma) o Attachment
-local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos: Vector3?): (ParticleEmitter, Instance)
-	local off = localPos or (Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * scale)
+local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos: Vector3?, len: number?): (ParticleEmitter, Instance)
+	local off = localPos
+		or (Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * scale + linePos(L.line_u or 0, 0, 0, scale, len or 0))
 	local carrier: Instance
 	if L.shape then
 		local size
@@ -302,13 +325,15 @@ local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?)
 end
 
 -- elemento plano del suelo hecho con Decal (sin límite de tamaño)
-local function playDecal(L: Layer, holder: BasePart, scale: number, n: number)
+local function playDecal(L: Layer, holder: BasePart, scale: number, n: number, localOff: Vector3?)
 	for _ = 1, n do
 		local life = rng:NextNumber(L.lifetime[1], L.lifetime[2])
 		local rot = math.rad(rng:NextNumber(L.rotation[1], L.rotation[2]))
-		local off = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * scale
+		local off = localOff or Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * scale
 		local cf = holder.CFrame * CFrame.new(off) * CFrame.Angles(0, rot, 0)
 		local p = invisiblePart(L.name, Vector3.new(0.1, 0.05, 0.1), cf, holder)
+		-- los Decals no tienen LightEmission: un Color3 mayor que 1 los hace brillar (con Bloom)
+		local glow = 1 + 1.5 * (L.light_emission or 0)
 		local d = Instance.new("Decal")
 		d.Face = Enum.NormalId.Top
 		d.Texture = KaijuFireVFX.TEXTURES[L.texture] or ""
@@ -327,7 +352,8 @@ local function playDecal(L: Layer, holder: BasePart, scale: number, n: number)
 			p.Size = Vector3.new(sz, 0.05, sz)
 			p.CFrame = cf
 			d.Transparency = math.clamp(evalNum(L.transparency, t), 0, 1)
-			d.Color3 = evalColor(L.color, t)
+			local c = evalColor(L.color, t)
+			d.Color3 = Color3.new(c.R * glow, c.G * glow, c.B * glow)
 		end)
 	end
 end
@@ -337,9 +363,9 @@ local function scheduleBursts(L: Layer, e: ParticleEmitter, carrier: Instance, h
 	local baseOff = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
 	for _, ev in L.emit do
 		local t, n = ev[1], math.max(1, math.floor(ev[2] * KaijuFireVFX.Quality + 0.5))
-		local off = baseOff
+		local off = baseOff + linePos(L.line_u or 0, 0, 0, s, len)
 		if ev[3] ~= nil then
-			off = baseOff + Vector3.new(ev[4] * s, ev[5] * s, -ev[3] * len)
+			off = baseOff + linePos(ev[3], ev[4], ev[5], s, len)
 		end
 		local function fire()
 			if not e.Parent then
@@ -373,7 +399,7 @@ local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
 	end
 end
 
-local function playMeteors(L: Layer, holder: BasePart, s: number)
+local function playMeteors(L: Layer, holder: BasePart, s: number, len: number)
 	local groundY = holder.Position.Y
 	local accel = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * s
 	local baseDir = ({
@@ -382,6 +408,10 @@ local function playMeteors(L: Layer, holder: BasePart, s: number)
 	} :: any)[L.direction]
 	for _, ev in L.emit do
 		local n = math.max(1, math.floor(ev[2] * KaijuFireVFX.Quality + 0.5))
+		local startOff = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
+		if ev[3] ~= nil then
+			startOff += linePos(ev[3], ev[4], ev[5], s, len)
+		end
 		task.delay(ev[1], function()
 			if not holder.Parent then
 				return
@@ -392,7 +422,7 @@ local function playMeteors(L: Layer, holder: BasePart, s: number)
 					math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
 				local dir = holder.CFrame:VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
 				local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
-				local pos = holder.CFrame:PointToWorldSpace(Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s)
+				local pos = holder.CFrame:PointToWorldSpace(startOff)
 				local rock = Instance.new("Part")
 				rock.Name = "Rock"
 				rock.Anchored = true
@@ -493,17 +523,21 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, KaijuFireVFX.Parent)
 	for _, L in spec.layers do
 		if L.type == "meteor" then
-			playMeteors(L, holder, s)
+			playMeteors(L, holder, s, len)
 		elseif L.decal then
 			for _, ev in L.emit do
+				local off: Vector3? = nil
+				if ev[3] ~= nil then
+					off = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s + linePos(ev[3], ev[4], ev[5], s, len)
+				end
 				task.delay(ev[1], function()
 					if holder.Parent then
-						playDecal(L, holder, s, ev[2])
+						playDecal(L, holder, s, ev[2], off)
 					end
 				end)
 			end
 		else
-			local e, carrier = buildEmitter(L, holder, s)
+			local e, carrier = buildEmitter(L, holder, s, nil, len)
 			if #L.emit > 0 then
 				scheduleBursts(L, e, carrier, holder, s, len)
 			end
@@ -513,19 +547,41 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 		end
 	end
 	if KaijuFireVFX.UseLight and spec.light then
-		local li = Instance.new("PointLight")
-		li.Color = Color3.fromRGB(spec.light.color[1], spec.light.color[2], spec.light.color[3])
-		li.Brightness = spec.light.brightness
-		li.Range = math.min(spec.light.range * s, 60)
-		li.Shadows = false
-		li.Parent = holder
-		TweenService:Create(li, TweenInfo.new(spec.light.time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Brightness = 0 }):Play()
+		-- en los efectos de línea, hasta 3 luces repartidas que se encienden al paso de la pared
+		local n = if len > 0 then math.clamp(math.ceil(len / 50), 1, 3) else 1
+		for i = 1, n do
+			local u = if len > 0 then (i - 0.5) / n else 0
+			task.delay((spec.light.sweep or 0) * u, function()
+				if not holder.Parent then
+					return
+				end
+				local a = Instance.new("Attachment")
+				a.Name = "Light"
+				a.Position = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
+				a.Parent = holder
+				local li = Instance.new("PointLight")
+				li.Color = Color3.fromRGB(spec.light.color[1], spec.light.color[2], spec.light.color[3])
+				li.Brightness = spec.light.brightness
+				li.Range = math.min(spec.light.range * s, 60)
+				li.Shadows = false
+				li.Parent = a
+				TweenService:Create(li, TweenInfo.new(spec.light.time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Brightness = 0 }):Play()
+			end)
+		end
 	end
 	if shake and shake > 0 then
-		KaijuFireVFX.Shake(shake, 0.9)
+		if spec.shakes then
+			-- {t, intensidad relativa, duración}: p.ej. la detonación final de la H3 sacude más
+			for _, sk in spec.shakes do
+				task.delay(sk[1], KaijuFireVFX.Shake, shake * sk[2], sk[3])
+			end
+		else
+			KaijuFireVFX.Shake(shake, 0.9)
+		end
 	end
-	Debris:AddItem(holder, spec.duration + 0.3)
+	-- se destruye cuando ya murió la última partícula (cleanup >= duración)
+	Debris:AddItem(holder, spec.cleanup)
 	return holder
 end
 
@@ -538,15 +594,19 @@ def build():
     out = HEADER.replace("__TEXTURES__", tex_lines)
     for key, spec in SP.SPECS.items():
         data = {"name": spec["name"], "duration": spec["duration"],
+                "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
+        if spec.get("shakes"):
+            data["shakes"] = [list(x) for x in spec["shakes"]]
         if spec.get("light"):
             data["light"] = spec["light"]
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"
         doc = spec.get("doc", "")
         if spec.get("line"):
             out += (f"-- {doc}\n" if doc else "") + \
-                f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, scale: number?): Part\n" \
-                f"\treturn play(SPEC_{key}, cf, scale, (length or {spec['line']}) * (scale or 1))\nend\n\n"
+                f"-- length = largo de la línea en studs (por defecto {spec['line']} × escala).\n" + \
+                f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, scale: number?, shake: number?): Part\n" \
+                f"\treturn play(SPEC_{key}, cf, scale, length or {spec['line']} * (scale or 1), shake)\nend\n\n"
         else:
             out += (f"-- {doc}\n" if doc else "") + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, scale: number?, shake: number?): Part\n" \
@@ -555,18 +615,28 @@ def build():
     return out, tex
 
 
-src, TEX = build()
-with open(os.path.join(OUT, "KaijuFireVFX.lua"), "w") as f:
-    f.write(src)
-rbxmx = ('<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" '
-         'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-         'xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">\n'
-         '\t<Item class="ModuleScript" referent="RBX0">\n\t\t<Properties>\n'
-         '\t\t\t<string name="Name">KaijuFireVFX</string>\n'
-         '\t\t\t<ProtectedString name="Source"><![CDATA[' + src + ']]></ProtectedString>\n'
-         '\t\t</Properties>\n\t</Item>\n</roblox>\n')
-with open(os.path.join(OUT, "KaijuFireVFX.rbxmx"), "w") as f:
-    f.write(rbxmx)
-with open(os.path.join(OUT, "texturas_necesarias.txt"), "w") as f:
-    f.write("\n".join(t + ".png" for t in TEX) + "\n")
-print("OK", len(src.splitlines()), "líneas;", len(TEX), "texturas")
+def main(out):
+    os.makedirs(out, exist_ok=True)
+    src, tex = build()
+    write_outputs(out, src, tex)
+    print("OK", len(src.splitlines()), "líneas;", len(tex), "texturas")
+
+
+def write_outputs(OUT, src, TEX):
+    with open(os.path.join(OUT, "KaijuFireVFX.lua"), "w") as f:
+        f.write(src)
+    rbxmx = ('<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" '
+             'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+             'xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">\n'
+             '\t<Item class="ModuleScript" referent="RBX0">\n\t\t<Properties>\n'
+             '\t\t\t<string name="Name">KaijuFireVFX</string>\n'
+             '\t\t\t<ProtectedString name="Source"><![CDATA[' + src + ']]></ProtectedString>\n'
+             '\t\t</Properties>\n\t</Item>\n</roblox>\n')
+    with open(os.path.join(OUT, "KaijuFireVFX.rbxmx"), "w") as f:
+        f.write(rbxmx)
+    with open(os.path.join(OUT, "texturas_necesarias.txt"), "w") as f:
+        f.write("\n".join(t + ".png" for t in TEX) + "\n")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1] if len(sys.argv) > 1 else ".")
