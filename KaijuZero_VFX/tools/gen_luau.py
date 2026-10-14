@@ -33,7 +33,7 @@ def norm_layer(L):
     for k in ("rock_emit", "rock_stream"):
         if k in o:
             o[k] = [[list(e) for e in var] for var in o[k]]
-    for k in ("final_emit", "final_stream"):
+    for k in ("final_emit", "final_stream", "cone_emit"):
         if k in o:
             o[k] = [list(e) for e in o[k]]
     if o.get("type") == "meteor":
@@ -93,6 +93,7 @@ def layer_end(L, jitter=0.0):
     starts = [ev[0] for ev in L.get("emit", [])]
     starts += [ev[0] + jitter for var in L.get("rock_emit", []) for ev in var]
     starts += [ev[0] + jitter for ev in L.get("final_emit", [])]
+    starts += [ev[0] for ev in L.get("cone_emit", [])]
     if L.get("type") == "meteor":
         after = 0.0
         for T in L.get("trails", []):
@@ -123,15 +124,26 @@ def textures_of(layers):
     return out
 
 
-HEADER = r'''--!nonstrict
---[[
-	KaijuFireVFX — VFX de fuego para KAIJU ZERO
+DOC_KAIJU = """	KaijuFireVFX — VFX de fuego para KAIJU ZERO
 	(generado automáticamente desde vfx_specs.py; edita allí y regenera)
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local KaijuFireVFX = require(ReplicatedStorage.KaijuFireVFX)
 		-- cf = punto del SUELO bajo la explosión; 1 = escala; 1 = intensidad de la sacudida de cámara
-		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
+		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)"""
+
+DOC_ASTRAL = """	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
+	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
+
+	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
+		local AstralColossusVFX = require(ReplicatedStorage.AstralColossusVFX)
+		-- cf = vértice del triángulo en el SUELO (delante del kaiju), mirando hacia adelante
+		-- largo en studs, ángulo del triángulo en grados, escala, sacudida
+		AstralColossusVFX.AstralClash(cf, 70, 55, 1, 1)"""
+
+HEADER = r'''--!nonstrict
+--[[
+__DOC__
 
 	ANTES DE USARLO:
 	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
@@ -139,7 +151,7 @@ HEADER = r'''--!nonstrict
 	     (Usa el ID de la IMAGEN, no el de un Decal.)
 
 	CIERRE LIMPIO:
-	  - Ráfagas con Emit(); la emisión continua (fuego en el suelo) baja su Rate hasta 0.
+	  - Ráfagas con Emit(); la emisión continua baja su Rate hasta 0.
 	  - Nada vive más que la duración del efecto: el contenedor se destruye al final.
 ]]
 
@@ -158,7 +170,7 @@ __TEXTURES__
 KaijuFireVFX.Parent = workspace :: Instance
 -- Multiplicador de cantidad de partículas (bájalo en dispositivos lentos, p.ej. 0.6)
 KaijuFireVFX.Quality = 1
--- Luz naranja breve en el impacto
+-- Luz breve en el impacto (del color del efecto)
 KaijuFireVFX.UseLight = true
 
 type Layer = { [string]: any }
@@ -280,6 +292,29 @@ local function linePos(u: number, side: number, up: number, scale: number, len: 
 	return Vector3.new(side * scale, up * scale, -u * len)
 end
 
+-- punto del triángulo hacia adelante: u = fracción del largo, s = fracción del medio ancho en esa
+-- distancia, alto en studs. Devuelve la posición y la dirección desde el vértice hacia ese punto.
+local function conePoint(holder: BasePart, ev: { number }, scale: number, len: number, tanH: number, pitch: number?): (Vector3, Vector3)
+	local u, sf, up = ev[3], ev[4], ev[5]
+	local pos = holder.CFrame:PointToWorldSpace(Vector3.new(sf * u * len * tanH, up * scale, -u * len))
+	local dir = holder.CFrame:VectorToWorldSpace(Vector3.new(sf * tanH, 0, -1).Unit)
+	if pitch and pitch ~= 0 then      -- inclina la salida hacia arriba (p. ej. rocas que saltan)
+		local a = math.rad(pitch)
+		dir = (dir * math.cos(a) + holder.CFrame.UpVector * math.sin(a)).Unit
+	end
+	return pos, dir
+end
+
+-- orienta el portador para que su "Front" mire en dir (las partículas salen en abanico)
+local function aimCarrier(carrier: Instance, pos: Vector3, dir: Vector3)
+	local cf = CFrame.lookAt(pos, pos + dir)
+	if carrier:IsA("Attachment") then
+		(carrier :: Attachment).WorldCFrame = cf
+	else
+		(carrier :: BasePart).CFrame = cf
+	end
+end
+
 -- crea el emisor con su "portador": Part (si tiene forma) o Attachment
 local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos: Vector3?, len: number?): (ParticleEmitter, Instance)
 	local off = localPos
@@ -302,6 +337,9 @@ local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos:
 		carrier = a
 	end
 	local e = configureEmitter(L, scale)
+	if L.speed_len and len and len > 0 then      -- velocidad proporcional al largo (la ola cruza el triángulo)
+		e.Speed = NumberRange.new(L.speed_len[1] * len, L.speed_len[2] * len)
+	end
 	e.Parent = carrier
 	return e, carrier
 end
@@ -422,7 +460,7 @@ local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
 end
 
 -- lanza n rocas desde pos; groundY = altura del suelo donde caen
-local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, pos: Vector3, groundY: number)
+local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, pos: Vector3, groundY: number, frame: CFrame?)
 	local accel = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * s
 	local baseDir = ({
 		Top = Vector3.yAxis, Bottom = -Vector3.yAxis, Front = -Vector3.zAxis, Back = Vector3.zAxis,
@@ -432,7 +470,7 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 	for i = 1, n do
 		local spread = CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
 			math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
-		local dir = holder.CFrame:VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
+		local dir = (frame or holder.CFrame):VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
 		local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
 		local rock = Instance.new("Part")
 		rock.Name = "Rock"
@@ -726,12 +764,46 @@ local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, 
 	Debris:AddItem(holder, spec.cleanup)
 end
 
-local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?): Part
+local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
 	local len = length or 0
+	local tanH = math.tan(math.rad(math.clamp(angle or 60, 5, 170) / 2))
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, KaijuFireVFX.Parent)
 	for _, L in spec.layers do
-		if L.type == "meteor" then
+		if L.cone_emit and L.type == "meteor" then
+			for _, ev in L.cone_emit do
+				local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
+				local n = quality(ev[2])
+				task.delay(ev[1], function()
+					if holder.Parent then
+						launchMeteors(L, holder, s, n, pos, holder.Position.Y, CFrame.lookAt(pos, pos + dir))
+					end
+				end)
+			end
+		elseif L.cone_emit then
+			if L.decal then
+				for _, ev in L.cone_emit do
+					local pos, dir = conePoint(holder, ev, s, len, tanH)
+					task.delay(ev[1], function()
+						if holder.Parent then
+							playDecalAt(L, holder, s, ev[2], CFrame.lookAt(pos, pos + dir))
+						end
+					end)
+				end
+			else
+				local e, carrier = buildEmitter(L, holder, s, nil, len)
+				for _, ev in L.cone_emit do
+					local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
+					local n = quality(ev[2])
+					task.delay(ev[1], function()
+						if e.Parent then
+							aimCarrier(carrier, pos, dir)
+							e:Emit(n)
+						end
+					end)
+				end
+			end
+		elseif L.type == "meteor" then
 			playMeteors(L, holder, s, len)
 		elseif L.decal then
 			for _, ev in L.emit do
@@ -755,13 +827,20 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 			end
 		end
 	end
-	-- en los efectos de línea, hasta 3 luces repartidas que se encienden al paso de la pared
 	local lights: { { pos: Vector3, t: number } } = {}
-	local n = if len > 0 then math.clamp(math.ceil(len / 50), 1, 3) else 1
-	for i = 1, n do
-		local u = if len > 0 then (i - 0.5) / n else 0
-		local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
-		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+	if spec.cone then
+		-- triángulo: una luz en el choque y otra en medio del triángulo cuando pasa la onda
+		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(Vector3.new(0, 10 * s, 0)), t = 0 })
+		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(Vector3.new(0, 4 * s, -0.5 * len)),
+			t = spec.cone.wave[1] + 0.5 * spec.cone.wave[2] })
+	else
+		-- en los efectos de línea, hasta 3 luces repartidas que se encienden al paso de la pared
+		local n = if len > 0 then math.clamp(math.ceil(len / 50), 1, 3) else 1
+		for i = 1, n do
+			local u = if len > 0 then (i - 0.5) / n else 0
+			local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
+			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+		end
 	end
 	finish(spec, holder, s, shake, lights)
 	return holder
@@ -825,61 +904,76 @@ end
 '''
 
 
-def build():
-    tex = sorted(set().union(*(textures_of(spec["layers"]) for spec in SP.SPECS.values())))
+def build(specs, name, doc):
+    """Texto del ModuleScript `name` con los efectos de `specs`."""
+    tex = sorted(set().union(*(textures_of(spec["layers"]) for spec in specs.values())))
     tex_lines = "\n".join(f'\t{t} = "rbxassetid://0",' for t in tex)
-    out = HEADER.replace("__TEXTURES__", tex_lines)
-    for key, spec in SP.SPECS.items():
+    out = HEADER.replace("__DOC__", doc).replace("__TEXTURES__", tex_lines)
+    for key, spec in specs.items():
         data = {"name": spec["name"], "duration": spec["duration"],
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
-        if spec.get("shakes"):
-            data["shakes"] = [list(x) for x in spec["shakes"]]
-        if spec.get("rocks"):
-            data["rocks"] = spec["rocks"]
-        if spec.get("scale_mult"):
-            data["scale_mult"] = spec["scale_mult"]
-        if spec.get("light"):
-            data["light"] = spec["light"]
+        for k in ("shakes", "rocks", "scale_mult", "light", "cone"):
+            if spec.get(k):
+                data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"
-        doc = spec.get("doc", "")
+        doc_k = spec.get("doc", "")
+        head = f"-- {doc_k}\n" if doc_k else ""
         if spec.get("rocks"):
-            out += (f"-- {doc}\n" if doc else "") + \
+            out += head + \
                 "-- rocks = las rocas del rayo: lista de Vector3 (punto del suelo) o de las Parts/Models de las rocas.\n" \
                 "-- Todas detonan en el instante de la llamada; el pilar gigante sale en la roca más lejana.\n" + \
                 f"function KaijuFireVFX.{key}(rocks: {{ any }}, scale: number?, shake: number?): Part?\n" \
                 f"\treturn playRocks(SPEC_{key}, rocks, scale, shake)\nend\n\n"
+        elif spec.get("cone"):
+            c = spec["cone"]
+            out += head + \
+                f"-- length = largo del triángulo en studs (por defecto {c['length']} × escala); " \
+                f"angle = apertura en grados (por defecto {c['angle']}).\n" + \
+                f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, angle: number?, scale: number?, shake: number?): Part\n" \
+                f"\treturn play(SPEC_{key}, cf, scale, length or {c['length']} * (scale or 1), shake, angle or {c['angle']})\nend\n\n"
         elif spec.get("line"):
-            out += (f"-- {doc}\n" if doc else "") + \
+            out += head + \
                 f"-- length = largo de la línea en studs (por defecto {spec['line']} × escala).\n" + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, scale: number?, shake: number?): Part\n" \
                 f"\treturn play(SPEC_{key}, cf, scale, length or {spec['line']} * (scale or 1), shake)\nend\n\n"
         else:
-            out += (f"-- {doc}\n" if doc else "") + \
+            out += head + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, scale: number?, shake: number?): Part\n" \
                 f"\treturn play(SPEC_{key}, cf, scale, nil, shake)\nend\n\n"
     out += "return KaijuFireVFX\n"
-    return out, tex
+    if not any(spec.get("rocks") for spec in specs.values()):
+        # este módulo no usa efectos sobre rocas: el prefijo "_" evita el aviso de función sin usar
+        out = out.replace("local function playRocks(", "local function _playRocks(", 1)
+    return out.replace("KaijuFireVFX", name), tex
 
 
-def main(out):
-    os.makedirs(out, exist_ok=True)
-    src, tex = build()
-    write_outputs(out, src, tex)
-    print("OK", len(src.splitlines()), "líneas;", len(tex), "texturas")
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def write_outputs(OUT, src, TEX):
-    with open(os.path.join(OUT, "KaijuFireVFX.lua"), "w") as f:
+def main(out_kaiju, out_astral=None):
+    """Genera los dos módulos: KaijuFireVFX (Kaiju Zero) y AstralColossusVFX (Astral Colossus)."""
+    import vfx_astral as VA
+    out_astral = out_astral or os.path.join(REPO, "AstralColossus_VFX", "roblox")
+    for out, specs, name, doc in ((out_kaiju, SP.SPECS, "KaijuFireVFX", DOC_KAIJU),
+                                  (out_astral, VA.SPECS, "AstralColossusVFX", DOC_ASTRAL)):
+        os.makedirs(out, exist_ok=True)
+        src, tex = build(specs, name, doc)
+        write_outputs(out, src, tex, name)
+        print("OK", name, len(src.splitlines()), "líneas;", len(tex), "texturas ->", os.path.relpath(out, REPO))
+
+
+def write_outputs(OUT, src, TEX, name="KaijuFireVFX"):
+    with open(os.path.join(OUT, name + ".lua"), "w") as f:
         f.write(src)
     rbxmx = ('<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" '
              'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
              'xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">\n'
              '\t<Item class="ModuleScript" referent="RBX0">\n\t\t<Properties>\n'
-             '\t\t\t<string name="Name">KaijuFireVFX</string>\n'
+             f'\t\t\t<string name="Name">{name}</string>\n'
              '\t\t\t<ProtectedString name="Source"><![CDATA[' + src + ']]></ProtectedString>\n'
              '\t\t</Properties>\n\t</Item>\n</roblox>\n')
-    with open(os.path.join(OUT, "KaijuFireVFX.rbxmx"), "w") as f:
+    with open(os.path.join(OUT, name + ".rbxmx"), "w") as f:
         f.write(rbxmx)
     with open(os.path.join(OUT, "texturas_necesarias.txt"), "w") as f:
         f.write("\n".join(t + ".png" for t in TEX) + "\n")

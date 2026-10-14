@@ -14,7 +14,7 @@
 	     (Usa el ID de la IMAGEN, no el de un Decal.)
 
 	CIERRE LIMPIO:
-	  - Ráfagas con Emit(); la emisión continua (fuego en el suelo) baja su Rate hasta 0.
+	  - Ráfagas con Emit(); la emisión continua baja su Rate hasta 0.
 	  - Nada vive más que la duración del efecto: el contenedor se destruye al final.
 ]]
 
@@ -68,7 +68,7 @@ KaijuFireVFX.TEXTURES = {
 KaijuFireVFX.Parent = workspace :: Instance
 -- Multiplicador de cantidad de partículas (bájalo en dispositivos lentos, p.ej. 0.6)
 KaijuFireVFX.Quality = 1
--- Luz naranja breve en el impacto
+-- Luz breve en el impacto (del color del efecto)
 KaijuFireVFX.UseLight = true
 
 type Layer = { [string]: any }
@@ -190,6 +190,29 @@ local function linePos(u: number, side: number, up: number, scale: number, len: 
 	return Vector3.new(side * scale, up * scale, -u * len)
 end
 
+-- punto del triángulo hacia adelante: u = fracción del largo, s = fracción del medio ancho en esa
+-- distancia, alto en studs. Devuelve la posición y la dirección desde el vértice hacia ese punto.
+local function conePoint(holder: BasePart, ev: { number }, scale: number, len: number, tanH: number, pitch: number?): (Vector3, Vector3)
+	local u, sf, up = ev[3], ev[4], ev[5]
+	local pos = holder.CFrame:PointToWorldSpace(Vector3.new(sf * u * len * tanH, up * scale, -u * len))
+	local dir = holder.CFrame:VectorToWorldSpace(Vector3.new(sf * tanH, 0, -1).Unit)
+	if pitch and pitch ~= 0 then      -- inclina la salida hacia arriba (p. ej. rocas que saltan)
+		local a = math.rad(pitch)
+		dir = (dir * math.cos(a) + holder.CFrame.UpVector * math.sin(a)).Unit
+	end
+	return pos, dir
+end
+
+-- orienta el portador para que su "Front" mire en dir (las partículas salen en abanico)
+local function aimCarrier(carrier: Instance, pos: Vector3, dir: Vector3)
+	local cf = CFrame.lookAt(pos, pos + dir)
+	if carrier:IsA("Attachment") then
+		(carrier :: Attachment).WorldCFrame = cf
+	else
+		(carrier :: BasePart).CFrame = cf
+	end
+end
+
 -- crea el emisor con su "portador": Part (si tiene forma) o Attachment
 local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos: Vector3?, len: number?): (ParticleEmitter, Instance)
 	local off = localPos
@@ -212,6 +235,9 @@ local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos:
 		carrier = a
 	end
 	local e = configureEmitter(L, scale)
+	if L.speed_len and len and len > 0 then      -- velocidad proporcional al largo (la ola cruza el triángulo)
+		e.Speed = NumberRange.new(L.speed_len[1] * len, L.speed_len[2] * len)
+	end
 	e.Parent = carrier
 	return e, carrier
 end
@@ -332,7 +358,7 @@ local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
 end
 
 -- lanza n rocas desde pos; groundY = altura del suelo donde caen
-local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, pos: Vector3, groundY: number)
+local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, pos: Vector3, groundY: number, frame: CFrame?)
 	local accel = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * s
 	local baseDir = ({
 		Top = Vector3.yAxis, Bottom = -Vector3.yAxis, Front = -Vector3.zAxis, Back = Vector3.zAxis,
@@ -342,7 +368,7 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 	for i = 1, n do
 		local spread = CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
 			math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
-		local dir = holder.CFrame:VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
+		local dir = (frame or holder.CFrame):VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
 		local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
 		local rock = Instance.new("Part")
 		rock.Name = "Rock"
@@ -636,12 +662,46 @@ local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, 
 	Debris:AddItem(holder, spec.cleanup)
 end
 
-local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?): Part
+local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
 	local len = length or 0
+	local tanH = math.tan(math.rad(math.clamp(angle or 60, 5, 170) / 2))
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, KaijuFireVFX.Parent)
 	for _, L in spec.layers do
-		if L.type == "meteor" then
+		if L.cone_emit and L.type == "meteor" then
+			for _, ev in L.cone_emit do
+				local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
+				local n = quality(ev[2])
+				task.delay(ev[1], function()
+					if holder.Parent then
+						launchMeteors(L, holder, s, n, pos, holder.Position.Y, CFrame.lookAt(pos, pos + dir))
+					end
+				end)
+			end
+		elseif L.cone_emit then
+			if L.decal then
+				for _, ev in L.cone_emit do
+					local pos, dir = conePoint(holder, ev, s, len, tanH)
+					task.delay(ev[1], function()
+						if holder.Parent then
+							playDecalAt(L, holder, s, ev[2], CFrame.lookAt(pos, pos + dir))
+						end
+					end)
+				end
+			else
+				local e, carrier = buildEmitter(L, holder, s, nil, len)
+				for _, ev in L.cone_emit do
+					local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
+					local n = quality(ev[2])
+					task.delay(ev[1], function()
+						if e.Parent then
+							aimCarrier(carrier, pos, dir)
+							e:Emit(n)
+						end
+					end)
+				end
+			end
+		elseif L.type == "meteor" then
 			playMeteors(L, holder, s, len)
 		elseif L.decal then
 			for _, ev in L.emit do
@@ -665,13 +725,20 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 			end
 		end
 	end
-	-- en los efectos de línea, hasta 3 luces repartidas que se encienden al paso de la pared
 	local lights: { { pos: Vector3, t: number } } = {}
-	local n = if len > 0 then math.clamp(math.ceil(len / 50), 1, 3) else 1
-	for i = 1, n do
-		local u = if len > 0 then (i - 0.5) / n else 0
-		local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
-		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+	if spec.cone then
+		-- triángulo: una luz en el choque y otra en medio del triángulo cuando pasa la onda
+		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(Vector3.new(0, 10 * s, 0)), t = 0 })
+		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(Vector3.new(0, 4 * s, -0.5 * len)),
+			t = spec.cone.wave[1] + 0.5 * spec.cone.wave[2] })
+	else
+		-- en los efectos de línea, hasta 3 luces repartidas que se encienden al paso de la pared
+		local n = if len > 0 then math.clamp(math.ceil(len / 50), 1, 3) else 1
+		for i = 1, n do
+			local u = if len > 0 then (i - 0.5) / n else 0
+			local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
+			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+		end
 	end
 	finish(spec, holder, s, shake, lights)
 	return holder

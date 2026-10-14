@@ -141,6 +141,8 @@ Después de editarlos se regenera el módulo con:
 python tools/gen_luau.py roblox
 ```
 
+El mismo comando regenera también el módulo de Astral Colossus (`AstralColossus_VFX/roblox`), que usa el mismo motor.
+
 Las pruebas que validan el módulo son estas:
 - `tools/test_luau/run_runtime.py`: ejecuta cada efecto contra un Roblox simulado. Comprueba que se limpie todo y, en la H3, que cada roca reciba su explosión y que el remate quede en la última.
 - `luau-lsp analyze` con las definiciones de Roblox: verifica que todas las propiedades y métodos existan en la API.

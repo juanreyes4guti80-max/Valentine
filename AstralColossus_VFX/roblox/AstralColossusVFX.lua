@@ -1,0 +1,3334 @@
+--!nonstrict
+--[[
+	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
+	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
+
+	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
+		local AstralColossusVFX = require(ReplicatedStorage.AstralColossusVFX)
+		-- cf = vértice del triángulo en el SUELO (delante del kaiju), mirando hacia adelante
+		-- largo en studs, ángulo del triángulo en grados, escala, sacudida
+		AstralColossusVFX.AstralClash(cf, 70, 55, 1, 1)
+
+	ANTES DE USARLO:
+	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
+	  2) Clic derecho en cada imagen > "Copy ID to clipboard" y pégalo en TEXTURES.
+	     (Usa el ID de la IMAGEN, no el de un Decal.)
+
+	CIERRE LIMPIO:
+	  - Ráfagas con Emit(); la emisión continua baja su Rate hasta 0.
+	  - Nada vive más que la duración del efecto: el contenedor se destruye al final.
+]]
+
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local AstralColossusVFX = {}
+
+-- Pega aquí los IDs de las imágenes subidas
+AstralColossusVFX.TEXTURES = {
+	fx_fog2001 = "rbxassetid://0",
+	fx_fog3001 = "rbxassetid://0",
+	fx_glow = "rbxassetid://0",
+	fx_particle02 = "rbxassetid://0",
+	fx_shock_soft = "rbxassetid://0",
+	fx_shock_wave003 = "rbxassetid://0",
+	fx_spark002 = "rbxassetid://0",
+	fx_wind_swirl = "rbxassetid://0",
+	kk_circle_03 = "rbxassetid://0",
+	kk_smoke_04 = "rbxassetid://0",
+	kk_smoke_07 = "rbxassetid://0",
+	kk_spark_02 = "rbxassetid://0",
+	kk_spark_05 = "rbxassetid://0",
+	kk_spark_06 = "rbxassetid://0",
+	kk_star_06 = "rbxassetid://0",
+	kk_star_08 = "rbxassetid://0",
+	kk_star_09 = "rbxassetid://0",
+	kk_trace_01 = "rbxassetid://0",
+	kk_trace_07 = "rbxassetid://0",
+	kz_debris_2x2 = "rbxassetid://0",
+	kz_scorch = "rbxassetid://0",
+}
+
+-- Dónde se crean los efectos (puedes cambiarlo por una carpeta de VFX)
+AstralColossusVFX.Parent = workspace :: Instance
+-- Multiplicador de cantidad de partículas (bájalo en dispositivos lentos, p.ej. 0.6)
+AstralColossusVFX.Quality = 1
+-- Luz breve en el impacto (del color del efecto)
+AstralColossusVFX.UseLight = true
+
+type Layer = { [string]: any }
+
+local rng = Random.new()
+
+local function numberSeq(points: { { number } }, scale: number): NumberSequence
+	local kps = table.create(#points)
+	for i, p in points do
+		local v = math.max(p[2] * scale, 0)
+		kps[i] = NumberSequenceKeypoint.new(p[1], v, math.min((p[3] or 0) * scale, v))
+	end
+	return NumberSequence.new(kps)
+end
+
+local function transparencySeq(points: { { number } }): NumberSequence
+	local kps = table.create(#points)
+	for i, p in points do
+		kps[i] = NumberSequenceKeypoint.new(p[1], math.clamp(p[2], 0, 1), p[3] or 0)
+	end
+	return NumberSequence.new(kps)
+end
+
+local function colorSeq(points: { any }): ColorSequence
+	local kps = table.create(#points)
+	for i, p in points do
+		local c = p[2]
+		kps[i] = ColorSequenceKeypoint.new(p[1], Color3.fromRGB(c[1], c[2], c[3]))
+	end
+	return ColorSequence.new(kps)
+end
+
+-- evaluación de secuencias (para los decals del suelo)
+local function evalNum(points: { { number } }, t: number): number
+	if t <= points[1][1] then
+		return points[1][2]
+	end
+	for i = 1, #points - 1 do
+		local a, b = points[i], points[i + 1]
+		if t <= b[1] then
+			local u = (t - a[1]) / math.max(b[1] - a[1], 1e-6)
+			return a[2] + (b[2] - a[2]) * u
+		end
+	end
+	return points[#points][2]
+end
+
+local function evalColor(points: { any }, t: number): Color3
+	local function c3(c)
+		return Color3.fromRGB(c[1], c[2], c[3])
+	end
+	if t <= points[1][1] then
+		return c3(points[1][2])
+	end
+	for i = 1, #points - 1 do
+		local a, b = points[i], points[i + 1]
+		if t <= b[1] then
+			local u = (t - a[1]) / math.max(b[1] - a[1], 1e-6)
+			return c3(a[2]):Lerp(c3(b[2]), u)
+		end
+	end
+	return c3(points[#points][2])
+end
+
+local function invisiblePart(name: string, size: Vector3, cf: CFrame, parent: Instance): Part
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Transparency = 1
+	p.Size = size
+	p.CFrame = cf
+	p.Parent = parent
+	return p
+end
+
+local function configureEmitter(L: Layer, scale: number): ParticleEmitter
+	local e = Instance.new("ParticleEmitter")
+	e.Name = L.name
+	e.Enabled = false
+	e.Rate = 0
+	e.Texture = AstralColossusVFX.TEXTURES[L.texture] or ""
+	e.Lifetime = NumberRange.new(L.lifetime[1], L.lifetime[2])
+	e.Speed = NumberRange.new(L.speed[1] * scale, L.speed[2] * scale)
+	e.SpreadAngle = Vector2.new(L.spread[1], L.spread[2])
+	e.EmissionDirection = (Enum.NormalId :: any)[L.direction]
+	e.Acceleration = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * scale
+	e.Drag = L.drag
+	e.Size = numberSeq(L.size, scale)
+	e.Transparency = transparencySeq(L.transparency)
+	e.Color = colorSeq(L.color)
+	e.LightEmission = L.light_emission
+	e.LightInfluence = 0
+	e.Brightness = L.brightness
+	e.Rotation = NumberRange.new(L.rotation[1], L.rotation[2])
+	e.RotSpeed = NumberRange.new(L.rot_speed[1], L.rot_speed[2])
+	e.ZOffset = L.zoffset * scale
+	e.Orientation = (Enum.ParticleOrientation :: any)[L.orientation]
+	e.LockedToPart = false
+	if L.flipbook then
+		e.FlipbookLayout = (Enum.ParticleFlipbookLayout :: any)[L.flipbook.layout]
+		e.FlipbookMode = (Enum.ParticleFlipbookMode :: any)[L.flipbook.mode]
+		e.FlipbookFramerate = NumberRange.new(L.flipbook.fps)
+		e.FlipbookStartRandom = L.flipbook.startRandom
+	end
+	if L.shape then
+		e.Shape = (Enum.ParticleEmitterShape :: any)[L.shape.type]
+		e.ShapeStyle = (Enum.ParticleEmitterShapeStyle :: any)[L.shape.style]
+		e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+	end
+	return e
+end
+
+-- posición local de un punto de la línea: u = fracción del largo (hacia adelante = -Z), lado, alto
+local function linePos(u: number, side: number, up: number, scale: number, len: number): Vector3
+	return Vector3.new(side * scale, up * scale, -u * len)
+end
+
+-- punto del triángulo hacia adelante: u = fracción del largo, s = fracción del medio ancho en esa
+-- distancia, alto en studs. Devuelve la posición y la dirección desde el vértice hacia ese punto.
+local function conePoint(holder: BasePart, ev: { number }, scale: number, len: number, tanH: number, pitch: number?): (Vector3, Vector3)
+	local u, sf, up = ev[3], ev[4], ev[5]
+	local pos = holder.CFrame:PointToWorldSpace(Vector3.new(sf * u * len * tanH, up * scale, -u * len))
+	local dir = holder.CFrame:VectorToWorldSpace(Vector3.new(sf * tanH, 0, -1).Unit)
+	if pitch and pitch ~= 0 then      -- inclina la salida hacia arriba (p. ej. rocas que saltan)
+		local a = math.rad(pitch)
+		dir = (dir * math.cos(a) + holder.CFrame.UpVector * math.sin(a)).Unit
+	end
+	return pos, dir
+end
+
+-- orienta el portador para que su "Front" mire en dir (las partículas salen en abanico)
+local function aimCarrier(carrier: Instance, pos: Vector3, dir: Vector3)
+	local cf = CFrame.lookAt(pos, pos + dir)
+	if carrier:IsA("Attachment") then
+		(carrier :: Attachment).WorldCFrame = cf
+	else
+		(carrier :: BasePart).CFrame = cf
+	end
+end
+
+-- crea el emisor con su "portador": Part (si tiene forma) o Attachment
+local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos: Vector3?, len: number?): (ParticleEmitter, Instance)
+	local off = localPos
+		or (Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * scale + linePos(L.line_u or 0, 0, 0, scale, len or 0))
+	local carrier: Instance
+	if L.shape then
+		local size
+		if L.shape.type == "Box" then
+			size = Vector3.new(L.shape.size[1], L.shape.size[2], L.shape.size[3]) * scale
+		else
+			local d = L.shape.radius * 2 * scale
+			size = Vector3.new(d, d, d)
+		end
+		carrier = invisiblePart(L.name .. "_Shape", size, holder.CFrame * CFrame.new(off), holder)
+	else
+		local a = Instance.new("Attachment")
+		a.Name = L.name
+		a.Position = off
+		a.Parent = holder
+		carrier = a
+	end
+	local e = configureEmitter(L, scale)
+	if L.speed_len and len and len > 0 then      -- velocidad proporcional al largo (la ola cruza el triángulo)
+		e.Speed = NumberRange.new(L.speed_len[1] * len, L.speed_len[2] * len)
+	end
+	e.Parent = carrier
+	return e, carrier
+end
+
+-- emisión continua: Rate interpolado por ventanas {t0, t1, rate0, rate1}
+local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?)
+	local tEnd = 0
+	for _, w in L.stream do
+		tEnd = math.max(tEnd, w[2])
+	end
+	task.spawn(function()
+		if delayStart and delayStart > 0 then
+			task.wait(delayStart)
+		end
+		local t0 = time()
+		while e.Parent do
+			local t = time() - t0
+			if t > tEnd then
+				break
+			end
+			local rate = 0
+			for _, w in L.stream do
+				if t >= w[1] and t <= w[2] then
+					rate += w[3] + (w[4] - w[3]) * (t - w[1]) / math.max(w[2] - w[1], 1e-3)
+				end
+			end
+			e.Rate = rate * AstralColossusVFX.Quality
+			e.Enabled = rate > 0.05
+			task.wait(0.05)
+		end
+		if e.Parent then
+			e.Enabled = false
+		end
+	end)
+end
+
+local function quality(n: number): number
+	return math.max(1, math.floor(n * AstralColossusVFX.Quality + 0.5))
+end
+
+-- coloca el portador del emisor (Attachment o Part con forma) en un punto del mundo
+local function placeCarrier(carrier: Instance, holder: BasePart, pos: Vector3)
+	if carrier:IsA("Attachment") then
+		(carrier :: Attachment).WorldPosition = pos
+	else
+		(carrier :: BasePart).CFrame = holder.CFrame.Rotation + pos
+	end
+end
+
+-- elemento plano del suelo hecho con Decal (sin límite de tamaño); baseCF = dónde va (horizontal)
+local function playDecalAt(L: Layer, holder: BasePart, scale: number, n: number, baseCF: CFrame)
+	for _ = 1, n do
+		local life = rng:NextNumber(L.lifetime[1], L.lifetime[2])
+		local rot = math.rad(rng:NextNumber(L.rotation[1], L.rotation[2]))
+		local cf = baseCF * CFrame.Angles(0, rot, 0)
+		local p = invisiblePart(L.name, Vector3.new(0.1, 0.05, 0.1), cf, holder)
+		-- los Decals no tienen LightEmission: un Color3 mayor que 1 los hace brillar (con Bloom)
+		local glow = 1 + 1.5 * (L.light_emission or 0)
+		local d = Instance.new("Decal")
+		d.Face = Enum.NormalId.Top
+		d.Texture = AstralColossusVFX.TEXTURES[L.texture] or ""
+		d.Transparency = 1
+		d.Parent = p
+		local t0 = time()
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function()
+			local t = (time() - t0) / life
+			if t >= 1 or not p.Parent then
+				conn:Disconnect()
+				p:Destroy()
+				return
+			end
+			local sz = math.max(evalNum(L.size, t) * scale, 0.1)
+			p.Size = Vector3.new(sz, 0.05, sz)
+			p.CFrame = cf
+			d.Transparency = math.clamp(evalNum(L.transparency, t), 0, 1)
+			local c = evalColor(L.color, t)
+			d.Color3 = Color3.new(c.R * glow, c.G * glow, c.B * glow)
+		end)
+	end
+end
+
+-- ráfagas Emit() programadas (y posiciones a lo largo de una línea)
+local function scheduleBursts(L: Layer, e: ParticleEmitter, carrier: Instance, holder: BasePart, s: number, len: number)
+	local baseOff = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
+	for _, ev in L.emit do
+		local t, n = ev[1], quality(ev[2])
+		local off = baseOff + linePos(L.line_u or 0, 0, 0, s, len)
+		if ev[3] ~= nil then
+			off = baseOff + linePos(ev[3], ev[4], ev[5], s, len)
+		end
+		local function fire()
+			if not e.Parent then
+				return
+			end
+			placeCarrier(carrier, holder, holder.CFrame:PointToWorldSpace(off))
+			e:Emit(n)
+		end
+		if t <= 0 then
+			fire()
+		else
+			task.delay(t, fire)
+		end
+	end
+end
+
+-- rocas en llamas: vuelan con estela, y al caer levantan polvo y dejan fuego
+local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
+	local localPos = holder.CFrame:PointToObjectSpace(worldPos)
+	for _, LL in L.land do
+		local e = buildEmitter(LL, holder, s, localPos)
+		if LL.stream then
+			runStream(LL, e)
+		else
+			e:Emit(quality(LL.emit[1][2]))
+		end
+	end
+end
+
+-- lanza n rocas desde pos; groundY = altura del suelo donde caen
+local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, pos: Vector3, groundY: number, frame: CFrame?)
+	local accel = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * s
+	local baseDir = ({
+		Top = Vector3.yAxis, Bottom = -Vector3.yAxis, Front = -Vector3.zAxis, Back = Vector3.zAxis,
+		Right = Vector3.xAxis, Left = -Vector3.xAxis,
+	} :: any)[L.direction]
+	local list = {}
+	for i = 1, n do
+		local spread = CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
+			math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
+		local dir = (frame or holder.CFrame):VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
+		local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
+		local rock = Instance.new("Part")
+		rock.Name = "Rock"
+		rock.Anchored = true
+		rock.CanCollide = false
+		rock.CanQuery = false
+		rock.CanTouch = false
+		rock.CastShadow = false
+		rock.Material = Enum.Material.Slate
+		rock.Color = Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
+		rock.Size = Vector3.new(sz, sz * 0.8, sz * 0.9)
+		rock.CFrame = CFrame.new(pos)
+		rock.Parent = holder
+		local att = Instance.new("Attachment")
+		att.Parent = rock
+		local emitters = {}
+		for _, TL in L.trails do
+			local te = configureEmitter(TL, s)
+			te.Rate = TL.rate * AstralColossusVFX.Quality
+			te.Enabled = true
+			te.Parent = att
+			table.insert(emitters, te)
+		end
+		local spin = math.rad(rng:NextNumber(L.rock.spin[1], L.rock.spin[2]))
+		list[i] = {
+			rock = rock, pos = pos, vel = dir * rng:NextNumber(L.speed[1], L.speed[2]) * s,
+			age = 0, life = rng:NextNumber(L.lifetime[1], L.lifetime[2]),
+			rot = CFrame.Angles(rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), 0),
+			spinAxis = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1)).Unit,
+			spin = spin, emitters = emitters, done = false,
+		}
+	end
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function(dt)
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local alive = 0
+		for _, m in list do
+			if m.done then
+				continue
+			end
+			alive += 1
+			m.vel = m.vel * 2 ^ (-L.drag * dt) + accel * dt
+			m.pos += m.vel * dt
+			m.age += dt
+			m.rot = CFrame.fromAxisAngle(m.spinAxis, m.spin * dt) * m.rot
+			m.rock.CFrame = CFrame.new(m.pos) * m.rot
+			if (m.pos.Y <= groundY + 0.3 * s and m.vel.Y < 0) or m.age >= m.life then
+				m.done = true
+				for _, te in m.emitters do
+					te.Enabled = false
+				end
+				m.rock.Transparency = 1
+				if m.pos.Y <= groundY + 0.6 * s then
+					landAt(L, holder, s, Vector3.new(m.pos.X, groundY + 0.4 * s, m.pos.Z))
+				end
+			end
+		end
+		if alive == 0 then
+			conn:Disconnect()
+		end
+	end)
+end
+
+local function playMeteors(L: Layer, holder: BasePart, s: number, len: number)
+	local groundY = holder.Position.Y
+	for _, ev in L.emit do
+		local n = quality(ev[2])
+		local startOff = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
+		if ev[3] ~= nil then
+			startOff += linePos(ev[3], ev[4], ev[5], s, len)
+		end
+		task.delay(ev[1], function()
+			if holder.Parent then
+				launchMeteors(L, holder, s, n, holder.CFrame:PointToWorldSpace(startOff), groundY)
+			end
+		end)
+	end
+end
+
+-- ---------------------------------------------------------------- efectos sobre las rocas del juego (H3)
+type RockInfo = { pos: Vector3, gap: number, delay: number }
+
+-- punto del suelo bajo una roca: el Vector3 tal cual, o un rayo hacia abajo desde la Part / el Model
+local function groundPoint(item: any, exclude: { Instance }): Vector3
+	if typeof(item) == "Vector3" then
+		return item
+	end
+	local center: Vector3, height: number
+	if item:IsA("Model") then
+		center = (item :: Model):GetPivot().Position
+		height = (item :: Model):GetExtentsSize().Y
+	else
+		center = (item :: BasePart).Position
+		height = (item :: BasePart).Size.Y
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = exclude
+	local hit = workspace:Raycast(center, Vector3.new(0, -(height + 40), 0), params)
+	if hit then
+		return hit.Position
+	end
+	return center - Vector3.new(0, height * 0.5, 0)
+end
+
+-- ordena las rocas a lo largo de la línea y da a cada una su separación (gap) y un retraso mínimo
+local function rockLayout(spec: Layer, rocks: { any }, s: number): ({ RockInfo }, Vector3)
+	local exclude = {}
+	for _, r in rocks do
+		if typeof(r) == "Instance" then
+			table.insert(exclude, r)
+		end
+	end
+	local pts = {}
+	for i, r in rocks do
+		pts[i] = groundPoint(r, exclude)
+	end
+	local d = pts[#pts] - pts[1]
+	d = Vector3.new(d.X, 0, d.Z)
+	local dir = if d.Magnitude > 0.1 then d.Unit else Vector3.new(0, 0, -1)
+	local origin = pts[1]
+	table.sort(pts, function(a: Vector3, b: Vector3)
+		return (a - origin):Dot(dir) < (b - origin):Dot(dir)
+	end)
+	local cfg = spec.rocks
+	local list: { RockInfo } = {}
+	for i, p in pts do
+		local sum, cnt = 0, 0
+		if i > 1 then
+			sum += (p - pts[i - 1]):Dot(dir)
+			cnt += 1
+		end
+		if i < #pts then
+			sum += (pts[i + 1] - p):Dot(dir)
+			cnt += 1
+		end
+		local gap = if cnt > 0 then sum / cnt else cfg.gap * s
+		gap = math.clamp(gap, cfg.gap_min * s, cfg.gap_max * s)
+		list[i] = { pos = p, gap = gap, delay = rng:NextNumber(0, cfg.jitter) }
+	end
+	return list, dir
+end
+
+-- posición de una emisión relativa a una roca: du (en separaciones) adelante, lado y alto en studs
+local function rockPos(r: RockInfo, dir: Vector3, s: number, du: number, side: number, up: number, off: Vector3?): Vector3
+	local right = dir:Cross(Vector3.yAxis)
+	local o = off or Vector3.zero
+	return r.pos + dir * (du * r.gap - o.Z * s) + right * ((side + o.X) * s) + Vector3.yAxis * ((up + o.Y) * s)
+end
+
+-- recorre las emisiones de una capa en cada roca (variante i % n) y en la última (el remate)
+local function forRockEvents(L: Layer, R: { RockInfo }, dir: Vector3, s: number, fn: (number, number, Vector3, RockInfo) -> ())
+	local vars = L.rock_emit
+	if vars and #vars > 0 then
+		for i, r in R do
+			for _, ev in vars[(i - 1) % #vars + 1] do
+				fn(ev[1] + r.delay, ev[2], rockPos(r, dir, s, ev[3], ev[4], ev[5]), r)
+			end
+		end
+	end
+	if L.final_emit then
+		local r = R[#R]
+		for _, ev in L.final_emit do
+			fn(ev[1] + r.delay, ev[2], rockPos(r, dir, s, ev[3], ev[4], ev[5]), r)
+		end
+	end
+end
+
+-- fuentes de emisión continua (marcas de fuego) en cada roca y en el remate
+local function rockSources(L: Layer, R: { RockInfo }, dir: Vector3, s: number): { { pos: Vector3, delay: number } }
+	local off = Vector3.new(L.offset[1], L.offset[2], L.offset[3])
+	local out = {}
+	local vars = L.rock_stream
+	if vars and #vars > 0 then
+		for i, r in R do
+			for _, src in vars[(i - 1) % #vars + 1] do
+				table.insert(out, { pos = rockPos(r, dir, s, src[2], src[3], src[4], off), delay = src[1] + r.delay })
+			end
+		end
+	end
+	if L.final_stream then
+		local r = R[#R]
+		for _, src in L.final_stream do
+			table.insert(out, { pos = rockPos(r, dir, s, src[2], src[3], src[4], off), delay = src[1] + r.delay })
+		end
+	end
+	return out
+end
+
+-- emisión continua en varias posiciones con UN solo emisor: cada fuente acumula su propio Rate
+local function runMultiStream(L: Layer, e: ParticleEmitter, carrier: Instance, holder: BasePart, sources: { { pos: Vector3, delay: number } })
+	local tEnd = 0
+	for _, w in L.stream do
+		tEnd = math.max(tEnd, w[2])
+	end
+	local last = 0
+	for _, src in sources do
+		last = math.max(last, src.delay + tEnd)
+	end
+	local acc = table.create(#sources, 0)
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function(dt)
+		local t = time() - t0
+		if not e.Parent or t > last then
+			conn:Disconnect()
+			return
+		end
+		for i, src in sources do
+			local lt = t - src.delay
+			local rate = 0
+			for _, w in L.stream do
+				if lt >= w[1] and lt <= w[2] then
+					rate += w[3] + (w[4] - w[3]) * (lt - w[1]) / math.max(w[2] - w[1], 1e-3)
+				end
+			end
+			acc[i] += rate * AstralColossusVFX.Quality * dt
+			while acc[i] >= 1 do
+				acc[i] -= 1
+				placeCarrier(carrier, holder, src.pos)
+				e:Emit(1)
+			end
+		end
+	end)
+end
+
+-- Sacudida de cámara (solo cliente). intensity ~ 0.5 (suave) .. 2 (fuerte)
+function AstralColossusVFX.Shake(intensity: number, duration: number?)
+	if not RunService:IsClient() then
+		return
+	end
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local dur = duration or 0.9
+	local t0 = time()
+	local name = "KZShake" .. tostring(rng:NextInteger(1, 1000000000))
+	local seed = rng:NextNumber(0, 1000)
+	RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
+		local t = time() - t0
+		if t > dur then
+			RunService:UnbindFromRenderStep(name)
+			return
+		end
+		local a = intensity * math.exp(-t / (dur * 0.35))
+		local rx = math.noise(seed, t * 24) * a * 0.03
+		local ry = math.noise(seed + 17, t * 24) * a * 0.03
+		local rz = math.noise(seed + 31, t * 16) * a * 0.015
+		cam.CFrame = cam.CFrame * CFrame.Angles(rx, ry, rz)
+	end)
+end
+
+-- luces, sacudida y limpieza (comunes a todos los efectos)
+local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, lights: { { pos: Vector3, t: number } })
+	if AstralColossusVFX.UseLight and spec.light then
+		for _, lt in lights do
+			task.delay(lt.t, function()
+				if not holder.Parent then
+					return
+				end
+				local a = Instance.new("Attachment")
+				a.Name = "Light"
+				a.Parent = holder
+				a.WorldPosition = lt.pos
+				local li = Instance.new("PointLight")
+				li.Color = Color3.fromRGB(spec.light.color[1], spec.light.color[2], spec.light.color[3])
+				li.Brightness = spec.light.brightness
+				li.Range = math.min(spec.light.range * s, 60)
+				li.Shadows = false
+				li.Parent = a
+				TweenService:Create(li, TweenInfo.new(spec.light.time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Brightness = 0 }):Play()
+			end)
+		end
+	end
+	if shake and shake > 0 then
+		if spec.shakes then
+			-- {t, intensidad relativa, duración}
+			for _, sk in spec.shakes do
+				task.delay(sk[1], AstralColossusVFX.Shake, shake * sk[2], sk[3])
+			end
+		else
+			AstralColossusVFX.Shake(shake, 0.9)
+		end
+	end
+	-- se destruye cuando ya murió la última partícula (cleanup >= duración)
+	Debris:AddItem(holder, spec.cleanup)
+end
+
+local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local len = length or 0
+	local tanH = math.tan(math.rad(math.clamp(angle or 60, 5, 170) / 2))
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, AstralColossusVFX.Parent)
+	for _, L in spec.layers do
+		if L.cone_emit and L.type == "meteor" then
+			for _, ev in L.cone_emit do
+				local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
+				local n = quality(ev[2])
+				task.delay(ev[1], function()
+					if holder.Parent then
+						launchMeteors(L, holder, s, n, pos, holder.Position.Y, CFrame.lookAt(pos, pos + dir))
+					end
+				end)
+			end
+		elseif L.cone_emit then
+			if L.decal then
+				for _, ev in L.cone_emit do
+					local pos, dir = conePoint(holder, ev, s, len, tanH)
+					task.delay(ev[1], function()
+						if holder.Parent then
+							playDecalAt(L, holder, s, ev[2], CFrame.lookAt(pos, pos + dir))
+						end
+					end)
+				end
+			else
+				local e, carrier = buildEmitter(L, holder, s, nil, len)
+				for _, ev in L.cone_emit do
+					local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
+					local n = quality(ev[2])
+					task.delay(ev[1], function()
+						if e.Parent then
+							aimCarrier(carrier, pos, dir)
+							e:Emit(n)
+						end
+					end)
+				end
+			end
+		elseif L.type == "meteor" then
+			playMeteors(L, holder, s, len)
+		elseif L.decal then
+			for _, ev in L.emit do
+				local off = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
+				if ev[3] ~= nil then
+					off += linePos(ev[3], ev[4], ev[5], s, len)
+				end
+				task.delay(ev[1], function()
+					if holder.Parent then
+						playDecalAt(L, holder, s, ev[2], holder.CFrame * CFrame.new(off))
+					end
+				end)
+			end
+		else
+			local e, carrier = buildEmitter(L, holder, s, nil, len)
+			if #L.emit > 0 then
+				scheduleBursts(L, e, carrier, holder, s, len)
+			end
+			if L.stream then
+				runStream(L, e)
+			end
+		end
+	end
+	local lights: { { pos: Vector3, t: number } } = {}
+	if spec.cone then
+		-- triángulo: una luz en el choque y otra en medio del triángulo cuando pasa la onda
+		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(Vector3.new(0, 10 * s, 0)), t = 0 })
+		table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(Vector3.new(0, 4 * s, -0.5 * len)),
+			t = spec.cone.wave[1] + 0.5 * spec.cone.wave[2] })
+	else
+		-- en los efectos de línea, hasta 3 luces repartidas que se encienden al paso de la pared
+		local n = if len > 0 then math.clamp(math.ceil(len / 50), 1, 3) else 1
+		for i = 1, n do
+			local u = if len > 0 then (i - 0.5) / n else 0
+			local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
+			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+		end
+	end
+	finish(spec, holder, s, shake, lights)
+	return holder
+end
+
+-- efecto sobre las rocas del juego: todas detonan a la vez (con una diferencia mínima)
+local function _playRocks(spec: Layer, rocks: { any }, scale: number?, shake: number?): Part?
+	if #rocks == 0 then
+		return nil
+	end
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local R, dir = rockLayout(spec, rocks, s)
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2),
+		CFrame.lookAt(R[1].pos, R[1].pos + dir), AstralColossusVFX.Parent)
+	for _, L in spec.layers do
+		if L.type == "meteor" then
+			forRockEvents(L, R, dir, s, function(t, n, pos, r)
+				task.delay(t, function()
+					if holder.Parent then
+						launchMeteors(L, holder, s, quality(n), pos, r.pos.Y)
+					end
+				end)
+			end)
+		elseif L.decal then
+			forRockEvents(L, R, dir, s, function(t, n, pos)
+				task.delay(t, function()
+					if holder.Parent then
+						playDecalAt(L, holder, s, n, holder.CFrame.Rotation + pos)
+					end
+				end)
+			end)
+		else
+			local e, carrier = buildEmitter(L, holder, s)
+			if L.stream then
+				runMultiStream(L, e, carrier, holder, rockSources(L, R, dir, s))
+			else
+				forRockEvents(L, R, dir, s, function(t, n, pos)
+					task.delay(t, function()
+						if e.Parent then
+							placeCarrier(carrier, holder, pos)
+							e:Emit(quality(n))
+						end
+					end)
+				end)
+			end
+		end
+	end
+	-- luces en la primera roca, en la del medio y en la última
+	local lights: { { pos: Vector3, t: number } } = {}
+	local used = {}
+	for _, i in { 1, math.ceil(#R / 2), #R } do
+		if not used[i] then
+			used[i] = true
+			table.insert(lights, { pos = R[i].pos + Vector3.yAxis * 4 * s, t = 0 })
+		end
+	end
+	finish(spec, holder, s, shake, lights)
+	return holder
+end
+
+local SPEC_AstralClash = {
+	name = "AstralClash",
+	duration = 2.6,
+	cleanup = 3.29,
+	layers = {
+		{
+			name = "ClashFlash",
+			texture = "fx_glow",
+			lifetime = {0.13, 0.13},
+			size = {
+				{0, 5, 0},
+				{0.3, 20, 0},
+				{1, 22, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.45, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{172, 178, 255},
+				},
+				{
+					0.4,
+					{140, 128, 255},
+				},
+				{
+					1,
+					{108, 84, 240},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.3,
+			zoffset = 4,
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashStar",
+			texture = "kk_star_09",
+			lifetime = {0.26, 0.26},
+			size = {
+				{0, 10, 0},
+				{0.18, 28, 0},
+				{1, 6, 0},
+			},
+			color = {
+				{
+					0,
+					{236, 242, 255},
+				},
+				{
+					0.5,
+					{170, 182, 255},
+				},
+				{
+					1,
+					{128, 108, 255},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.3,
+			rotation = {0, 90},
+			rot_speed = {-60, 60},
+			zoffset = 5,
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashGlint",
+			texture = "kk_star_08",
+			lifetime = {0.2, 0.2},
+			size = {
+				{0, 44, 0},
+				{1, 12, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 242, 255},
+				},
+				{
+					0.35,
+					{160, 188, 255},
+				},
+				{
+					1,
+					{120, 96, 255},
+				},
+			},
+			light_emission = 0.9,
+			brightness = 1.4,
+			rotation = {0, 360},
+			zoffset = 5,
+			emit = {
+				{0.02, 1},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashBurst",
+			texture = "fx_shock_soft",
+			lifetime = {0.3, 0.3},
+			size = {
+				{0, 8, 0},
+				{1, 44, 0},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.6, 0.8, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{172, 178, 255},
+				},
+				{
+					0.4,
+					{140, 128, 255},
+				},
+				{
+					1,
+					{108, 84, 240},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.2,
+			rotation = {0, 360},
+			zoffset = 3,
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashRing",
+			texture = "kk_circle_03",
+			lifetime = {0.28, 0.28},
+			size = {
+				{0, 4, 0},
+				{1, 40, 0},
+			},
+			transparency = {
+				{0, 0.25, 0},
+				{0.6, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{172, 178, 255},
+				},
+				{
+					0.4,
+					{140, 128, 255},
+				},
+				{
+					1,
+					{108, 84, 240},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.3,
+			zoffset = 3,
+			emit = {
+				{0.04, 1},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashRing2",
+			texture = "fx_shock_wave003",
+			lifetime = {0.34, 0.34},
+			size = {
+				{0, 6, 0},
+				{1, 44, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.5, 0.7, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 215, 255},
+				},
+				{
+					0.4,
+					{170, 124, 255},
+				},
+				{
+					1,
+					{104, 72, 232},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.2,
+			rotation = {0, 360},
+			zoffset = 2,
+			emit = {
+				{0.03, 1},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashSparks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Top",
+			spread = {180, 180},
+			speed = {70, 130},
+			drag = 6,
+			lifetime = {0.18, 0.34},
+			size = {
+				{0, 8, 2},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{242, 246, 255},
+				},
+				{
+					0.5,
+					{172, 184, 255},
+				},
+				{
+					1,
+					{132, 104, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			emit = {
+				{0, 40},
+			},
+			offset = {0, 13, 4},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ClashSwirl",
+			texture = "fx_wind_swirl",
+			lifetime = {0.4, 0.4},
+			size = {
+				{0, 6, 0},
+				{1, 40, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.5, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 215, 255},
+				},
+				{
+					0.4,
+					{170, 124, 255},
+				},
+				{
+					1,
+					{104, 72, 232},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {300, 360},
+			emit = {
+				{0.02, 1},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashBolts0",
+			texture = "kk_spark_05",
+			lifetime = {0.08, 0.12},
+			size = {
+				{0, 18, 5},
+				{1, 24, 5},
+			},
+			color = {
+				{
+					0,
+					{228, 212, 255},
+				},
+				{
+					1,
+					{134, 92, 255},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.5,
+			rotation = {0, 360},
+			zoffset = 4,
+			emit = {
+				{0, 3},
+				{0.06, 2},
+				{0.12, 2},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ClashBolts1",
+			texture = "kk_spark_06",
+			lifetime = {0.08, 0.12},
+			size = {
+				{0, 18, 5},
+				{1, 24, 5},
+			},
+			color = {
+				{
+					0,
+					{228, 212, 255},
+				},
+				{
+					1,
+					{134, 92, 255},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.5,
+			rotation = {0, 360},
+			zoffset = 4,
+			emit = {
+				{0, 3},
+				{0.06, 2},
+				{0.12, 2},
+			},
+			offset = {0, 13, 4},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "AirFront0",
+			texture = "fx_glow",
+			direction = "Front",
+			speed_len = {2.7361, 2.8194},
+			lifetime = {0.36, 0.38},
+			size = {
+				{0, 2, 0},
+				{0.25, 7.5, 0},
+				{1, 13, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.15, 0.25, 0},
+				{0.85, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{176, 190, 255},
+				},
+				{
+					0.5,
+					{142, 142, 255},
+				},
+				{
+					1,
+					{120, 100, 250},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.2,
+			zoffset = 1,
+			cone_emit = {
+				{0.05, 1, 0.02, -0.97, 3.2},
+				{0.05, 1, 0.02, -0.898, 3.2},
+				{0.05, 1, 0.02, -0.826, 3.2},
+				{0.05, 1, 0.02, -0.754, 3.2},
+				{0.05, 1, 0.02, -0.683, 3.2},
+				{0.05, 1, 0.02, -0.611, 3.2},
+				{0.05, 1, 0.02, -0.539, 3.2},
+				{0.05, 1, 0.02, -0.467, 3.2},
+				{0.05, 1, 0.02, -0.395, 3.2},
+				{0.05, 1, 0.02, -0.323, 3.2},
+				{0.05, 1, 0.02, -0.251, 3.2},
+				{0.05, 1, 0.02, -0.18, 3.2},
+				{0.05, 1, 0.02, -0.108, 3.2},
+				{0.05, 1, 0.02, -0.036, 3.2},
+				{0.05, 1, 0.02, 0.036, 3.2},
+				{0.05, 1, 0.02, 0.108, 3.2},
+				{0.05, 1, 0.02, 0.18, 3.2},
+				{0.05, 1, 0.02, 0.251, 3.2},
+				{0.05, 1, 0.02, 0.323, 3.2},
+				{0.05, 1, 0.02, 0.395, 3.2},
+				{0.05, 1, 0.02, 0.467, 3.2},
+				{0.05, 1, 0.02, 0.539, 3.2},
+				{0.05, 1, 0.02, 0.611, 3.2},
+				{0.05, 1, 0.02, 0.683, 3.2},
+				{0.05, 1, 0.02, 0.754, 3.2},
+				{0.05, 1, 0.02, 0.826, 3.2},
+				{0.05, 1, 0.02, 0.898, 3.2},
+				{0.05, 1, 0.02, 0.97, 3.2},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AirLines0",
+			texture = "kk_trace_07",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			speed_len = {2.6389, 2.8333},
+			lifetime = {0.36, 0.38},
+			size = {
+				{0, 4, 0},
+				{0.3, 12, 0},
+				{1, 16, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{196, 210, 255},
+				},
+				{
+					0.4,
+					{142, 162, 255},
+				},
+				{
+					1,
+					{120, 96, 255},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.35,
+			zoffset = 1.5,
+			cone_emit = {
+				{0.05, 1, 0.02, 0.054, 1.3},
+				{0.051, 1, 0.02, 0.916, 5.82},
+				{0.052, 1, 0.02, 0.588, 4.47},
+				{0.054, 1, 0.02, -0.49, 1.15},
+				{0.054, 1, 0.02, 0.023, 4.15},
+				{0.056, 1, 0.02, -0.817, 4.83},
+				{0.058, 1, 0.02, 0.659, 2.93},
+				{0.059, 1, 0.02, -0.113, 5.21},
+				{0.059, 1, 0.02, 0.015, 3.94},
+				{0.059, 1, 0.02, 0.114, 5.62},
+				{0.06, 1, 0.02, 0.267, 3.5},
+				{0.063, 1, 0.02, -0.081, 2.39},
+				{0.063, 1, 0.02, 0.22, 1.79},
+				{0.064, 1, 0.02, -0.351, 2.15},
+				{0.066, 1, 0.02, -0.771, 2.52},
+				{0.07, 1, 0.02, 0.942, 5.2},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AirFront1",
+			texture = "fx_glow",
+			direction = "Front",
+			speed_len = {2.7361, 2.8194},
+			lifetime = {0.36, 0.38},
+			size = {
+				{0, 2, 0},
+				{0.25, 5.9, 0},
+				{1, 10.1, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.15, 0.25, 0},
+				{0.85, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{176, 190, 255},
+				},
+				{
+					0.5,
+					{142, 142, 255},
+				},
+				{
+					1,
+					{120, 100, 250},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.2,
+			zoffset = 1,
+			cone_emit = {
+				{0.18, 1, 0.02, -0.97, 2.5},
+				{0.18, 1, 0.02, -0.898, 2.5},
+				{0.18, 1, 0.02, -0.826, 2.5},
+				{0.18, 1, 0.02, -0.754, 2.5},
+				{0.18, 1, 0.02, -0.683, 2.5},
+				{0.18, 1, 0.02, -0.611, 2.5},
+				{0.18, 1, 0.02, -0.539, 2.5},
+				{0.18, 1, 0.02, -0.467, 2.5},
+				{0.18, 1, 0.02, -0.395, 2.5},
+				{0.18, 1, 0.02, -0.323, 2.5},
+				{0.18, 1, 0.02, -0.251, 2.5},
+				{0.18, 1, 0.02, -0.18, 2.5},
+				{0.18, 1, 0.02, -0.108, 2.5},
+				{0.18, 1, 0.02, -0.036, 2.5},
+				{0.18, 1, 0.02, 0.036, 2.5},
+				{0.18, 1, 0.02, 0.108, 2.5},
+				{0.18, 1, 0.02, 0.18, 2.5},
+				{0.18, 1, 0.02, 0.251, 2.5},
+				{0.18, 1, 0.02, 0.323, 2.5},
+				{0.18, 1, 0.02, 0.395, 2.5},
+				{0.18, 1, 0.02, 0.467, 2.5},
+				{0.18, 1, 0.02, 0.539, 2.5},
+				{0.18, 1, 0.02, 0.611, 2.5},
+				{0.18, 1, 0.02, 0.683, 2.5},
+				{0.18, 1, 0.02, 0.754, 2.5},
+				{0.18, 1, 0.02, 0.826, 2.5},
+				{0.18, 1, 0.02, 0.898, 2.5},
+				{0.18, 1, 0.02, 0.97, 2.5},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AirLines1",
+			texture = "kk_trace_07",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			speed_len = {2.6389, 2.8333},
+			lifetime = {0.36, 0.38},
+			size = {
+				{0, 4, 0},
+				{0.3, 9.4, 0},
+				{1, 12.5, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{196, 210, 255},
+				},
+				{
+					0.4,
+					{142, 162, 255},
+				},
+				{
+					1,
+					{120, 96, 255},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.35,
+			zoffset = 1.5,
+			cone_emit = {
+				{0.18, 1, 0.02, -0.274, 3.27},
+				{0.188, 1, 0.02, -0.854, 1.54},
+				{0.188, 1, 0.02, -0.763, 1.76},
+				{0.191, 1, 0.02, 0.063, 2.3},
+				{0.192, 1, 0.02, -0.509, 4.46},
+				{0.192, 1, 0.02, 0.454, 1.78},
+				{0.193, 1, 0.02, -0.308, 3.35},
+				{0.193, 1, 0.02, 0.588, 1.08},
+				{0.195, 1, 0.02, 0.912, 0.87},
+				{0.198, 1, 0.02, 0.095, 2.76},
+				{0.199, 1, 0.02, 0.129, 4.66},
+				{0.2, 1, 0.02, 0.27, 3.51},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AirFront2",
+			texture = "fx_glow",
+			direction = "Front",
+			speed_len = {2.7361, 2.8194},
+			lifetime = {0.36, 0.38},
+			size = {
+				{0, 2, 0},
+				{0.25, 4.2, 0},
+				{1, 7.3, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.15, 0.25, 0},
+				{0.85, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{176, 190, 255},
+				},
+				{
+					0.5,
+					{142, 142, 255},
+				},
+				{
+					1,
+					{120, 100, 250},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.2,
+			zoffset = 1,
+			cone_emit = {
+				{0.31, 1, 0.02, -0.97, 1.79},
+				{0.31, 1, 0.02, -0.898, 1.79},
+				{0.31, 1, 0.02, -0.826, 1.79},
+				{0.31, 1, 0.02, -0.754, 1.79},
+				{0.31, 1, 0.02, -0.683, 1.79},
+				{0.31, 1, 0.02, -0.611, 1.79},
+				{0.31, 1, 0.02, -0.539, 1.79},
+				{0.31, 1, 0.02, -0.467, 1.79},
+				{0.31, 1, 0.02, -0.395, 1.79},
+				{0.31, 1, 0.02, -0.323, 1.79},
+				{0.31, 1, 0.02, -0.251, 1.79},
+				{0.31, 1, 0.02, -0.18, 1.79},
+				{0.31, 1, 0.02, -0.108, 1.79},
+				{0.31, 1, 0.02, -0.036, 1.79},
+				{0.31, 1, 0.02, 0.036, 1.79},
+				{0.31, 1, 0.02, 0.108, 1.79},
+				{0.31, 1, 0.02, 0.18, 1.79},
+				{0.31, 1, 0.02, 0.251, 1.79},
+				{0.31, 1, 0.02, 0.323, 1.79},
+				{0.31, 1, 0.02, 0.395, 1.79},
+				{0.31, 1, 0.02, 0.467, 1.79},
+				{0.31, 1, 0.02, 0.539, 1.79},
+				{0.31, 1, 0.02, 0.611, 1.79},
+				{0.31, 1, 0.02, 0.683, 1.79},
+				{0.31, 1, 0.02, 0.754, 1.79},
+				{0.31, 1, 0.02, 0.826, 1.79},
+				{0.31, 1, 0.02, 0.898, 1.79},
+				{0.31, 1, 0.02, 0.97, 1.79},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AirLines2",
+			texture = "kk_trace_07",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			speed_len = {2.6389, 2.8333},
+			lifetime = {0.36, 0.38},
+			size = {
+				{0, 4, 0},
+				{0.3, 6.7, 0},
+				{1, 9, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{196, 210, 255},
+				},
+				{
+					0.4,
+					{142, 162, 255},
+				},
+				{
+					1,
+					{120, 96, 255},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.35,
+			zoffset = 1.5,
+			cone_emit = {
+				{0.313, 1, 0.02, -0.771, 2.46},
+				{0.315, 1, 0.02, -0.652, 0.91},
+				{0.317, 1, 0.02, 0.621, 0.82},
+				{0.318, 1, 0.02, -0.812, 3.14},
+				{0.319, 1, 0.02, 0.022, 2.37},
+				{0.324, 1, 0.02, -0.608, 1.69},
+				{0.325, 1, 0.02, 0.61, 1.64},
+				{0.327, 1, 0.02, 0.176, 0.81},
+				{0.329, 1, 0.02, 0.119, 2.59},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Gust",
+			texture = "kk_trace_07",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			spread = {3, 3},
+			speed = {60, 95},
+			drag = 3,
+			lifetime = {0.2, 0.32},
+			size = {
+				{0, 12, 2},
+				{0.5, 20, 3},
+				{1, 12, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.6, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{196, 210, 255},
+				},
+				{
+					0.4,
+					{142, 162, 255},
+				},
+				{
+					1,
+					{120, 96, 255},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.3,
+			cone_emit = {
+				{0.077, 1, 0.0746, 0.913, 3.26},
+				{0.078, 1, 0.0775, -0.949, 2.1},
+				{0.097, 1, 0.1299, 0.529, 2.47},
+				{0.097, 1, 0.1308, 0.882, 5.5},
+				{0.098, 1, 0.1326, -0.758, 1.17},
+				{0.136, 1, 0.2381, -0.546, 2.47},
+				{0.137, 1, 0.2426, -0.701, 4.79},
+				{0.15, 1, 0.2789, 0.113, 3.57},
+				{0.173, 1, 0.3427, -0.545, 2.4},
+				{0.176, 1, 0.3493, 0.673, 4.78},
+				{0.191, 1, 0.0296, -0.629, 3.11},
+				{0.192, 1, 0.3949, -0.372, 6.29},
+				{0.2, 1, 0.0559, -0.864, 5.13},
+				{0.211, 1, 0.4476, -0.488, 4.53},
+				{0.217, 1, 0.4645, 0.872, 3.8},
+				{0.222, 1, 0.4767, -0.603, 1.76},
+				{0.226, 1, 0.4886, -0.387, 1.26},
+				{0.247, 1, 0.1873, -0.255, 2.13},
+				{0.248, 1, 0.5501, -0.497, 5.17},
+				{0.249, 1, 0.1924, 0.846, 2.76},
+				{0.25, 1, 0.195, -0.411, 4.14},
+				{0.263, 1, 0.5921, -0.576, 6.69},
+				{0.266, 1, 0.6007, -0.149, 1.44},
+				{0.267, 1, 0.6023, -0.476, 1.98},
+				{0.288, 1, 0.3008, -0.209, 4.98},
+				{0.289, 1, 0.6639, -0.819, 2.22},
+				{0.291, 1, 0.3092, -0.484, 1},
+				{0.291, 1, 0.6688, 0.183, 2.62},
+				{0.295, 1, 0.6801, -0.615, 3.09},
+				{0.297, 1, 0.6869, 0.217, 2.54},
+				{0.301, 1, 0.3363, 0.929, 5.2},
+				{0.305, 1, 0.7084, -0.919, 2.47},
+				{0.324, 1, 0.0399, -0.921, 2.05},
+				{0.326, 1, 0.7673, -0.916, 6.44},
+				{0.332, 1, 0.062, 0.55, 2.86},
+				{0.334, 1, 0.7878, -0.344, 7},
+				{0.335, 1, 0.4316, -0.134, 3.03},
+				{0.336, 1, 0.7932, -0.262, 6.32},
+				{0.338, 1, 0.8009, -0.91, 4.74},
+				{0.344, 1, 0.8177, 0.363, 4.42},
+				{0.347, 1, 0.4634, 0.236, 2.92},
+				{0.349, 1, 0.4705, 0.91, 4.61},
+				{0.355, 1, 0.4855, 0.044, 5.17},
+				{0.363, 1, 0.869, 0.45, 6.38},
+				{0.363, 1, 0.8693, 0.937, 6.25},
+				{0.369, 1, 0.8856, 0.762, 6.2},
+				{0.37, 1, 0.8895, 0.691, 4.35},
+				{0.375, 1, 0.9019, 0.157, 4.57},
+				{0.377, 1, 0.9087, 0.557, 6.47},
+				{0.387, 1, 0.5751, 0.053, 1.38},
+				{0.392, 1, 0.5894, -0.084, 2.02},
+				{0.395, 1, 0.5978, 0.528, 3.27},
+				{0.399, 1, 0.2465, -0.321, 1.87},
+				{0.4, 1, 0.249, -0.233, 2.39},
+				{0.4, 1, 0.9718, -0.036, 2.23},
+				{0.403, 1, 0.2573, 0.212, 1.29},
+				{0.404, 1, 0.6227, 0.445, 1.91},
+				{0.404, 1, 0.9822, 0.771, 4.89},
+				{0.405, 1, 0.9853, -0.378, 5},
+				{0.409, 1, 0.9964, -0.791, 5.45},
+				{0.41, 1, 1, 0.218, 6.51},
+				{0.41, 1, 1, 0.447, 4.4},
+				{0.432, 1, 0.7009, -0.435, 2.78},
+				{0.434, 1, 0.7054, 0.54, 3.71},
+				{0.437, 1, 0.7135, 0.79, 4.9},
+				{0.439, 1, 0.7201, 0.352, 3.43},
+				{0.444, 1, 0.7341, 0.481, 1.68},
+				{0.465, 1, 0.43, 0.406, 3.88},
+				{0.465, 1, 0.431, 0.637, 1.42},
+				{0.471, 1, 0.446, 0.092, 1.9},
+				{0.474, 1, 0.4567, -0.574, 1.06},
+				{0.482, 1, 0.8395, 0.096, 3.74},
+				{0.488, 1, 0.8567, -0.55, 2.4},
+				{0.494, 1, 0.8717, 0.079, 1.14},
+				{0.496, 1, 0.879, -0.809, 1.36},
+				{0.498, 1, 0.8828, 0.511, 1.79},
+				{0.528, 1, 0.6047, 0.374, 1.83},
+				{0.531, 1, 0.9758, -0.801, 1.19},
+				{0.535, 1, 0.6236, -0.448, 3.64},
+				{0.538, 1, 0.9955, 0.589, 2.52},
+				{0.54, 1, 1, -0.545, 3.89},
+				{0.54, 1, 1, -0.332, 3.36},
+				{0.54, 1, 1, -0.137, 2.52},
+				{0.54, 1, 1, 0.352, 2.19},
+				{0.542, 1, 0.6457, -0.07, 1.19},
+				{0.543, 1, 0.6484, 0.768, 2.5},
+				{0.592, 1, 0.7846, -0.608, 3.88},
+				{0.603, 1, 0.8144, -0.597, 2.51},
+				{0.609, 1, 0.8295, 0.754, 1.55},
+				{0.611, 1, 0.8364, -0.365, 2.89},
+				{0.612, 1, 0.8395, 0.193, 1.18},
+				{0.66, 1, 0.971, -0.061, 1.25},
+				{0.66, 1, 0.9723, -0.675, 3.79},
+				{0.665, 1, 0.9858, -0.319, 2.8},
+				{0.668, 1, 0.9932, -0.62, 2.42},
+				{0.67, 1, 1, -0.168, 2.75},
+				{0.67, 1, 1, 0.175, 3.31},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GustThin",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			spread = {2, 2},
+			speed = {90, 130},
+			drag = 3,
+			lifetime = {0.15, 0.22},
+			size = {
+				{0, 14, 0},
+				{1, 22, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 228, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			cone_emit = {
+				{0.087, 1, 0.0465, -0.329, 3.53},
+				{0.119, 1, 0.1375, 0.581, 4.62},
+				{0.156, 1, 0.2393, 0.64, 4.33},
+				{0.172, 1, 0.2839, 0.158, 1.99},
+				{0.201, 1, 0.3637, -0.543, 2.42},
+				{0.207, 1, 0.3793, -0.424, 1.34},
+				{0.209, 1, 0.0249, 0.427, 2.89},
+				{0.243, 1, 0.4798, -0.351, 4.29},
+				{0.25, 1, 0.5011, -0.808, 0.74},
+				{0.262, 1, 0.1727, -0.27, 3},
+				{0.274, 1, 0.5663, -0.914, 1.2},
+				{0.286, 1, 0.6001, 0.396, 3.11},
+				{0.308, 1, 0.6618, 0.245, 2.56},
+				{0.313, 1, 0.3134, 0.398, 2.48},
+				{0.315, 1, 0.6806, 0.626, 1.64},
+				{0.325, 1, 0.3465, 0.785, 2.05},
+				{0.343, 1, 0.7595, 0.407, 1.39},
+				{0.352, 1, 0.0614, 0.478, 1.67},
+				{0.357, 1, 0.7967, 0.584, 4.82},
+				{0.358, 1, 0.8, -0.047, 1.39},
+				{0.371, 1, 0.4753, -0.347, 1.92},
+				{0.374, 1, 0.4832, -0.478, 1.79},
+				{0.387, 1, 0.8808, 0.375, 2.89},
+				{0.394, 1, 0.9013, -0.202, 4.08},
+				{0.401, 1, 0.9188, 0.822, 3.78},
+				{0.407, 1, 0.5746, 0.564, 2.38},
+				{0.411, 1, 0.5848, -0.198, 1.88},
+				{0.422, 1, 0.9778, 0.239, 4.6},
+				{0.427, 1, 0.2697, 0.675, 1.5},
+				{0.427, 1, 0.9926, 0.721, 4.11},
+				{0.43, 1, 1, 0.288, 1.5},
+				{0.47, 1, 0.7488, -0.614, 3.1},
+				{0.471, 1, 0.7514, -0.908, 2.3},
+				{0.483, 1, 0.426, 0.77, 1.76},
+				{0.485, 1, 0.4315, 0.768, 1.31},
+				{0.502, 1, 0.8393, 0.45, 3.57},
+				{0.512, 1, 0.8669, 0.886, 2.75},
+				{0.518, 1, 0.8825, 0.089, 3.2},
+				{0.544, 1, 0.5933, 0.76, 2.21},
+				{0.551, 1, 0.9751, -0.677, 3.06},
+				{0.555, 1, 0.6259, -0.371, 1.91},
+				{0.56, 1, 1, -0.531, 3.13},
+				{0.56, 1, 1, -0.201, 1.71},
+				{0.612, 1, 0.7842, -0.101, 1.71},
+				{0.616, 1, 0.7943, -0.198, 1.12},
+				{0.619, 1, 0.8038, 0.37, 1.76},
+				{0.681, 1, 0.9741, 0.886, 2.06},
+				{0.69, 1, 1, 0.58, 1.09},
+				{0.69, 1, 1, 0.766, 0.82},
+			},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DustWall0",
+			texture = "kk_smoke_07",
+			direction = "Front",
+			spread = {12, 12},
+			speed = {30, 48},
+			drag = 2.6,
+			accel = {0, 2, 0},
+			lifetime = {0.6, 0.95},
+			size = {
+				{0, 4, 1},
+				{0.3, 11, 2},
+				{1, 15, 2},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.2, 0.3, 0},
+				{0.7, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{204, 198, 232},
+				},
+				{
+					0.5,
+					{170, 164, 204},
+				},
+				{
+					1,
+					{146, 140, 176},
+				},
+			},
+			light_emission = 0.08,
+			brightness = 1,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = -1,
+			cone_emit = {
+				{0.065, 1, 0.0428, 0.913, 3.45},
+				{0.103, 1, 0.1477, -0.341, 3.29},
+				{0.11, 1, 0.1668, -0.793, 2.21},
+				{0.133, 1, 0.2319, 0.646, 2.79},
+				{0.158, 1, 0.2996, -0.399, 2.88},
+				{0.174, 1, 0.3431, 0.853, 1.4},
+				{0.191, 1, 0.3905, 0.656, 3.27},
+				{0.197, 1, 0.4081, 0.892, 2.39},
+				{0.206, 1, 0.0733, 0.788, 2.14},
+				{0.223, 1, 0.4813, 0.119, 2.33},
+				{0.235, 1, 0.5147, -0.438, 2.29},
+				{0.244, 1, 0.1789, 0.574, 2.17},
+				{0.251, 1, 0.1975, 0.87, 2.67},
+				{0.253, 1, 0.564, -0.751, 2.88},
+				{0.265, 1, 0.5982, 0.531, 1.25},
+				{0.284, 1, 0.2875, -0.562, 2.18},
+				{0.288, 1, 0.6599, -0.562, 2.65},
+				{0.29, 1, 0.6665, 0.667, 2.61},
+				{0.312, 1, 0.7267, 0.736, 1.51},
+				{0.316, 1, 0.7378, -0.916, 1.66},
+				{0.318, 1, 0.3847, -0.599, 1.7},
+				{0.32, 1, 0.3894, 0.524, 1.61},
+				{0.321, 1, 0.03, -0.381, 1.95},
+				{0.326, 1, 0.7678, -0.352, 3.32},
+				{0.342, 1, 0.8104, -0.748, 1.29},
+				{0.35, 1, 0.8322, 0.131, 1.54},
+				{0.364, 1, 0.5111, -0.622, 2.94},
+				{0.367, 1, 0.5187, 0.603, 2.3},
+				{0.378, 1, 0.9123, -0.329, 2.27},
+				{0.379, 1, 0.1904, 0.599, 2.11},
+				{0.38, 1, 0.9155, 0.192, 1.23},
+				{0.384, 1, 0.9289, -0.579, 1.58},
+				{0.397, 1, 0.2406, -0.003, 3.35},
+				{0.403, 1, 0.6205, 0.573, 2.09},
+				{0.405, 1, 0.9855, 0.464, 2.99},
+				{0.41, 1, 0.6398, 0.405, 2.59},
+				{0.41, 1, 1, 0.246, 2.13},
+				{0.41, 1, 1, 0.753, 3.22},
+				{0.417, 1, 0.657, -0.929, 2.29},
+				{0.446, 1, 0.7399, 0.411, 1.42},
+				{0.454, 1, 0.3987, -0.579, 3.13},
+				{0.455, 1, 0.7638, 0.865, 2.55},
+				{0.489, 1, 0.8588, -0.073, 3.42},
+				{0.493, 1, 0.5081, 0.832, 2.22},
+				{0.497, 1, 0.8805, -0.267, 2.78},
+				{0.505, 1, 0.9039, 0.55, 2.16},
+				{0.509, 1, 0.5528, -0.748, 2.87},
+				{0.529, 1, 0.9706, 0.569, 1.68},
+				{0.536, 1, 0.9879, -0.205, 2.73},
+				{0.54, 1, 1, -0.236, 2.44},
+				{0.548, 1, 0.6614, -0.366, 2.83},
+				{0.559, 1, 0.6921, -0.378, 3.33},
+				{0.563, 1, 0.7041, 0.308, 3.23},
+				{0.608, 1, 0.8281, 0.091, 1.63},
+				{0.622, 1, 0.8672, -0.886, 2.26},
+				{0.663, 1, 0.9804, -0.636, 2.6},
+				{0.664, 1, 0.9841, 0.519, 3.01},
+				{0.67, 1, 1, 0.039, 3.39},
+			},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DustWall1",
+			texture = "kk_smoke_04",
+			direction = "Front",
+			spread = {12, 12},
+			speed = {30, 48},
+			drag = 2.6,
+			accel = {0, 2, 0},
+			lifetime = {0.6, 0.95},
+			size = {
+				{0, 4, 1},
+				{0.3, 11, 2},
+				{1, 15, 2},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.2, 0.3, 0},
+				{0.7, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{204, 198, 232},
+				},
+				{
+					0.5,
+					{170, 164, 204},
+				},
+				{
+					1,
+					{146, 140, 176},
+				},
+			},
+			light_emission = 0.08,
+			brightness = 1,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = -1,
+			cone_emit = {
+				{0.076, 1, 0.0733, 0.269, 2.85},
+				{0.103, 1, 0.1485, -0.024, 1.27},
+				{0.13, 1, 0.221, -0.683, 1.54},
+				{0.14, 1, 0.2495, 0.57, 1.6},
+				{0.167, 1, 0.3247, 0.653, 2.49},
+				{0.188, 1, 0.3843, 0.89, 2.41},
+				{0.196, 1, 0.4062, 0.068, 2.36},
+				{0.212, 1, 0.0881, -0.012, 2.44},
+				{0.217, 1, 0.4649, 0.6, 3.27},
+				{0.23, 1, 0.4987, 0.074, 2.15},
+				{0.25, 1, 0.5544, 0.355, 1.94},
+				{0.251, 1, 0.1971, 0.672, 3.05},
+				{0.256, 1, 0.5713, -0.586, 2.62},
+				{0.279, 1, 0.6355, -0.474, 1.65},
+				{0.282, 1, 0.2825, -0.838, 1.91},
+				{0.284, 1, 0.2902, 0.458, 3.48},
+				{0.288, 1, 0.66, -0.236, 2.15},
+				{0.295, 1, 0.6796, 0.457, 3.06},
+				{0.312, 1, 0.728, -0.457, 1.42},
+				{0.319, 1, 0.3862, 0.16, 3.29},
+				{0.323, 1, 0.3966, 0.18, 1.72},
+				{0.325, 1, 0.7636, 0.551, 1.49},
+				{0.338, 1, 0.0775, 0.071, 3.39},
+				{0.342, 1, 0.8102, 0.646, 3.48},
+				{0.349, 1, 0.8294, 0.005, 2.78},
+				{0.352, 1, 0.84, 0.89, 1.47},
+				{0.366, 1, 0.5156, 0.787, 1.99},
+				{0.372, 1, 0.5328, -0.033, 1.71},
+				{0.38, 1, 0.9153, 0.747, 3.04},
+				{0.384, 1, 0.9266, -0.606, 2.24},
+				{0.385, 1, 0.2081, -0.863, 1.27},
+				{0.388, 1, 0.9402, -0.832, 3.39},
+				{0.406, 1, 0.6269, -0.339, 1.8},
+				{0.41, 1, 1, -0.301, 2.28},
+				{0.41, 1, 1, 0.504, 2.13},
+				{0.41, 1, 1, 0.917, 3.05},
+				{0.414, 1, 0.6492, -0.428, 3.48},
+				{0.441, 1, 0.3646, -0.623, 3.22},
+				{0.445, 1, 0.7351, 0.658, 3.09},
+				{0.45, 1, 0.751, -0.664, 2.97},
+				{0.455, 1, 0.402, -0.558, 1.88},
+				{0.463, 1, 0.7872, 0.26, 3.48},
+				{0.494, 1, 0.8712, -0.806, 1.9},
+				{0.497, 1, 0.5188, 0.702, 2.84},
+				{0.499, 1, 0.8851, -0.651, 3.11},
+				{0.507, 1, 0.9075, 0.62, 1.68},
+				{0.512, 1, 0.5597, 0.252, 1.64},
+				{0.535, 1, 0.9854, 0.44, 1.96},
+				{0.54, 1, 1, -0.927, 2.07},
+				{0.54, 1, 1, 0.122, 2.25},
+				{0.551, 1, 0.6685, -0.503, 2.73},
+				{0.561, 1, 0.6967, 0.266, 1.41},
+				{0.604, 1, 0.8161, -0.409, 1.78},
+				{0.62, 1, 0.8615, -0.408, 2.94},
+				{0.624, 1, 0.8723, 0.054, 2.42},
+				{0.663, 1, 0.9808, 0.275, 2.03},
+				{0.67, 1, 1, 0.032, 2.36},
+				{0.67, 1, 1, 0.816, 2.35},
+			},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EdgeStreaks",
+			texture = "kk_trace_07",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			spread = {1, 1},
+			speed = {55, 80},
+			drag = 3,
+			lifetime = {0.22, 0.3},
+			size = {
+				{0, 14, 2},
+				{1, 18, 2},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{196, 210, 255},
+				},
+				{
+					0.4,
+					{142, 162, 255},
+				},
+				{
+					1,
+					{120, 96, 255},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.5,
+			cone_emit = {
+				{0.068, 1, 0.05, -0.97, 1},
+				{0.068, 1, 0.05, 0.97, 1},
+				{0.097, 1, 0.129, -0.97, 1},
+				{0.097, 1, 0.129, 0.97, 1},
+				{0.125, 1, 0.208, -0.97, 1},
+				{0.125, 1, 0.208, 0.97, 1},
+				{0.153, 1, 0.287, -0.97, 1},
+				{0.153, 1, 0.287, 0.97, 1},
+				{0.182, 1, 0.367, -0.97, 1},
+				{0.182, 1, 0.367, 0.97, 1},
+				{0.21, 1, 0.446, -0.97, 1},
+				{0.21, 1, 0.446, 0.97, 1},
+				{0.239, 1, 0.525, -0.97, 1},
+				{0.239, 1, 0.525, 0.97, 1},
+				{0.267, 1, 0.604, -0.97, 1},
+				{0.267, 1, 0.604, 0.97, 1},
+				{0.296, 1, 0.683, -0.97, 1},
+				{0.296, 1, 0.683, 0.97, 1},
+				{0.324, 1, 0.762, -0.97, 1},
+				{0.324, 1, 0.762, 0.97, 1},
+				{0.353, 1, 0.842, -0.97, 1},
+				{0.353, 1, 0.842, 0.97, 1},
+				{0.381, 1, 0.921, -0.97, 1},
+				{0.381, 1, 0.921, 0.97, 1},
+				{0.41, 1, 1, -0.97, 1},
+				{0.41, 1, 1, 0.97, 1},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Rocks",
+			type = "meteor",
+			direction = "Front",
+			pitch = 50,
+			spread = {22, 22},
+			speed = {45, 75},
+			accel = {0, -115, 0},
+			drag = 0.3,
+			lifetime = {1.2, 1.6},
+			trails = {
+				{
+					name = "RockStardust",
+					rate = 34,
+					texture = "fx_spark002",
+					speed = {0, 2},
+					direction = "Top",
+					spread = {180, 180},
+					lifetime = {0.25, 0.45},
+					size = {
+						{0, 0, 0},
+						{0.2, 2.2, 0.6},
+						{1, 0, 0},
+					},
+					color = {
+						{
+							0,
+							{236, 240, 255},
+						},
+						{
+							0.4,
+							{150, 150, 255},
+						},
+						{
+							1,
+							{110, 80, 230},
+						},
+					},
+					light_emission = 1,
+					brightness = 1.8,
+					rotation = {0, 45},
+					accel = {0, 0, 0},
+					drag = 0,
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+				{
+					name = "RockDustTrail",
+					rate = 26,
+					texture = "kk_smoke_04",
+					speed = {1, 3},
+					direction = "Top",
+					spread = {180, 180},
+					drag = 2,
+					accel = {0, 4, 0},
+					lifetime = {0.45, 0.7},
+					size = {
+						{0, 2.2, 0.6},
+						{1, 6, 1.5},
+					},
+					transparency = {
+						{0, 0.4, 0},
+						{0.6, 0.6, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{204, 198, 232},
+						},
+						{
+							0.5,
+							{170, 164, 204},
+						},
+						{
+							1,
+							{146, 140, 176},
+						},
+					},
+					rotation = {0, 360},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+			},
+			land = {
+				{
+					name = "RockLandDust",
+					emit = {
+						{0, 4},
+					},
+					texture = "kk_smoke_04",
+					direction = "Top",
+					spread = {75, 75},
+					speed = {8, 16},
+					drag = 3,
+					accel = {0, 4, 0},
+					lifetime = {0.5, 0.8},
+					size = {
+						{0, 2.5, 0.8},
+						{0.4, 6.5, 1.2},
+						{1, 8, 1.2},
+					},
+					transparency = {
+						{0, 0.35, 0},
+						{0.6, 0.55, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{204, 198, 232},
+						},
+						{
+							0.5,
+							{170, 164, 204},
+						},
+						{
+							1,
+							{146, 140, 176},
+						},
+					},
+					rotation = {0, 360},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+				{
+					name = "RockLandSpark",
+					emit = {
+						{0, 3},
+					},
+					texture = "fx_spark002",
+					direction = "Top",
+					spread = {80, 80},
+					speed = {4, 10},
+					drag = 3,
+					lifetime = {0.2, 0.35},
+					size = {
+						{0, 0, 0},
+						{0.2, 2.6, 0},
+						{1, 0, 0},
+					},
+					color = {
+						{
+							0,
+							{255, 255, 255},
+						},
+						{
+							0.5,
+							{222, 232, 255},
+						},
+						{
+							1,
+							{184, 194, 255},
+						},
+					},
+					light_emission = 1,
+					brightness = 1.8,
+					accel = {0, 0, 0},
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					rotation = {0, 0},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			cone_emit = {
+				{0.106, 1, 0.1375, -0.017, 1},
+				{0.136, 1, 0.1981, -0.743, 1},
+				{0.166, 1, 0.3191, -0.006, 1},
+				{0.168, 1, 0.2795, 0.597, 1},
+				{0.206, 1, 0.4098, 0.478, 1},
+				{0.25, 1, 0.5443, -0.302, 1},
+				{0.251, 1, 0.5111, 0.069, 1},
+				{0.267, 1, 0.5489, 0.041, 1},
+				{0.278, 1, 0.6186, 0.305, 1},
+				{0.283, 1, 0.6387, 0.513, 1},
+				{0.313, 1, 0.7239, -0.143, 1},
+				{0.327, 1, 0.6896, -0.733, 1},
+				{0.337, 1, 0.7947, -0.415, 1},
+				{0.349, 1, 0.8279, 0.794, 1},
+				{0.361, 1, 0.8318, -0.323, 1},
+				{0.366, 1, 0.7957, -0.569, 1},
+				{0.392, 1, 0.9112, 0.692, 1},
+				{0.396, 1, 0.9407, -0.395, 1},
+				{0.427, 1, 0.9942, -0.706, 1},
+				{0.435, 1, 0.9902, 0.177, 1},
+			},
+			offset = {0, 0, 0},
+			emit = {},
+			rock = {
+				size = {3, 5.5},
+				spin = {-480, 480},
+				color = {66, 58, 88},
+			},
+		},
+		{
+			name = "Chips",
+			texture = "kz_debris_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Front",
+			pitch = 40,
+			spread = {25, 25},
+			speed = {35, 70},
+			accel = {0, -95, 0},
+			drag = 0.6,
+			lifetime = {0.7, 1.1},
+			size = {
+				{0, 1.4, 0.5},
+				{1, 1.2, 0.4},
+			},
+			color = {
+				{
+					0,
+					{80, 72, 104},
+				},
+				{
+					1,
+					{66, 58, 88},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			cone_emit = {
+				{0.078, 2, 0.0778, 0.652, 0.9},
+				{0.083, 2, 0.0917, 0.172, 1.31},
+				{0.106, 2, 0.1547, -0.1, 1.39},
+				{0.107, 2, 0.1596, -0.563, 0.77},
+				{0.112, 2, 0.1735, -0.29, 0.75},
+				{0.124, 2, 0.2044, -0.452, 0.91},
+				{0.125, 2, 0.2077, -0.261, 0.82},
+				{0.138, 2, 0.2441, -0.561, 0.91},
+				{0.154, 2, 0.2892, -0.266, 1.21},
+				{0.166, 2, 0.3234, -0.911, 0.86},
+				{0.171, 2, 0.3354, -0.44, 0.89},
+				{0.179, 2, 0.3586, -0.144, 1.04},
+				{0.184, 2, 0.371, -0.663, 1.08},
+				{0.187, 2, 0.3797, 0.727, 0.86},
+				{0.195, 2, 0.4029, -0.846, 0.92},
+				{0.209, 2, 0.4415, -0.455, 1.18},
+				{0.211, 2, 0.4469, -0.295, 0.77},
+				{0.22, 2, 0.4733, -0.561, 0.82},
+				{0.221, 2, 0.4761, -0.216, 1.29},
+				{0.234, 2, 0.5124, 0.248, 1.05},
+				{0.251, 2, 0.5585, -0.384, 1.14},
+				{0.253, 2, 0.5651, 0.36, 1.13},
+				{0.254, 2, 0.5673, -0.504, 1.11},
+				{0.263, 2, 0.5921, -0.204, 0.65},
+				{0.265, 2, 0.5962, -0.047, 0.73},
+				{0.269, 2, 0.6097, -0.005, 0.82},
+				{0.276, 2, 0.6266, -0.773, 0.87},
+				{0.294, 2, 0.6785, -0.291, 1.31},
+				{0.297, 2, 0.6852, -0.182, 0.64},
+				{0.298, 2, 0.6887, 0.157, 1.16},
+				{0.3, 2, 0.6931, -0.059, 0.86},
+				{0.301, 2, 0.6965, -0.906, 0.91},
+				{0.327, 2, 0.7682, 0.864, 0.89},
+				{0.329, 2, 0.7739, 0.319, 0.75},
+				{0.329, 2, 0.7746, 0.516, 1.1},
+				{0.33, 2, 0.7772, -0.16, 0.82},
+				{0.334, 2, 0.7898, -0.224, 1.33},
+				{0.345, 2, 0.819, 0.013, 0.85},
+				{0.349, 2, 0.8304, -0.504, 0.6},
+				{0.352, 2, 0.8383, -0.665, 0.75},
+				{0.356, 2, 0.8493, -0.495, 0.99},
+				{0.358, 2, 0.8557, 0.236, 1.05},
+				{0.377, 2, 0.9083, -0.612, 1.01},
+				{0.378, 2, 0.9105, 0.065, 0.79},
+				{0.385, 2, 0.9306, 0.121, 0.9},
+				{0.386, 2, 0.9345, 0.616, 0.73},
+				{0.39, 2, 0.9432, -0.316, 0.88},
+				{0.391, 2, 0.9465, 0.41, 1.16},
+				{0.4, 2, 0.9732, 0.014, 1.24},
+				{0.402, 2, 0.9776, -0.82, 0.68},
+				{0.406, 2, 0.9896, 0.493, 1.27},
+				{0.408, 2, 0.9935, -0.472, 1.17},
+				{0.41, 2, 0.9988, 0.696, 1.3},
+				{0.41, 2, 1, -0.092, 1.22},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RockBurst",
+			texture = "kk_smoke_07",
+			direction = "Top",
+			spread = {55, 55},
+			speed = {14, 26},
+			drag = 3,
+			accel = {0, 4, 0},
+			lifetime = {0.7, 1},
+			size = {
+				{0, 4, 1},
+				{0.3, 10, 2},
+				{1, 13, 2},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.25, 0.3, 0},
+				{0.7, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{204, 198, 232},
+				},
+				{
+					0.5,
+					{170, 164, 204},
+				},
+				{
+					1,
+					{146, 140, 176},
+				},
+			},
+			light_emission = 0.05,
+			rotation = {0, 360},
+			rot_speed = {-50, 50},
+			cone_emit = {
+				{0.111, 4, 0.1697, -0.119, 1.35},
+				{0.158, 4, 0.299, 0.452, 1.06},
+				{0.203, 4, 0.426, -0.403, 1.09},
+				{0.246, 4, 0.5458, 0.662, 1.49},
+				{0.249, 4, 0.553, -0.121, 1.32},
+				{0.306, 4, 0.7105, 0.733, 1.02},
+				{0.313, 4, 0.7295, -0.686, 1.14},
+				{0.349, 4, 0.8299, -0.025, 1.19},
+				{0.364, 4, 0.8722, -0.57, 1.17},
+				{0.406, 4, 0.9886, 0.508, 1.14},
+				{0.408, 4, 0.9935, 0.398, 1.49},
+			},
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RockFlash",
+			texture = "fx_spark002",
+			lifetime = {0.16, 0.2},
+			size = {
+				{0, 4, 0},
+				{0.3, 12, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{236, 242, 255},
+				},
+				{
+					0.5,
+					{170, 182, 255},
+				},
+				{
+					1,
+					{128, 108, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			zoffset = 2,
+			cone_emit = {
+				{0.111, 1, 0.1697, -0.119, 2},
+				{0.158, 1, 0.299, 0.452, 2},
+				{0.203, 1, 0.426, -0.403, 2},
+				{0.246, 1, 0.5458, 0.662, 2},
+				{0.249, 1, 0.553, -0.121, 2},
+				{0.306, 1, 0.7105, 0.733, 2},
+				{0.313, 1, 0.7295, -0.686, 2},
+				{0.349, 1, 0.8299, -0.025, 2},
+				{0.364, 1, 0.8722, -0.57, 2},
+				{0.406, 1, 0.9886, 0.508, 2},
+				{0.408, 1, 0.9935, 0.398, 2},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundScar",
+			decal = true,
+			texture = "kz_scorch",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {2.6, 2.6},
+			size = {
+				{0, 5, 0},
+				{0.05, 13, 0},
+				{1, 14, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.75, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{46, 36, 70},
+				},
+				{
+					1,
+					{60, 50, 84},
+				},
+			},
+			rotation = {0, 360},
+			zoffset = -1,
+			cone_emit = {
+				{0.129, 1, 0.22, -0.12, 0.15},
+				{0.172, 1, 0.34, 0.21, 0.15},
+				{0.216, 1, 0.46, 0.05, 0.15},
+				{0.259, 1, 0.58, 0.33, 0.15},
+				{0.302, 1, 0.7, -0.39, 0.15},
+				{0.345, 1, 0.82, -0.36, 0.15},
+				{0.388, 1, 0.94, -0.43, 0.15},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundCracks",
+			decal = true,
+			texture = "kk_spark_02",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {1.1, 1.1},
+			size = {
+				{0, 12, 0},
+				{0.1, 26, 0},
+				{1, 28, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{228, 212, 255},
+				},
+				{
+					1,
+					{134, 92, 255},
+				},
+			},
+			light_emission = 0.9,
+			rotation = {0, 360},
+			cone_emit = {
+				{0.093, 1, 0.12, 0.52, 0.25},
+				{0.122, 1, 0.2, -0.3, 0.25},
+				{0.158, 1, 0.3, -0.01, 0.25},
+				{0.194, 1, 0.4, -0.46, 0.25},
+				{0.23, 1, 0.5, -0.21, 0.25},
+				{0.266, 1, 0.6, -0.58, 0.25},
+				{0.302, 1, 0.7, 0.08, 0.25},
+				{0.338, 1, 0.8, -0.43, 0.25},
+				{0.374, 1, 0.9, 0.15, 0.25},
+				{0.399, 1, 0.97, -0.27, 0.25},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundGlow0",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {1.3, 1.3},
+			size = {
+				{0, 4.2, 0},
+				{0.12, 14, 0},
+				{1, 14.7, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.15, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{132, 100, 255},
+				},
+				{
+					1,
+					{90, 70, 220},
+				},
+			},
+			light_emission = 0.5,
+			zoffset = -0.5,
+			cone_emit = {
+				{0.079, 1, 0.08, 0, 0.25},
+				{0.108, 1, 0.16, 0, 0.25},
+				{0.136, 1, 0.24, -0.7, 0.25},
+				{0.136, 1, 0.24, 0.7, 0.25},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundGlow1",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {1.3, 1.3},
+			size = {
+				{0, 6.6, 0},
+				{0.12, 22, 0},
+				{1, 23.1, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.15, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{118, 160, 255},
+				},
+				{
+					0.5,
+					{82, 112, 236},
+				},
+				{
+					1,
+					{60, 72, 192},
+				},
+			},
+			light_emission = 0.5,
+			zoffset = -0.5,
+			cone_emit = {
+				{0.165, 1, 0.32, -0.7, 0.25},
+				{0.165, 1, 0.32, 0.7, 0.25},
+				{0.194, 1, 0.4, -0.7, 0.25},
+				{0.194, 1, 0.4, 0.7, 0.25},
+				{0.223, 1, 0.48, -0.7, 0.25},
+				{0.223, 1, 0.48, 0.7, 0.25},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundGlow2",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {1.3, 1.3},
+			size = {
+				{0, 9, 0},
+				{0.12, 30, 0},
+				{1, 31.5, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.15, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{132, 100, 255},
+				},
+				{
+					1,
+					{90, 70, 220},
+				},
+			},
+			light_emission = 0.5,
+			zoffset = -0.5,
+			cone_emit = {
+				{0.252, 1, 0.56, -0.7, 0.25},
+				{0.252, 1, 0.56, 0, 0.25},
+				{0.252, 1, 0.56, 0.7, 0.25},
+				{0.28, 1, 0.64, -0.7, 0.25},
+				{0.28, 1, 0.64, 0, 0.25},
+				{0.28, 1, 0.64, 0.7, 0.25},
+				{0.309, 1, 0.72, -0.7, 0.25},
+				{0.309, 1, 0.72, 0, 0.25},
+				{0.309, 1, 0.72, 0.7, 0.25},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundGlow3",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {1.3, 1.3},
+			size = {
+				{0, 11.4, 0},
+				{0.12, 38, 0},
+				{1, 39.9, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.15, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{118, 160, 255},
+				},
+				{
+					0.5,
+					{82, 112, 236},
+				},
+				{
+					1,
+					{60, 72, 192},
+				},
+			},
+			light_emission = 0.5,
+			zoffset = -0.5,
+			cone_emit = {
+				{0.338, 1, 0.8, -0.7, 0.25},
+				{0.338, 1, 0.8, 0, 0.25},
+				{0.338, 1, 0.8, 0.7, 0.25},
+				{0.367, 1, 0.88, -0.7, 0.25},
+				{0.367, 1, 0.88, -0.233, 0.25},
+				{0.367, 1, 0.88, 0.233, 0.25},
+				{0.367, 1, 0.88, 0.7, 0.25},
+				{0.396, 1, 0.96, -0.7, 0.25},
+				{0.396, 1, 0.96, -0.233, 0.25},
+				{0.396, 1, 0.96, 0.233, 0.25},
+				{0.396, 1, 0.96, 0.7, 0.25},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Nebula0",
+			texture = "fx_fog3001",
+			direction = "Front",
+			spread = {30, 30},
+			speed = {1.5, 4},
+			drag = 1.2,
+			accel = {0, 0.6, 0},
+			lifetime = {1.6, 2.1},
+			size = {
+				{0, 6, 1},
+				{0.25, 15, 2},
+				{1, 19, 2},
+			},
+			transparency = {
+				{0, 0.85, 0},
+				{0.15, 0.6, 0},
+				{0.65, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{148, 108, 255},
+				},
+				{
+					0.5,
+					{110, 84, 236},
+				},
+				{
+					1,
+					{80, 64, 200},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.2,
+			rotation = {0, 360},
+			rot_speed = {-12, 12},
+			zoffset = -2,
+			cone_emit = {
+				{0.167, 1, 0.1037, -0.228, 3.82},
+				{0.204, 1, 0.2047, -0.028, 8.98},
+				{0.259, 1, 0.3584, -0.752, 5.85},
+				{0.3, 1, 0.4719, -0.097, 7.84},
+				{0.327, 1, 0.5486, -0.832, 3.47},
+				{0.378, 1, 0.6875, -0.171, 7.62},
+				{0.381, 1, 0.6976, 0.046, 7.67},
+				{0.42, 1, 0.8046, 0.131, 3.59},
+				{0.447, 1, 0.8819, -0.248, 3.95},
+				{0.456, 1, 0.9045, 0.413, 5.82},
+				{0.482, 1, 0.9765, -0.119, 8.74},
+				{0.487, 1, 0.991, -0.834, 5.52},
+			},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Nebula1",
+			texture = "fx_fog2001",
+			direction = "Front",
+			spread = {30, 30},
+			speed = {1.5, 4},
+			drag = 1.2,
+			accel = {0, 0.6, 0},
+			lifetime = {1.6, 2.1},
+			size = {
+				{0, 6, 1},
+				{0.25, 15, 2},
+				{1, 19, 2},
+			},
+			transparency = {
+				{0, 0.85, 0},
+				{0.15, 0.6, 0},
+				{0.65, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{118, 160, 255},
+				},
+				{
+					0.5,
+					{82, 112, 236},
+				},
+				{
+					1,
+					{60, 72, 192},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.2,
+			rotation = {0, 360},
+			rot_speed = {-12, 12},
+			zoffset = -2,
+			cone_emit = {
+				{0.203, 1, 0.2031, 0.667, 4.17},
+				{0.246, 1, 0.3221, -0.027, 4.9},
+				{0.295, 1, 0.4594, -0.379, 8.57},
+				{0.323, 1, 0.5371, -0.24, 7.27},
+				{0.336, 1, 0.5735, -0.804, 3.18},
+				{0.378, 1, 0.6897, 0.826, 2.71},
+				{0.408, 1, 0.7733, 0.267, 7.68},
+				{0.421, 1, 0.807, 0.349, 3.75},
+				{0.454, 1, 0.9008, -0.67, 3},
+				{0.459, 1, 0.9143, -0.69, 4.34},
+				{0.484, 1, 0.9823, -0.304, 7.28},
+				{0.488, 1, 0.9942, 0.063, 8.67},
+			},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Stars",
+			texture = "kk_star_06",
+			direction = "Top",
+			spread = {180, 180},
+			speed = {0.5, 2},
+			drag = 1.5,
+			lifetime = {1, 1.8},
+			size = {
+				{0, 0, 0},
+				{0.08, 3.2, 0},
+				{0.22, 1.4, 0},
+				{0.38, 3.4, 0},
+				{0.55, 1.2, 0},
+				{0.72, 2.8, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{222, 232, 255},
+				},
+				{
+					1,
+					{184, 194, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			rotation = {0, 30},
+			zoffset = 1,
+			cone_emit = {
+				{0.252, 1, 0.0832, 0.391, 2.96},
+				{0.254, 1, 0.4009, 0.242, 5.91},
+				{0.272, 1, 0.181, 0.93, 2.63},
+				{0.275, 1, 0.2931, 0.191, 7.3},
+				{0.288, 1, 0.2081, 0.273, 3.34},
+				{0.334, 1, 0.0864, 0.851, 4.54},
+				{0.348, 1, 0.3114, 0.314, 5.61},
+				{0.378, 1, 0.3003, -0.733, 10.21},
+				{0.399, 1, 0.677, -0.212, 10.34},
+				{0.404, 1, 0.7178, -0.255, 2.1},
+				{0.424, 1, 0.4056, 0.82, 2.67},
+				{0.439, 1, 0.5179, 0.938, 1.71},
+				{0.441, 1, 0.207, 0.677, 7.91},
+				{0.446, 1, 0.6722, 0.693, 10.17},
+				{0.469, 1, 0.6172, -0.491, 9.8},
+				{0.476, 1, 0.5972, 0.695, 3.16},
+				{0.478, 1, 0.9969, -0.154, 4.09},
+				{0.48, 1, 0.7904, 0.246, 4.06},
+				{0.482, 1, 0.5204, 0.832, 10.12},
+				{0.501, 1, 0.5222, -0.474, 9.88},
+				{0.504, 1, 0.5868, -0.81, 7.1},
+				{0.532, 1, 0.8116, -0.705, 2.28},
+				{0.533, 1, 1, -0.168, 2.45},
+				{0.535, 1, 0.6824, 0.715, 9},
+				{0.535, 1, 1, -0.151, 4.76},
+				{0.541, 1, 0.3981, 0.452, 4.44},
+				{0.542, 1, 0.8886, -0.672, 7.94},
+				{0.546, 1, 0.4142, -0.186, 10.54},
+				{0.555, 1, 0.6213, 0.094, 10.96},
+				{0.569, 1, 0.4776, -0.017, 3.58},
+				{0.576, 1, 1, 0.462, 7.61},
+				{0.581, 1, 0.8265, -0.271, 3.16},
+				{0.582, 1, 0.7818, -0.132, 1.17},
+				{0.592, 1, 0.8841, -0.409, 10.6},
+				{0.598, 1, 0.8062, -0.607, 2.41},
+				{0.626, 1, 0.707, -0.813, 11.87},
+				{0.642, 1, 0.9297, 0.449, 4.96},
+				{0.668, 1, 0.8955, -0.173, 6.02},
+				{0.675, 1, 0.8872, 0.336, 6},
+				{0.706, 1, 0.9004, -0.292, 8.74},
+				{0.715, 1, 1, 0.172, 7.01},
+				{0.745, 1, 0.9965, -0.393, 8.64},
+			},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Stardust",
+			texture = "fx_particle02",
+			direction = "Top",
+			spread = {180, 180},
+			speed = {0.5, 2},
+			drag = 1,
+			accel = {0, 0.8, 0},
+			lifetime = {1.2, 2},
+			size = {
+				{0, 0, 0},
+				{0.1, 0.9, 0.3},
+				{0.8, 0.7, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 228, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			cone_emit = {
+				{0.215, 1, 0.2618, -0.633, 6.67},
+				{0.248, 1, 0.1618, -0.067, 3.5},
+				{0.261, 1, 0.4094, -0.536, 4.79},
+				{0.269, 1, 0.1932, 0.624, 6.67},
+				{0.275, 1, 0.2298, -0.678, 4.25},
+				{0.28, 1, 0.493, -0.658, 8.28},
+				{0.296, 1, 0.4356, 0.894, 5.49},
+				{0.297, 1, 0.3024, 0.068, 5.57},
+				{0.297, 1, 0.4699, -0.379, 9.68},
+				{0.307, 1, 0.0725, 0.321, 3.77},
+				{0.314, 1, 0.1739, 0.894, 9.78},
+				{0.322, 1, 0.4153, 0.527, 2.84},
+				{0.328, 1, 0.5652, -0.243, 3.49},
+				{0.335, 1, 0.4729, -0.738, 9.23},
+				{0.344, 1, 0.056, -0.782, 3.95},
+				{0.351, 1, 0.2414, -0.536, 9.9},
+				{0.353, 1, 0.3084, -0.704, 1.34},
+				{0.353, 1, 0.6386, -0.471, 3.07},
+				{0.365, 1, 0.418, 0.666, 1.49},
+				{0.372, 1, 0.7539, 0.45, 4.47},
+				{0.374, 1, 0.1039, -0.906, 6.51},
+				{0.378, 1, 0.2547, -0.469, 8.21},
+				{0.379, 1, 0.7574, 0.825, 7.65},
+				{0.382, 1, 0.5755, 0.455, 2.95},
+				{0.397, 1, 0.6645, 0.474, 5.13},
+				{0.398, 1, 0.4879, 0.293, 8.92},
+				{0.4, 1, 0.4089, 0.691, 9.66},
+				{0.408, 1, 0.3076, -0.377, 5.32},
+				{0.412, 1, 0.1757, -0.824, 4.89},
+				{0.412, 1, 0.6576, 0.207, 6.1},
+				{0.414, 1, 0.5739, -0.044, 3.91},
+				{0.418, 1, 0.3448, -0.723, 4.95},
+				{0.421, 1, 0.5776, -0.856, 8.44},
+				{0.423, 1, 0.8468, -0.73, 8.42},
+				{0.424, 1, 0.3019, 0.845, 9.01},
+				{0.431, 1, 0.636, 0.886, 0.57},
+				{0.432, 1, 0.5555, 0.09, 4.3},
+				{0.452, 1, 0.6832, 0.684, 4.32},
+				{0.459, 1, 0.769, -0.347, 8.28},
+				{0.46, 1, 0.6544, 0.031, 7.66},
+				{0.461, 1, 0.6086, 0.002, 9.09},
+				{0.462, 1, 0.5122, -0.653, 5.55},
+				{0.484, 1, 1, 0.54, 2.58},
+				{0.486, 1, 1, -0.368, 8.55},
+				{0.492, 1, 0.8286, 0.331, 9.32},
+				{0.494, 1, 0.5068, -0.862, 4.45},
+				{0.494, 1, 0.99, 0.857, 7.76},
+				{0.498, 1, 0.8154, 0.069, 8.47},
+				{0.508, 1, 0.8296, -0.726, 3.54},
+				{0.51, 1, 0.8985, -0.639, 3.82},
+				{0.516, 1, 0.722, 0.099, 9.31},
+				{0.516, 1, 0.8496, 0.478, 4.09},
+				{0.522, 1, 0.9452, 0.375, 2.72},
+				{0.527, 1, 0.9369, 0.159, 5.06},
+				{0.535, 1, 0.7362, -0.788, 9.85},
+				{0.537, 1, 0.7664, -0.842, 7.75},
+				{0.54, 1, 0.8427, -0.735, 1.62},
+				{0.551, 1, 1, 0.857, 7.33},
+				{0.562, 1, 0.9218, -0.212, 5.96},
+				{0.574, 1, 1, -0.025, 2.7},
+				{0.582, 1, 0.6711, -0.255, 6.18},
+				{0.588, 1, 0.982, 0.209, 1.65},
+				{0.602, 1, 0.916, -0.213, 7.9},
+				{0.606, 1, 1, 0.759, 9.28},
+				{0.607, 1, 0.8927, -0.634, 6.07},
+				{0.608, 1, 0.902, 0.142, 2.94},
+				{0.61, 1, 0.8101, -0.052, 0.8},
+				{0.613, 1, 0.996, 0.113, 9.77},
+				{0.62, 1, 0.7599, 0.792, 1.21},
+				{0.625, 1, 0.9721, 0.129, 5.74},
+				{0.626, 1, 0.8902, -0.233, 7.31},
+				{0.634, 1, 0.8213, 0.114, 9.26},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Eddies",
+			texture = "fx_wind_swirl",
+			lifetime = {0.8, 1.1},
+			size = {
+				{0, 6, 0},
+				{0.3, 12, 0},
+				{1, 14, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.3, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 215, 255},
+				},
+				{
+					0.4,
+					{170, 124, 255},
+				},
+				{
+					1,
+					{104, 72, 232},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.3,
+			rotation = {0, 360},
+			rot_speed = {-90, -60},
+			cone_emit = {
+				{0.417, 1, 0.1875, 0.272, 4.06},
+				{0.513, 1, 0.4516, 0.045, 4.01},
+				{0.609, 1, 0.7197, -0.267, 5.04},
+				{0.61, 1, 0.7209, -0.442, 4.94},
+				{0.71, 1, 1, 0.281, 5.14},
+				{0.71, 1, 1, 0.432, 6.42},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Blink",
+			texture = "fx_spark002",
+			lifetime = {0.22, 0.3},
+			size = {
+				{0, 0, 0},
+				{0.3, 4.5, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{222, 232, 255},
+				},
+				{
+					1,
+					{184, 194, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 2.2,
+			rotation = {0, 45},
+			cone_emit = {
+				{0.577, 1, 0.566, 0.154, 7.17},
+				{0.59, 1, 0.635, 0.821, 7.17},
+				{0.623, 1, 0.946, -0.233, 8.09},
+				{0.863, 1, 0.957, -0.663, 9.46},
+				{0.865, 1, 0.535, -0.22, 7.56},
+				{1.003, 1, 0.747, 0.746, 9.78},
+				{1.206, 1, 0.217, -0.022, 6.02},
+				{1.224, 1, 0.318, 0.349, 4.76},
+				{1.251, 1, 0.966, -0.796, 2.01},
+				{1.261, 1, 0.307, 0.045, 4.19},
+				{1.313, 1, 0.252, 0.831, 3.78},
+				{1.377, 1, 0.671, 0.737, 1.78},
+				{1.437, 1, 0.211, 0.683, 1.92},
+				{1.441, 1, 0.931, 0.468, 3.34},
+				{1.572, 1, 0.837, -0.849, 1.61},
+				{1.67, 1, 0.735, 0.034, 6.22},
+				{1.705, 1, 0.817, 0.036, 1.69},
+				{1.723, 1, 0.964, -0.809, 1.29},
+				{1.727, 1, 0.202, 0.283, 1.61},
+				{1.824, 1, 0.58, 0.112, 4.14},
+				{1.832, 1, 0.937, 0.61, 9.41},
+				{1.863, 1, 0.627, -0.621, 3.7},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+	},
+	shakes = {
+		{0, 1.2, 0.6},
+		{0.13, 0.7, 0.4},
+		{0.26, 0.5, 0.4},
+	},
+	light = {
+		color = {150, 120, 255},
+		brightness = 5,
+		range = 45,
+		time = 0.9,
+	},
+	cone = {
+		length = 70,
+		angle = 55,
+		wave = {0.05, 0.36},
+	},
+}
+
+-- ASTRAL COLOSSUS H1: la lanza choca con el escudo y lanza tres olas de aire cósmicas en TRIÁNGULO que rompen el suelo y arrancan rocas; deja un campo de nebulosa y estrellas suspendidas (el tiempo se frena). AstralColossusVFX.AstralClash(cf, largo, angulo, escala, sacudida): cf = vértice del triángulo en el suelo, mirando hacia adelante.
+-- length = largo del triángulo en studs (por defecto 70 × escala); angle = apertura en grados (por defecto 55).
+function AstralColossusVFX.AstralClash(cf: CFrame, length: number?, angle: number?, scale: number?, shake: number?): Part
+	return play(SPEC_AstralClash, cf, scale, length or 70 * (scale or 1), shake, angle or 55)
+end
+
+return AstralColossusVFX

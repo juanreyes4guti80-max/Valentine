@@ -148,7 +148,7 @@ class P:
     __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "r_size", "r_tr", "frame0", "L", "seed")
 
 
-def spawn(L, origin, rng, scale, Rf=None):
+def spawn(L, origin, rng, scale, Rf=None, length=0.0):
     """Rf: rotación (3x3) del contenedor: lleva ejes locales del emisor a mundo.
     Ojo: Acceleration en Roblox es en espacio mundo (no se rota)."""
     Rf = np.eye(3) if Rf is None else Rf
@@ -179,7 +179,10 @@ def spawn(L, origin, rng, scale, Rf=None):
     d = rot_toward(d, ax1, math.radians(rng.uniform(-sx, sx)))
     d = rot_toward(d, ax2, math.radians(rng.uniform(-sy, sy)))
     d /= np.linalg.norm(d)
-    spd = rng.uniform(*L.get("speed", (0, 0))) * scale
+    if L.get("speed_len"):          # velocidad proporcional al largo del efecto (la ola cruza el triángulo)
+        spd = rng.uniform(*L["speed_len"]) * length
+    else:
+        spd = rng.uniform(*L.get("speed", (0, 0))) * scale
     p.vel = d * spd
     p.age = 0.0
     p.life = rng.uniform(*L["lifetime"])
@@ -256,7 +259,7 @@ def spawn_meteor(L, origin, rng, scale, Rf):
 
 def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration=None, seed=7,
            ground_y=0.0, background=None, extra_draw=None, frame_rot=None, length=0.0, bloom=None,
-           only_frames=None):
+           only_frames=None, cone_angle=60.0):
     """frame_rot: rotación del contenedor (local->mundo). Emisiones (t, n, u, side, up):
     u = fracción a lo largo de la línea (adelante = -Z local), side = +X local, up = +Y."""
     rng = random.Random(seed)
@@ -281,10 +284,21 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             if len(ev) > 2:
                 u, side, up = ev[2], ev[3], ev[4]
                 pos = o0 + Rf @ np.array([side * scale, up * scale, -u * length])
-            events.append((t, n, L, pos))
+            events.append((t, n, L, pos, None))
         for ev in L.get("points", []):   # (t, n, x, y, z): posición local absoluta
             t, n, x, y, z = ev
-            events.append((t, n, L, o0 + Rf @ (np.array([x, y, z], float) * scale)))
+            events.append((t, n, L, o0 + Rf @ (np.array([x, y, z], float) * scale), None))
+        # cono/triángulo hacia adelante: (t, n, u, s, alto); u = fracción del largo, s = fracción del
+        # medio ancho en esa distancia. El portador mira desde el vértice hacia ese punto.
+        tan_h = math.tan(math.radians(cone_angle / 2))
+        pt = math.radians(L.get("pitch", 0.0))    # inclinación hacia arriba de la salida
+        Rx = np.array([[1, 0, 0], [0, math.cos(pt), -math.sin(pt)], [0, math.sin(pt), math.cos(pt)]])
+        for ev in L.get("cone_emit", []):
+            t, n, u, sfrac, up = ev
+            pos = o0 + Rf @ np.array([sfrac * u * length * tan_h, up * scale, -u * length])
+            phi = -math.atan(sfrac * tan_h)
+            Ry = np.array([[math.cos(phi), 0, math.sin(phi)], [0, 1, 0], [-math.sin(phi), 0, math.cos(phi)]])
+            events.append((t, n, L, pos, Rf @ Ry @ Rx))
     events.sort(key=lambda e: e[0])
     ei = 0
     dt = 1.0 / FPS
@@ -292,12 +306,13 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
     for fi in range(nframes):
         t = fi * dt
         while ei < len(events) and events[ei][0] <= t + 1e-9:
-            _, n, L, o = events[ei]
+            _, n, L, o, Re = events[ei]
+            Rv = Rf if Re is None else Re
             for _ in range(n):
                 if L.get("type") == "meteor":
-                    meteors.append(spawn_meteor(L, o, rng, scale, Rf))
+                    meteors.append(spawn_meteor(L, o, rng, scale, Rv))
                 else:
-                    parts.append(spawn(L, o, rng, scale, Rf))
+                    parts.append(spawn(L, o, rng, scale, Rv, length))
             ei += 1
         # emisión continua
         for st_ in streams:

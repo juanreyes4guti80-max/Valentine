@@ -4,6 +4,8 @@ d = os.path.dirname(os.path.abspath(__file__))
 luau = sys.argv[1]
 mock = open(os.path.join(d, "runtime_mock.luau")).read()
 mod = open(os.path.join(d, "..", "..", "roblox", "KaijuFireVFX.lua")).read().replace("--!nonstrict", "")
+astral = open(os.path.join(d, "..", "..", "..", "AstralColossus_VFX", "roblox", "AstralColossusVFX.lua")).read() \
+    .replace("--!nonstrict", "")
 G = ["Vector3", "Vector2", "CFrame", "Color3", "NumberRange", "NumberSequence", "NumberSequenceKeypoint",
      "ColorSequence", "ColorSequenceKeypoint", "TweenInfo", "Random", "Enum", "Instance", "workspace", "game", "task", "time",
      "typeof", "RaycastParams"]
@@ -88,12 +90,35 @@ for i = 0, 3 do
 end
 runRocks("H3 Models", function() return VFX.H3_DetonationIgnition(models, 1, 0) end, 6, mground)
 assert(VFX.H3_Detonation({}, 1) == nil, "sin rocas no debe crear nada")
+
+-- ASTRAL COLOSSUS: todo lo del triángulo debe caer dentro del triángulo (con cualquier largo/ángulo)
+local AST = loadAstral()
+AST.Parent = R.workspace
+local function runCone(name, call, seconds, len, ang)
+	run(name, call, seconds)
+	local tanH = math.tan(math.rad(ang / 2))
+	local fuera, n = 0, 0
+	for i, p in R.stats.emitPos do
+		-- el polvo donde ATERRIZAN las rocas puede quedar fuera: las rocas salen volando
+		if string.sub(R.stats.emitNames[i], 1, 8) == "RockLand" then continue end
+		n += 1
+		local fwd = -p.Z
+		if fwd > len * 1.02 + 0.5 or math.abs(p.X) > math.max(fwd, 0) * tanH + 0.6 then fuera += 1 end
+	end
+	print(("%-17s   triángulo: %d emisiones, fuera del triángulo: %d (largo %d, ángulo %d)"):format("", n, fuera, len, ang))
+	assert(n > 100, name .. ": casi no emitió")
+	assert(fuera == 0, name .. ": hay emisiones fuera del triángulo")
+end
+runCone("AstralClash", function() return AST.AstralClash(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 4.5, 70, 55)
+runCone("Astral 100/35 x1", function() return AST.AstralClash(R.CFrame.new(0, 0, 0), 100, 35, 1, 0) end, 4.5, 100, 35)
+runCone("Astral 60/90 x1.5", function() return AST.AstralClash(R.CFrame.new(0, 0, 0), 60, 90, 1.5, 2) end, 4.5, 60, 90)
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"
 for k in G:
     b += f"local {k} = R.{k}\n"
-b += "local function loadModule()\n" + mod + "\nend\n" + test
+b += "local function loadModule()\n" + mod + "\nend\n"
+b += "local function loadAstral()\n" + astral + "\nend\n" + test
 with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as f:
     f.write(b)
 sys.exit(subprocess.run([luau, f.name]).returncode)

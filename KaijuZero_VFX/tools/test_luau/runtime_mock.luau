@@ -150,9 +150,10 @@ function Inst.new(class)
 				M.stats.emits += 1; M.stats.emitted += n
 				-- dónde se emitió (el contenedor de prueba está en el origen y sin rotar)
 				local c = props.Parent
-				local pos = c.ClassName == "Attachment" and (c.WorldPosition or c.Position) or (c.CFrame and c.CFrame.p)
+				local pos = c.ClassName == "Attachment" and ((c.WorldCFrame and c.WorldCFrame.p) or c.WorldPosition or c.Position)
+					or (c.CFrame and c.CFrame.p)
 				M.stats.emitPos = M.stats.emitPos or {}
-				if pos then table.insert(M.stats.emitPos, pos) end
+				if pos then table.insert(M.stats.emitPos, pos); table.insert(M.stats.emitNames, rawget(self, "__props").Name or "") end
 				if pos then
 					M.stats.emitMinZ = math.min(M.stats.emitMinZ, pos.Z)
 					M.stats.emitMaxZ = math.max(M.stats.emitMaxZ, pos.Z)
@@ -249,6 +250,7 @@ function M.reset()
 	now = 0; delays = {}; waiting = {}; heart = {}; renders = {}; live = {}
 	for k in M.stats do M.stats[k] = 0 end
 	M.stats.emitPos = {}
+	M.stats.emitNames = {}
 end
 function M.liveCount()
 	local n = 0
