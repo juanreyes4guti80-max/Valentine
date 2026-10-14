@@ -1,0 +1,7896 @@
+--!nonstrict
+--[[
+	KaijuFireVFX — VFX de fuego para KAIJU ZERO
+	(generado automáticamente desde vfx_specs.py; edita allí y regenera)
+
+	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
+		local KaijuFireVFX = require(ReplicatedStorage.KaijuFireVFX)
+		-- cf = punto del SUELO bajo la explosión; 1 = escala; 1 = intensidad de la sacudida de cámara
+		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
+
+	ANTES DE USARLO:
+	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
+	  2) Clic derecho en cada imagen > "Copy ID to clipboard" y pégalo en TEXTURES.
+	     (Usa el ID de la IMAGEN, no el de un Decal.)
+
+	CIERRE LIMPIO:
+	  - Ráfagas con Emit(); la emisión continua (fuego en el suelo) baja su Rate hasta 0.
+	  - Nada vive más que la duración del efecto: el contenedor se destruye al final.
+]]
+
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local KaijuFireVFX = {}
+
+-- Pega aquí los IDs de las imágenes subidas
+KaijuFireVFX.TEXTURES = {
+	fx_burst_a = "rbxassetid://0",
+	fx_burst_fan = "rbxassetid://0",
+	fx_feather_4x4 = "rbxassetid://0",
+	fx_fire_2x2 = "rbxassetid://0",
+	fx_glow = "rbxassetid://0",
+	fx_line = "rbxassetid://0",
+	fx_line_curve = "rbxassetid://0",
+	fx_shock_soft = "rbxassetid://0",
+	fx_shock_spiky = "rbxassetid://0",
+	fx_smoke_2x2 = "rbxassetid://0",
+	fx_smoke_round = "rbxassetid://0",
+	fx_spark4 = "rbxassetid://0",
+	fx_star = "rbxassetid://0",
+	fx_wind_lines = "rbxassetid://0",
+	fx_wind_swirl = "rbxassetid://0",
+	kk_circle_03 = "rbxassetid://0",
+	kk_fire_01 = "rbxassetid://0",
+	kk_fire_02 = "rbxassetid://0",
+	kk_flare_01 = "rbxassetid://0",
+	kk_muzzle_01 = "rbxassetid://0",
+	kk_muzzle_03 = "rbxassetid://0",
+	kk_muzzle_04 = "rbxassetid://0",
+	kk_muzzle_05 = "rbxassetid://0",
+	kk_scorch_02 = "rbxassetid://0",
+	kk_smoke_04 = "rbxassetid://0",
+	kk_smoke_07 = "rbxassetid://0",
+	kk_smoke_08 = "rbxassetid://0",
+	kk_smoke_10 = "rbxassetid://0",
+	kk_spark_01 = "rbxassetid://0",
+	kk_spark_02 = "rbxassetid://0",
+	kk_star_06 = "rbxassetid://0",
+	kk_trace_01 = "rbxassetid://0",
+	kk_twirl_01 = "rbxassetid://0",
+	kk_twirl_02 = "rbxassetid://0",
+	kz_debris_2x2 = "rbxassetid://0",
+	kz_scorch = "rbxassetid://0",
+}
+
+-- Dónde se crean los efectos (puedes cambiarlo por una carpeta de VFX)
+KaijuFireVFX.Parent = workspace :: Instance
+-- Multiplicador de cantidad de partículas (bájalo en dispositivos lentos, p.ej. 0.6)
+KaijuFireVFX.Quality = 1
+-- Luz naranja breve en el impacto
+KaijuFireVFX.UseLight = true
+
+type Layer = { [string]: any }
+
+local rng = Random.new()
+
+local function numberSeq(points: { { number } }, scale: number): NumberSequence
+	local kps = table.create(#points)
+	for i, p in points do
+		local v = math.max(p[2] * scale, 0)
+		kps[i] = NumberSequenceKeypoint.new(p[1], v, math.min((p[3] or 0) * scale, v))
+	end
+	return NumberSequence.new(kps)
+end
+
+local function transparencySeq(points: { { number } }): NumberSequence
+	local kps = table.create(#points)
+	for i, p in points do
+		kps[i] = NumberSequenceKeypoint.new(p[1], math.clamp(p[2], 0, 1), p[3] or 0)
+	end
+	return NumberSequence.new(kps)
+end
+
+local function colorSeq(points: { any }): ColorSequence
+	local kps = table.create(#points)
+	for i, p in points do
+		local c = p[2]
+		kps[i] = ColorSequenceKeypoint.new(p[1], Color3.fromRGB(c[1], c[2], c[3]))
+	end
+	return ColorSequence.new(kps)
+end
+
+-- evaluación de secuencias (para los decals del suelo)
+local function evalNum(points: { { number } }, t: number): number
+	if t <= points[1][1] then
+		return points[1][2]
+	end
+	for i = 1, #points - 1 do
+		local a, b = points[i], points[i + 1]
+		if t <= b[1] then
+			local u = (t - a[1]) / math.max(b[1] - a[1], 1e-6)
+			return a[2] + (b[2] - a[2]) * u
+		end
+	end
+	return points[#points][2]
+end
+
+local function evalColor(points: { any }, t: number): Color3
+	local function c3(c)
+		return Color3.fromRGB(c[1], c[2], c[3])
+	end
+	if t <= points[1][1] then
+		return c3(points[1][2])
+	end
+	for i = 1, #points - 1 do
+		local a, b = points[i], points[i + 1]
+		if t <= b[1] then
+			local u = (t - a[1]) / math.max(b[1] - a[1], 1e-6)
+			return c3(a[2]):Lerp(c3(b[2]), u)
+		end
+	end
+	return c3(points[#points][2])
+end
+
+local function invisiblePart(name: string, size: Vector3, cf: CFrame, parent: Instance): Part
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Transparency = 1
+	p.Size = size
+	p.CFrame = cf
+	p.Parent = parent
+	return p
+end
+
+local function configureEmitter(L: Layer, scale: number): ParticleEmitter
+	local e = Instance.new("ParticleEmitter")
+	e.Name = L.name
+	e.Enabled = false
+	e.Rate = 0
+	e.Texture = KaijuFireVFX.TEXTURES[L.texture] or ""
+	e.Lifetime = NumberRange.new(L.lifetime[1], L.lifetime[2])
+	e.Speed = NumberRange.new(L.speed[1] * scale, L.speed[2] * scale)
+	e.SpreadAngle = Vector2.new(L.spread[1], L.spread[2])
+	e.EmissionDirection = (Enum.NormalId :: any)[L.direction]
+	e.Acceleration = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * scale
+	e.Drag = L.drag
+	e.Size = numberSeq(L.size, scale)
+	e.Transparency = transparencySeq(L.transparency)
+	e.Color = colorSeq(L.color)
+	e.LightEmission = L.light_emission
+	e.LightInfluence = 0
+	e.Brightness = L.brightness
+	e.Rotation = NumberRange.new(L.rotation[1], L.rotation[2])
+	e.RotSpeed = NumberRange.new(L.rot_speed[1], L.rot_speed[2])
+	e.ZOffset = L.zoffset * scale
+	e.Orientation = (Enum.ParticleOrientation :: any)[L.orientation]
+	e.LockedToPart = false
+	if L.flipbook then
+		e.FlipbookLayout = (Enum.ParticleFlipbookLayout :: any)[L.flipbook.layout]
+		e.FlipbookMode = (Enum.ParticleFlipbookMode :: any)[L.flipbook.mode]
+		e.FlipbookFramerate = NumberRange.new(L.flipbook.fps)
+		e.FlipbookStartRandom = L.flipbook.startRandom
+	end
+	if L.shape then
+		e.Shape = (Enum.ParticleEmitterShape :: any)[L.shape.type]
+		e.ShapeStyle = (Enum.ParticleEmitterShapeStyle :: any)[L.shape.style]
+		e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+	end
+	return e
+end
+
+-- crea el emisor con su "portador": Part (si tiene forma) o Attachment
+local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos: Vector3?): (ParticleEmitter, Instance)
+	local off = localPos or (Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * scale)
+	local carrier: Instance
+	if L.shape then
+		local size
+		if L.shape.type == "Box" then
+			size = Vector3.new(L.shape.size[1], L.shape.size[2], L.shape.size[3]) * scale
+		else
+			local d = L.shape.radius * 2 * scale
+			size = Vector3.new(d, d, d)
+		end
+		carrier = invisiblePart(L.name .. "_Shape", size, holder.CFrame * CFrame.new(off), holder)
+	else
+		local a = Instance.new("Attachment")
+		a.Name = L.name
+		a.Position = off
+		a.Parent = holder
+		carrier = a
+	end
+	local e = configureEmitter(L, scale)
+	e.Parent = carrier
+	return e, carrier
+end
+
+-- emisión continua: Rate interpolado por ventanas {t0, t1, rate0, rate1}
+local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?)
+	local tEnd = 0
+	for _, w in L.stream do
+		tEnd = math.max(tEnd, w[2])
+	end
+	task.spawn(function()
+		if delayStart and delayStart > 0 then
+			task.wait(delayStart)
+		end
+		local t0 = time()
+		while e.Parent do
+			local t = time() - t0
+			if t > tEnd then
+				break
+			end
+			local rate = 0
+			for _, w in L.stream do
+				if t >= w[1] and t <= w[2] then
+					rate += w[3] + (w[4] - w[3]) * (t - w[1]) / math.max(w[2] - w[1], 1e-3)
+				end
+			end
+			e.Rate = rate * KaijuFireVFX.Quality
+			e.Enabled = rate > 0.05
+			task.wait(0.05)
+		end
+		if e.Parent then
+			e.Enabled = false
+		end
+	end)
+end
+
+-- elemento plano del suelo hecho con Decal (sin límite de tamaño)
+local function playDecal(L: Layer, holder: BasePart, scale: number, n: number)
+	for _ = 1, n do
+		local life = rng:NextNumber(L.lifetime[1], L.lifetime[2])
+		local rot = math.rad(rng:NextNumber(L.rotation[1], L.rotation[2]))
+		local off = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * scale
+		local cf = holder.CFrame * CFrame.new(off) * CFrame.Angles(0, rot, 0)
+		local p = invisiblePart(L.name, Vector3.new(0.1, 0.05, 0.1), cf, holder)
+		local d = Instance.new("Decal")
+		d.Face = Enum.NormalId.Top
+		d.Texture = KaijuFireVFX.TEXTURES[L.texture] or ""
+		d.Transparency = 1
+		d.Parent = p
+		local t0 = time()
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function()
+			local t = (time() - t0) / life
+			if t >= 1 or not p.Parent then
+				conn:Disconnect()
+				p:Destroy()
+				return
+			end
+			local sz = math.max(evalNum(L.size, t) * scale, 0.1)
+			p.Size = Vector3.new(sz, 0.05, sz)
+			p.CFrame = cf
+			d.Transparency = math.clamp(evalNum(L.transparency, t), 0, 1)
+			d.Color3 = evalColor(L.color, t)
+		end)
+	end
+end
+
+-- ráfagas Emit() programadas (y posiciones a lo largo de una línea)
+local function scheduleBursts(L: Layer, e: ParticleEmitter, carrier: Instance, holder: BasePart, s: number, len: number)
+	local baseOff = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
+	for _, ev in L.emit do
+		local t, n = ev[1], math.max(1, math.floor(ev[2] * KaijuFireVFX.Quality + 0.5))
+		local off = baseOff
+		if ev[3] ~= nil then
+			off = baseOff + Vector3.new(ev[4] * s, ev[5] * s, -ev[3] * len)
+		end
+		local function fire()
+			if not e.Parent then
+				return
+			end
+			if carrier:IsA("Attachment") then
+				(carrier :: Attachment).Position = off
+			else
+				(carrier :: BasePart).CFrame = holder.CFrame * CFrame.new(off)
+			end
+			e:Emit(n)
+		end
+		if t <= 0 then
+			fire()
+		else
+			task.delay(t, fire)
+		end
+	end
+end
+
+-- rocas en llamas: vuelan con estela, y al caer levantan polvo y dejan fuego
+local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
+	local localPos = holder.CFrame:PointToObjectSpace(worldPos)
+	for _, LL in L.land do
+		local e = buildEmitter(LL, holder, s, localPos)
+		if LL.stream then
+			runStream(LL, e)
+		else
+			e:Emit(math.max(1, math.floor(LL.emit[1][2] * KaijuFireVFX.Quality + 0.5)))
+		end
+	end
+end
+
+local function playMeteors(L: Layer, holder: BasePart, s: number)
+	local groundY = holder.Position.Y
+	local accel = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * s
+	local baseDir = ({
+		Top = Vector3.yAxis, Bottom = -Vector3.yAxis, Front = -Vector3.zAxis, Back = Vector3.zAxis,
+		Right = Vector3.xAxis, Left = -Vector3.xAxis,
+	} :: any)[L.direction]
+	for _, ev in L.emit do
+		local n = math.max(1, math.floor(ev[2] * KaijuFireVFX.Quality + 0.5))
+		task.delay(ev[1], function()
+			if not holder.Parent then
+				return
+			end
+			local list = {}
+			for i = 1, n do
+				local spread = CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
+					math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
+				local dir = holder.CFrame:VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
+				local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
+				local pos = holder.CFrame:PointToWorldSpace(Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s)
+				local rock = Instance.new("Part")
+				rock.Name = "Rock"
+				rock.Anchored = true
+				rock.CanCollide = false
+				rock.CanQuery = false
+				rock.CanTouch = false
+				rock.CastShadow = false
+				rock.Material = Enum.Material.Slate
+				rock.Color = Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
+				rock.Size = Vector3.new(sz, sz * 0.8, sz * 0.9)
+				rock.CFrame = CFrame.new(pos)
+				rock.Parent = holder
+				local att = Instance.new("Attachment")
+				att.Parent = rock
+				local emitters = {}
+				for _, TL in L.trails do
+					local te = configureEmitter(TL, s)
+					te.Rate = TL.rate * KaijuFireVFX.Quality
+					te.Enabled = true
+					te.Parent = att
+					table.insert(emitters, te)
+				end
+				local spin = math.rad(rng:NextNumber(L.rock.spin[1], L.rock.spin[2]))
+				list[i] = {
+					rock = rock, pos = pos, vel = dir * rng:NextNumber(L.speed[1], L.speed[2]) * s,
+					age = 0, life = rng:NextNumber(L.lifetime[1], L.lifetime[2]),
+					rot = CFrame.Angles(rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), 0),
+					spinAxis = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1)).Unit,
+					spin = spin, emitters = emitters, done = false,
+				}
+			end
+			local conn: RBXScriptConnection
+			conn = RunService.Heartbeat:Connect(function(dt)
+				if not holder.Parent then
+					conn:Disconnect()
+					return
+				end
+				local alive = 0
+				for _, m in list do
+					if m.done then
+						continue
+					end
+					alive += 1
+					m.vel = m.vel * 2 ^ (-L.drag * dt) + accel * dt
+					m.pos += m.vel * dt
+					m.age += dt
+					m.rot = CFrame.fromAxisAngle(m.spinAxis, m.spin * dt) * m.rot
+					m.rock.CFrame = CFrame.new(m.pos) * m.rot
+					if (m.pos.Y <= groundY + 0.3 * s and m.vel.Y < 0) or m.age >= m.life then
+						m.done = true
+						for _, te in m.emitters do
+							te.Enabled = false
+						end
+						m.rock.Transparency = 1
+						if m.pos.Y <= groundY + 0.6 * s then
+							landAt(L, holder, s, Vector3.new(m.pos.X, groundY + 0.4 * s, m.pos.Z))
+						end
+					end
+				end
+				if alive == 0 then
+					conn:Disconnect()
+				end
+			end)
+		end)
+	end
+end
+
+-- Sacudida de cámara (solo cliente). intensity ~ 0.5 (suave) .. 2 (fuerte)
+function KaijuFireVFX.Shake(intensity: number, duration: number?)
+	if not RunService:IsClient() then
+		return
+	end
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local dur = duration or 0.9
+	local t0 = time()
+	local name = "KZShake" .. tostring(rng:NextInteger(1, 1000000000))
+	local seed = rng:NextNumber(0, 1000)
+	RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
+		local t = time() - t0
+		if t > dur then
+			RunService:UnbindFromRenderStep(name)
+			return
+		end
+		local a = intensity * math.exp(-t / (dur * 0.35))
+		local rx = math.noise(seed, t * 24) * a * 0.03
+		local ry = math.noise(seed + 17, t * 24) * a * 0.03
+		local rz = math.noise(seed + 31, t * 16) * a * 0.015
+		cam.CFrame = cam.CFrame * CFrame.Angles(rx, ry, rz)
+	end)
+end
+
+local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?): Part
+	local s = scale or 1
+	local len = length or 0
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, KaijuFireVFX.Parent)
+	for _, L in spec.layers do
+		if L.type == "meteor" then
+			playMeteors(L, holder, s)
+		elseif L.decal then
+			for _, ev in L.emit do
+				task.delay(ev[1], function()
+					if holder.Parent then
+						playDecal(L, holder, s, ev[2])
+					end
+				end)
+			end
+		else
+			local e, carrier = buildEmitter(L, holder, s)
+			if #L.emit > 0 then
+				scheduleBursts(L, e, carrier, holder, s, len)
+			end
+			if L.stream then
+				runStream(L, e)
+			end
+		end
+	end
+	if KaijuFireVFX.UseLight and spec.light then
+		local li = Instance.new("PointLight")
+		li.Color = Color3.fromRGB(spec.light.color[1], spec.light.color[2], spec.light.color[3])
+		li.Brightness = spec.light.brightness
+		li.Range = math.min(spec.light.range * s, 60)
+		li.Shadows = false
+		li.Parent = holder
+		TweenService:Create(li, TweenInfo.new(spec.light.time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Brightness = 0 }):Play()
+	end
+	if shake and shake > 0 then
+		KaijuFireVFX.Shake(shake, 0.9)
+	end
+	Debris:AddItem(holder, spec.duration + 0.3)
+	return holder
+end
+
+local SPEC_GiantExplosion = {
+	name = "GiantExplosion",
+	duration = 5.8,
+	layers = {
+		{
+			name = "FlashBurst",
+			texture = "fx_burst_a",
+			emit = {
+				{0, 2},
+			},
+			offset = {0, 8, 0},
+			lifetime = {0.1, 0.13},
+			size = {
+				{0, 16, 0},
+				{0.3, 62, 0},
+				{1, 72, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.25, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 170},
+				},
+				{
+					1,
+					{255, 170, 70},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			zoffset = 12,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FlashStar",
+			texture = "fx_star",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 8, 0},
+			lifetime = {0.15, 0.15},
+			size = {
+				{0, 40, 0},
+				{0.25, 120, 0},
+				{1, 60, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 200},
+				},
+				{
+					1,
+					{255, 196, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			zoffset = 13,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Glow",
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 12, 0},
+			lifetime = {0.8, 0.8},
+			size = {
+				{0, 30, 0},
+				{0.12, 84, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.4, 0.65, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 170, 70},
+				},
+				{
+					1,
+					{230, 90, 30},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1,
+			zoffset = -12,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "GroundRing",
+			decal = true,
+			texture = "fx_shock_spiky",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 0.3, 0},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {0.55, 0.55},
+			size = {
+				{0, 34, 0},
+				{0.2, 84, 0},
+				{0.6, 142, 0},
+				{1, 160, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.35, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 176, 90},
+				},
+				{
+					1,
+					{255, 120, 50},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1,
+			rotation = {0, 360},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundRing2",
+			decal = true,
+			texture = "kk_circle_03",
+			emit = {
+				{0.06, 1},
+			},
+			offset = {0, 0.25, 0},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {0.5, 0.5},
+			size = {
+				{0, 26, 0},
+				{0.25, 70, 0},
+				{1, 126, 0},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.5, 0.7, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 210, 150},
+				},
+				{
+					1,
+					{255, 180, 120},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "DustWave",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.02, 38},
+			},
+			offset = {0, 2.5, 0},
+			direction = "Front",
+			spread = {180, 3},
+			speed = {110, 170},
+			drag = 3.6,
+			accel = {0, 6, 0},
+			lifetime = {1.1, 1.5},
+			size = {
+				{0, 9, 2},
+				{0.3, 22, 4},
+				{1, 32, 5},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.15, 0.18, 0},
+				{0.6, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{222, 200, 172},
+				},
+				{
+					0.5,
+					{200, 186, 170},
+				},
+				{
+					1,
+					{186, 178, 170},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -3,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "DustWave2",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.07, 24},
+			},
+			offset = {0, 3, 0},
+			direction = "Front",
+			spread = {180, 5},
+			speed = {70, 115},
+			drag = 3,
+			accel = {0, 8, 0},
+			lifetime = {1.1, 1.45},
+			size = {
+				{0, 10, 2},
+				{0.35, 24, 4},
+				{1, 34, 5},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.15, 0.22, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{222, 200, 172},
+				},
+				{
+					0.5,
+					{200, 186, 170},
+				},
+				{
+					1,
+					{186, 178, 170},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -3,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FireWaveGround",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.03, 22},
+			},
+			offset = {0, 2.5, 0},
+			direction = "Front",
+			spread = {180, 4},
+			speed = {70, 105},
+			drag = 4.5,
+			accel = {0, 10, 0},
+			lifetime = {0.45, 0.62},
+			size = {
+				{0, 8, 2},
+				{0.3, 18, 3},
+				{1, 12, 2},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.5,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundStreaks",
+			texture = "fx_line",
+			orientation = "VelocityParallel",
+			emit = {
+				{0, 18},
+			},
+			offset = {0, 1.5, 0},
+			direction = "Front",
+			spread = {180, 2},
+			speed = {190, 270},
+			drag = 7,
+			lifetime = {0.18, 0.26},
+			size = {
+				{0, 18, 4},
+				{1, 28, 4},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 200},
+				},
+				{
+					1,
+					{255, 190, 100},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.3,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "FireCore",
+			texture = "kk_fire_02",
+			emit = {
+				{0, 4},
+				{0.06, 2},
+			},
+			offset = {0, 9, 0},
+			speed = {0, 6},
+			direction = "Top",
+			spread = {180, 180},
+			lifetime = {0.5, 0.6},
+			size = {
+				{0, 14, 3},
+				{0.3, 38, 4},
+				{1, 42, 4},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 248, 214},
+				},
+				{
+					0.3,
+					{255, 214, 110},
+				},
+				{
+					1,
+					{255, 140, 50},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-90, 90},
+			zoffset = 3,
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FireballA",
+			texture = "kk_fire_01",
+			emit = {
+				{0, 10},
+				{0.05, 6},
+				{0.1, 4},
+			},
+			offset = {0, 10, 0},
+			shape = {
+				type = "Sphere",
+				radius = 5,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {26, 46},
+			drag = 3.6,
+			accel = {0, 14, 0},
+			lifetime = {0.85, 1.15},
+			size = {
+				{0, 14, 3.5},
+				{0.15, 34, 6.12},
+				{0.6, 42, 5.88},
+				{1, 46, 6.44},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.55, 0.05, 0},
+				{0.85, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.25,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-50, 50},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FireballB",
+			texture = "kk_fire_02",
+			emit = {
+				{0, 8},
+				{0.06, 5},
+				{0.12, 3},
+			},
+			offset = {0, 10, 0},
+			shape = {
+				type = "Sphere",
+				radius = 5,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {22, 42},
+			drag = 3.6,
+			accel = {0, 14, 0},
+			lifetime = {0.8, 1.1},
+			size = {
+				{0, 13, 3.25},
+				{0.15, 32, 5.76},
+				{0.6, 40, 5.6},
+				{1, 44, 6.16},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.55, 0.05, 0},
+				{0.85, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.25,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-50, 50},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FireRoll",
+			texture = "kk_fire_01",
+			emit = {
+				{0.14, 6},
+				{0.24, 5},
+				{0.34, 4},
+			},
+			offset = {0, 22, 0},
+			shape = {
+				type = "Sphere",
+				radius = 10,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {18, 34},
+			drag = 2,
+			accel = {0, 14, 0},
+			lifetime = {0.8, 1.05},
+			size = {
+				{0, 16, 4},
+				{0.15, 30, 5.4},
+				{0.6, 36, 5.04},
+				{1, 36, 5.04},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.55, 0.05, 0},
+				{0.85, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.25,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-50, 50},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Jets",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.01, 14},
+				{0.07, 6},
+			},
+			direction = "Top",
+			spread = {110, 110},
+			speed = {70, 120},
+			drag = 6.5,
+			accel = {0, -10, 0},
+			lifetime = {0.45, 0.65},
+			size = {
+				{0, 10, 3},
+				{0.2, 26, 6.5},
+				{1, 22, 5.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			offset = {0, 8, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "Jets2",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.02, 10},
+			},
+			direction = "Top",
+			spread = {110, 110},
+			speed = {60, 110},
+			drag = 6.5,
+			accel = {0, -10, 0},
+			lifetime = {0.42, 0.6},
+			size = {
+				{0, 9, 2.7},
+				{0.2, 22, 5.5},
+				{1, 18, 4.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			offset = {0, 8, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "Column",
+			texture = "kk_muzzle_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.03, 6},
+				{0.12, 3},
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {90, 140},
+			drag = 4.5,
+			accel = {0, 0, 0},
+			lifetime = {0.5, 0.65},
+			size = {
+				{0, 14, 4.2},
+				{0.2, 36, 9},
+				{1, 30, 7.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			offset = {0, 6, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "FlamesOut",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			emit = {
+				{0.01, 12},
+				{0.08, 6},
+			},
+			offset = {0, 8, 0},
+			shape = {
+				type = "Sphere",
+				radius = 6,
+				style = "Surface",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {50, 90},
+			drag = 6,
+			accel = {0, 14, 0},
+			lifetime = {0.5, 0.7},
+			size = {
+				{0, 8, 2},
+				{0.25, 22, 4},
+				{1, 18, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.4,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "Pops",
+			texture = "kk_fire_01",
+			emit = {
+				{0.12, 4},
+				{0.22, 4},
+				{0.32, 3},
+				{0.45, 2},
+			},
+			offset = {0, 14, 0},
+			shape = {
+				type = "Sphere",
+				radius = 17,
+				style = "Surface",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {4, 12},
+			drag = 4,
+			accel = {0, 6, 0},
+			lifetime = {0.36, 0.5},
+			size = {
+				{0, 6, 1.5},
+				{0.15, 13, 2.34},
+				{0.6, 16, 2.24},
+				{1, 16, 2.24},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.55, 0.05, 0},
+				{0.85, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.25,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-50, 50},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "SmokeCap",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.5, 6},
+				{0.62, 5},
+				{0.75, 4},
+			},
+			offset = {0, 40, 0},
+			shape = {
+				type = "Sphere",
+				radius = 13,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {70, 70},
+			speed = {10, 22},
+			drag = 1.2,
+			accel = {0, 8, 0},
+			lifetime = {1.8, 2.3},
+			size = {
+				{0, 24, 4},
+				{0.4, 44, 6},
+				{1, 58, 6},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.1, 0.3, 0},
+				{0.55, 0.48, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 156, 76},
+				},
+				{
+					0.08,
+					{170, 112, 84},
+				},
+				{
+					0.25,
+					{126, 114, 108},
+				},
+				{
+					0.65,
+					{150, 144, 140},
+				},
+				{
+					1,
+					{172, 168, 164},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -12,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "SmokeCap2",
+			texture = "kk_smoke_08",
+			emit = {
+				{0.56, 5},
+				{0.7, 4},
+			},
+			offset = {0, 36, 0},
+			shape = {
+				type = "Sphere",
+				radius = 13,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {70, 70},
+			speed = {10, 20},
+			drag = 1.2,
+			accel = {0, 8, 0},
+			lifetime = {1.7, 2.2},
+			size = {
+				{0, 22, 4},
+				{0.4, 42, 6},
+				{1, 54, 6},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.1, 0.32, 0},
+				{0.55, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 156, 76},
+				},
+				{
+					0.08,
+					{170, 112, 84},
+				},
+				{
+					0.25,
+					{126, 114, 108},
+				},
+				{
+					0.65,
+					{150, 144, 140},
+				},
+				{
+					1,
+					{172, 168, 164},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -12,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "CapRing",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.6, 10},
+				{0.72, 6},
+			},
+			offset = {0, 46, 0},
+			direction = "Front",
+			spread = {180, 12},
+			speed = {26, 42},
+			drag = 1.5,
+			accel = {0, 7, 0},
+			lifetime = {1.6, 2},
+			size = {
+				{0, 18, 4},
+				{0.4, 34, 5},
+				{1, 44, 5},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.12, 0.35, 0},
+				{0.55, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 156, 76},
+				},
+				{
+					0.08,
+					{170, 112, 84},
+				},
+				{
+					0.25,
+					{126, 114, 108},
+				},
+				{
+					0.65,
+					{150, 144, 140},
+				},
+				{
+					1,
+					{172, 168, 164},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -13,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "SmokeStem",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.5, 4},
+				{0.62, 4},
+			},
+			offset = {0, 14, 0},
+			shape = {
+				type = "Box",
+				size = {10, 24, 10},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {10, 20},
+			drag = 1.2,
+			accel = {0, 8, 0},
+			lifetime = {1.4, 1.8},
+			size = {
+				{0, 14, 3},
+				{0.5, 24, 4},
+				{1, 30, 4},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.2, 0.28, 0},
+				{0.7, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 156, 76},
+				},
+				{
+					0.08,
+					{170, 112, 84},
+				},
+				{
+					0.25,
+					{126, 114, 108},
+				},
+				{
+					0.65,
+					{150, 144, 140},
+				},
+				{
+					1,
+					{172, 168, 164},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -11,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Meteors",
+			type = "meteor",
+			emit = {
+				{0.02, 10},
+			},
+			offset = {0, 4, 0},
+			direction = "Top",
+			spread = {62, 62},
+			speed = {70, 115},
+			accel = {0, -120, 0},
+			drag = 0.2,
+			lifetime = {1.4, 1.8},
+			trails = {
+				{
+					name = "MeteorSmoke",
+					rate = 40,
+					texture = "kk_smoke_04",
+					speed = {1, 4},
+					direction = "Top",
+					spread = {180, 180},
+					drag = 2,
+					accel = {0, 6, 0},
+					lifetime = {0.55, 0.85},
+					size = {
+						{0, 3, 0.8},
+						{1, 9, 2},
+					},
+					transparency = {
+						{0, 0.3, 0},
+						{0.6, 0.5, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{255, 170, 80},
+						},
+						{
+							0.2,
+							{100, 88, 82},
+						},
+						{
+							1,
+							{140, 134, 130},
+						},
+					},
+					rotation = {0, 360},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					emit = {},
+				},
+				{
+					name = "MeteorFire",
+					rate = 55,
+					texture = "kk_fire_01",
+					speed = {0, 2},
+					direction = "Top",
+					spread = {180, 180},
+					lifetime = {0.16, 0.26},
+					size = {
+						{0, 6, 1.2},
+						{1, 1.5, 0},
+					},
+					color = {
+						{
+							0,
+							{255, 246, 210},
+						},
+						{
+							0.1,
+							{255, 218, 110},
+						},
+						{
+							0.3,
+							{255, 160, 50},
+						},
+						{
+							0.55,
+							{240, 104, 30},
+						},
+						{
+							0.8,
+							{190, 60, 22},
+						},
+						{
+							1,
+							{96, 32, 16},
+						},
+					},
+					light_emission = 0.5,
+					brightness = 1.6,
+					rotation = {0, 360},
+					accel = {0, 0, 0},
+					drag = 0,
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					emit = {},
+				},
+			},
+			land = {
+				{
+					name = "MeteorDust",
+					emit = {
+						{0, 5},
+					},
+					texture = "kk_smoke_04",
+					direction = "Top",
+					spread = {75, 75},
+					speed = {8, 18},
+					drag = 3,
+					accel = {0, 4, 0},
+					lifetime = {0.6, 0.9},
+					size = {
+						{0, 3, 1},
+						{0.4, 8, 1.5},
+						{1, 10, 1.5},
+					},
+					transparency = {
+						{0, 0.35, 0},
+						{0.6, 0.5, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{222, 200, 172},
+						},
+						{
+							0.5,
+							{200, 186, 170},
+						},
+						{
+							1,
+							{186, 178, 170},
+						},
+					},
+					rotation = {0, 360},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+				},
+				{
+					name = "MeteorBurn",
+					texture = "kk_muzzle_05",
+					orientation = "VelocityParallel",
+					direction = "Top",
+					spread = {10, 10},
+					speed = {4, 9},
+					drag = 2,
+					lifetime = {0.35, 0.55},
+					size = {
+						{0, 1.5, 0.5},
+						{0.3, 5, 1},
+						{1, 3, 0.8},
+					},
+					transparency = {
+						{0, 0, 0},
+						{0.6, 0.12, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{255, 236, 150},
+						},
+						{
+							0.3,
+							{255, 176, 60},
+						},
+						{
+							0.7,
+							{245, 108, 30},
+						},
+						{
+							1,
+							{180, 50, 18},
+						},
+					},
+					light_emission = 0.35,
+					brightness = 1.5,
+					stream = {
+						{0, 2.6, 12, 0},
+					},
+					accel = {0, 0, 0},
+					rotation = {0, 0},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					offset = {0, 0, 0},
+					emit = {},
+				},
+				{
+					name = "MeteorWisp",
+					texture = "kk_smoke_04",
+					direction = "Top",
+					spread = {15, 15},
+					speed = {5, 10},
+					drag = 1.2,
+					accel = {0, 5, 0},
+					lifetime = {1, 1.4},
+					size = {
+						{0, 2, 0.6},
+						{1, 8, 2},
+					},
+					transparency = {
+						{0, 0.6, 0},
+						{0.3, 0.5, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{120, 104, 96},
+						},
+						{
+							1,
+							{150, 144, 140},
+						},
+					},
+					rotation = {0, 360},
+					stream = {
+						{0.1, 2.8, 3, 0.5},
+					},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					emit = {},
+				},
+			},
+			rock = {
+				size = {2.4, 3.6},
+				spin = {-500, 500},
+				color = {95, 78, 70},
+			},
+		},
+		{
+			name = "Streaks",
+			texture = "fx_line",
+			orientation = "VelocityParallel",
+			offset = {0, 8, 0},
+			emit = {
+				{0, 36},
+				{0.06, 18},
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {120, 220},
+			drag = 4,
+			accel = {0, -50, 0},
+			lifetime = {0.3, 0.55},
+			size = {
+				{0, 20, 5},
+				{1, 6, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 238, 150},
+				},
+				{
+					0.5,
+					{255, 184, 60},
+				},
+				{
+					1,
+					{255, 110, 24},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "Embers",
+			texture = "kk_flare_01",
+			emit = {
+				{0.15, 22},
+				{0.35, 14},
+				{0.6, 10},
+			},
+			offset = {0, 14, 0},
+			shape = {
+				type = "Sphere",
+				radius = 14,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {120, 120},
+			speed = {10, 30},
+			drag = 1.6,
+			accel = {0, 16, 0},
+			lifetime = {0.8, 1.2},
+			size = {
+				{0, 0, 0},
+				{0.1, 2.8, 0.8},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Twinkles",
+			texture = "fx_spark4",
+			emit = {
+				{0.1, 14},
+			},
+			offset = {0, 12, 0},
+			shape = {
+				type = "Sphere",
+				radius = 18,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {6, 18},
+			drag = 2,
+			accel = {0, 8, 0},
+			lifetime = {0.35, 0.6},
+			size = {
+				{0, 0, 0},
+				{0.15, 5, 1.5},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 160},
+				},
+				{
+					1,
+					{255, 150, 50},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Scorch",
+			decal = true,
+			texture = "kz_scorch",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.02, 1},
+			},
+			offset = {0, 0.15, 0},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.6, 5.6},
+			size = {
+				{0, 10, 0},
+				{0.03, 52, 0},
+				{1, 54, 0},
+			},
+			transparency = {
+				{0, 0.12, 0},
+				{0.8, 0.25, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			zoffset = -1,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+		},
+		{
+			name = "GroundGlow0",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {0, 0.3, 0},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 28.6, 0},
+				{0.75, 22, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames0",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {0, 0.6, 0},
+			shape = {
+				type = "Box",
+				size = {13.2, 0.2, 13.2},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {15.4, 28.6},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 8.8, 2.2},
+				{0.3, 24.2, 6.6},
+				{1, 15.4, 4.4},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase0",
+			texture = "kk_fire_01",
+			offset = {0, 1.2, 0},
+			shape = {
+				type = "Box",
+				size = {13.2, 0.2, 13.2},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 6.6, 2.2},
+				{0.4, 13.2, 3.3},
+				{1, 8.8, 2.2},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall0",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			offset = {0, 0.5, 0},
+			shape = {
+				type = "Box",
+				size = {13.2, 0.2, 13.2},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {8.8, 17.6},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 4.4, 1.32},
+				{0.3, 13.2, 3.3},
+				{1, 8.8, 2.2},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke0",
+			texture = "kk_smoke_04",
+			offset = {0, 3, 0},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 6.6, 2.2},
+				{1, 28.6, 6.6},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers0",
+			texture = "kk_flare_01",
+			offset = {0, 3, 0},
+			shape = {
+				type = "Box",
+				size = {13.2, 2, 13.2},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow1",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {8.8707, 0.3, 7.5665},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 18.3855, 0},
+				{0.75, 14.1427, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames1",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {8.8707, 0.6, 7.5665},
+			shape = {
+				type = "Box",
+				size = {8.4856, 0.2, 8.4856},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {9.8999, 18.3855},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 5.6571, 1.4143},
+				{0.3, 15.557, 4.2428},
+				{1, 9.8999, 2.8285},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase1",
+			texture = "kk_fire_01",
+			offset = {8.8707, 1.2, 7.5665},
+			shape = {
+				type = "Box",
+				size = {8.4856, 0.2, 8.4856},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 4.2428, 1.4143},
+				{0.4, 8.4856, 2.1214},
+				{1, 5.6571, 1.4143},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall1",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			offset = {8.8707, 0.5, 7.5665},
+			shape = {
+				type = "Box",
+				size = {8.4856, 0.2, 8.4856},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {5.6571, 11.3142},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 2.8285, 0.8486},
+				{0.3, 8.4856, 2.1214},
+				{1, 5.6571, 1.4143},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke1",
+			texture = "kk_smoke_04",
+			offset = {8.8707, 3, 7.5665},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 4.2428, 1.4143},
+				{1, 18.3855, 4.2428},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers1",
+			texture = "kk_flare_01",
+			offset = {8.8707, 3, 7.5665},
+			shape = {
+				type = "Box",
+				size = {8.4856, 2, 8.4856},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow2",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {18.57, 0.3, 22.0751},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 15.4694, 0},
+				{0.75, 11.8995, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames2",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {18.57, 0.6, 22.0751},
+			shape = {
+				type = "Box",
+				size = {7.1397, 0.2, 7.1397},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {8.3297, 15.4694},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 4.7598, 1.19},
+				{0.3, 13.0895, 3.5699},
+				{1, 8.3297, 2.3799},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase2",
+			texture = "kk_fire_01",
+			offset = {18.57, 1.2, 22.0751},
+			shape = {
+				type = "Box",
+				size = {7.1397, 0.2, 7.1397},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 3.5699, 1.19},
+				{0.4, 7.1397, 1.7849},
+				{1, 4.7598, 1.19},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall2",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			offset = {18.57, 0.5, 22.0751},
+			shape = {
+				type = "Box",
+				size = {7.1397, 0.2, 7.1397},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {4.7598, 9.5196},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 2.3799, 0.714},
+				{0.3, 7.1397, 1.7849},
+				{1, 4.7598, 1.19},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke2",
+			texture = "kk_smoke_04",
+			offset = {18.57, 3, 22.0751},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 3.5699, 1.19},
+				{1, 15.4694, 3.5699},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers2",
+			texture = "kk_flare_01",
+			offset = {18.57, 3, 22.0751},
+			shape = {
+				type = "Box",
+				size = {7.1397, 2, 7.1397},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow3",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {0.9802, 0.3, -20.5316},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 15.833, 0},
+				{0.75, 12.1792, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames3",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {0.9802, 0.6, -20.5316},
+			shape = {
+				type = "Box",
+				size = {7.3075, 0.2, 7.3075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {8.5254, 15.833},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 4.8717, 1.2179},
+				{0.3, 13.3971, 3.6538},
+				{1, 8.5254, 2.4358},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase3",
+			texture = "kk_fire_01",
+			offset = {0.9802, 1.2, -20.5316},
+			shape = {
+				type = "Box",
+				size = {7.3075, 0.2, 7.3075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 3.6538, 1.2179},
+				{0.4, 7.3075, 1.8269},
+				{1, 4.8717, 1.2179},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall3",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			offset = {0.9802, 0.5, -20.5316},
+			shape = {
+				type = "Box",
+				size = {7.3075, 0.2, 7.3075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {4.8717, 9.7434},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 2.4358, 0.7308},
+				{0.3, 7.3075, 1.8269},
+				{1, 4.8717, 1.2179},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke3",
+			texture = "kk_smoke_04",
+			offset = {0.9802, 3, -20.5316},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 3.6538, 1.2179},
+				{1, 15.833, 3.6538},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers3",
+			texture = "kk_flare_01",
+			offset = {0.9802, 3, -20.5316},
+			shape = {
+				type = "Box",
+				size = {7.3075, 2, 7.3075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow4",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {-15.5475, 0.3, -25.2523},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 15.7204, 0},
+				{0.75, 12.0926, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames4",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {-15.5475, 0.6, -25.2523},
+			shape = {
+				type = "Box",
+				size = {7.2556, 0.2, 7.2556},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {8.4648, 15.7204},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 4.8371, 1.2093},
+				{0.3, 13.3019, 3.6278},
+				{1, 8.4648, 2.4185},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase4",
+			texture = "kk_fire_01",
+			offset = {-15.5475, 1.2, -25.2523},
+			shape = {
+				type = "Box",
+				size = {7.2556, 0.2, 7.2556},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 3.6278, 1.2093},
+				{0.4, 7.2556, 1.8139},
+				{1, 4.8371, 1.2093},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall4",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			offset = {-15.5475, 0.5, -25.2523},
+			shape = {
+				type = "Box",
+				size = {7.2556, 0.2, 7.2556},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {4.8371, 9.6741},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 2.4185, 0.7256},
+				{0.3, 7.2556, 1.8139},
+				{1, 4.8371, 1.2093},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke4",
+			texture = "kk_smoke_04",
+			offset = {-15.5475, 3, -25.2523},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 3.6278, 1.2093},
+				{1, 15.7204, 3.6278},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers4",
+			texture = "kk_flare_01",
+			offset = {-15.5475, 3, -25.2523},
+			shape = {
+				type = "Box",
+				size = {7.2556, 2, 7.2556},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow5",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {-25.1466, 0.3, 8.5653},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 18.5907, 0},
+				{0.75, 14.3006, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames5",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {-25.1466, 0.6, 8.5653},
+			shape = {
+				type = "Box",
+				size = {8.5803, 0.2, 8.5803},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {10.0104, 18.5907},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 5.7202, 1.4301},
+				{0.3, 15.7306, 4.2902},
+				{1, 10.0104, 2.8601},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase5",
+			texture = "kk_fire_01",
+			offset = {-25.1466, 1.2, 8.5653},
+			shape = {
+				type = "Box",
+				size = {8.5803, 0.2, 8.5803},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 4.2902, 1.4301},
+				{0.4, 8.5803, 2.1451},
+				{1, 5.7202, 1.4301},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall5",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			offset = {-25.1466, 0.5, 8.5653},
+			shape = {
+				type = "Box",
+				size = {8.5803, 0.2, 8.5803},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {5.7202, 11.4404},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 2.8601, 0.858},
+				{0.3, 8.5803, 2.1451},
+				{1, 5.7202, 1.4301},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke5",
+			texture = "kk_smoke_04",
+			offset = {-25.1466, 3, 8.5653},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 4.2902, 1.4301},
+				{1, 18.5907, 4.2902},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers5",
+			texture = "kk_flare_01",
+			offset = {-25.1466, 3, 8.5653},
+			shape = {
+				type = "Box",
+				size = {8.5803, 2, 8.5803},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow6",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {27.4752, 0.3, 18.1993},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 14.5118, 0},
+				{0.75, 11.1629, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames6",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {27.4752, 0.6, 18.1993},
+			shape = {
+				type = "Box",
+				size = {6.6978, 0.2, 6.6978},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {7.8141, 14.5118},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 4.4652, 1.1163},
+				{0.3, 12.2792, 3.3489},
+				{1, 7.8141, 2.2326},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase6",
+			texture = "kk_fire_01",
+			offset = {27.4752, 1.2, 18.1993},
+			shape = {
+				type = "Box",
+				size = {6.6978, 0.2, 6.6978},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 3.3489, 1.1163},
+				{0.4, 6.6978, 1.6744},
+				{1, 4.4652, 1.1163},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall6",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			offset = {27.4752, 0.5, 18.1993},
+			shape = {
+				type = "Box",
+				size = {6.6978, 0.2, 6.6978},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {4.4652, 8.9303},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 2.2326, 0.6698},
+				{0.3, 6.6978, 1.6744},
+				{1, 4.4652, 1.1163},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke6",
+			texture = "kk_smoke_04",
+			offset = {27.4752, 3, 18.1993},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 3.3489, 1.1163},
+				{1, 14.5118, 3.3489},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers6",
+			texture = "kk_flare_01",
+			offset = {27.4752, 3, 18.1993},
+			shape = {
+				type = "Box",
+				size = {6.6978, 2, 6.6978},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow7",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {-26.4506, 0.3, 18.4793},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 16.3644, 0},
+				{0.75, 12.588, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames7",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {-26.4506, 0.6, 18.4793},
+			shape = {
+				type = "Box",
+				size = {7.5528, 0.2, 7.5528},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {8.8116, 16.3644},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 5.0352, 1.2588},
+				{0.3, 13.8468, 3.7764},
+				{1, 8.8116, 2.5176},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase7",
+			texture = "kk_fire_01",
+			offset = {-26.4506, 1.2, 18.4793},
+			shape = {
+				type = "Box",
+				size = {7.5528, 0.2, 7.5528},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 3.7764, 1.2588},
+				{0.4, 7.5528, 1.8882},
+				{1, 5.0352, 1.2588},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall7",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			offset = {-26.4506, 0.5, 18.4793},
+			shape = {
+				type = "Box",
+				size = {7.5528, 0.2, 7.5528},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {5.0352, 10.0704},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 2.5176, 0.7553},
+				{0.3, 7.5528, 1.8882},
+				{1, 5.0352, 1.2588},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke7",
+			texture = "kk_smoke_04",
+			offset = {-26.4506, 3, 18.4793},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 3.7764, 1.2588},
+				{1, 16.3644, 3.7764},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers7",
+			texture = "kk_flare_01",
+			offset = {-26.4506, 3, 18.4793},
+			shape = {
+				type = "Box",
+				size = {7.5528, 2, 7.5528},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow8",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {-15.0622, 0.3, 17.1076},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 24.2332, 0},
+				{0.75, 18.6409, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames8",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {-15.0622, 0.6, 17.1076},
+			shape = {
+				type = "Box",
+				size = {11.1845, 0.2, 11.1845},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {13.0486, 24.2332},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 7.4564, 1.8641},
+				{0.3, 20.505, 5.5923},
+				{1, 13.0486, 3.7282},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase8",
+			texture = "kk_fire_01",
+			offset = {-15.0622, 1.2, 17.1076},
+			shape = {
+				type = "Box",
+				size = {11.1845, 0.2, 11.1845},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 5.5923, 1.8641},
+				{0.4, 11.1845, 2.7961},
+				{1, 7.4564, 1.8641},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall8",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			offset = {-15.0622, 0.5, 17.1076},
+			shape = {
+				type = "Box",
+				size = {11.1845, 0.2, 11.1845},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {7.4564, 14.9127},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 3.7282, 1.1185},
+				{0.3, 11.1845, 2.7961},
+				{1, 7.4564, 1.8641},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke8",
+			texture = "kk_smoke_04",
+			offset = {-15.0622, 3, 17.1076},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 5.5923, 1.8641},
+				{1, 24.2332, 5.5923},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers8",
+			texture = "kk_flare_01",
+			offset = {-15.0622, 3, 17.1076},
+			shape = {
+				type = "Box",
+				size = {11.1845, 2, 11.1845},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundGlow9",
+			decal = true,
+			texture = "fx_glow",
+			orientation = "VelocityPerpendicular",
+			emit = {
+				{0.15, 1},
+			},
+			offset = {4.1278, 0.3, 19.5764},
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {5.25, 5.25},
+			size = {
+				{0, 0, 0},
+				{0.04, 20.383, 0},
+				{0.75, 15.6792, 0},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 150, 60},
+				},
+				{
+					1,
+					{220, 80, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "GroundFlames9",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			offset = {4.1278, 0.6, 19.5764},
+			shape = {
+				type = "Box",
+				size = {9.4075, 0.2, 9.4075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {10.9754, 20.383},
+			drag = 2,
+			lifetime = {0.4, 0.62},
+			size = {
+				{0, 6.2717, 1.5679},
+				{0.3, 17.2471, 4.7038},
+				{1, 10.9754, 3.1358},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			stream = {
+				{0.15, 3.2, 14, 5},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundFireBase9",
+			texture = "kk_fire_01",
+			offset = {4.1278, 1.2, 19.5764},
+			shape = {
+				type = "Box",
+				size = {9.4075, 0.2, 9.4075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 4.7038, 1.5679},
+				{0.4, 9.4075, 2.3519},
+				{1, 6.2717, 1.5679},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 210},
+				},
+				{
+					0.1,
+					{255, 218, 110},
+				},
+				{
+					0.3,
+					{255, 160, 50},
+				},
+				{
+					0.55,
+					{240, 104, 30},
+				},
+				{
+					0.8,
+					{190, 60, 22},
+				},
+				{
+					1,
+					{96, 32, 16},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0.15, 5.1, 9, 0},
+			},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundFlamesSmall9",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			offset = {4.1278, 0.5, 19.5764},
+			shape = {
+				type = "Box",
+				size = {9.4075, 0.2, 9.4075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {6.2717, 12.5434},
+			drag = 2,
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 3.1358, 0.9408},
+				{0.3, 9.4075, 2.3519},
+				{1, 6.2717, 1.5679},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 176, 60},
+				},
+				{
+					0.7,
+					{245, 108, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.5,
+			stream = {
+				{0.15, 5.1, 6, 0},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "GroundSmoke9",
+			texture = "kk_smoke_04",
+			offset = {4.1278, 3, 19.5764},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {6, 12},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.2, 1.7},
+			size = {
+				{0, 4.7038, 1.5679},
+				{1, 20.383, 4.7038},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 104, 96},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.3, 5.2, 3, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "GroundEmbers9",
+			texture = "kk_flare_01",
+			offset = {4.1278, 3, 19.5764},
+			shape = {
+				type = "Box",
+				size = {9.4075, 2, 9.4075},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {6, 14},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.5, 0.4},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 120},
+				},
+				{
+					1,
+					{255, 110, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.3, 5, 5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+	},
+	light = {
+		color = {255, 150, 60},
+		brightness = 6,
+		range = 60,
+		time = 1,
+	},
+}
+
+-- Explosión GIGANTE: destello, onda de choque, ola de polvo, bola de fuego, rocas en llamas, hongo de humo y fuego en el suelo 5 s. Cierra limpio a los 5.8 s.
+function KaijuFireVFX.GiantExplosion(cf: CFrame, scale: number?, shake: number?): Part
+	return play(SPEC_GiantExplosion, cf, scale, nil, shake)
+end
+
+local SPEC_Explosion = {
+	name = "Explosion",
+	duration = 1.3,
+	layers = {
+		{
+			name = "FlashCore",
+			texture = "kk_star_06",
+			emit = {
+				{0, 2},
+			},
+			lifetime = {0.1, 0.13},
+			size = {
+				{0, 10, 0},
+				{0.25, 28, 0},
+				{1, 32, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 228, 150},
+				},
+				{
+					1,
+					{255, 180, 90},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			zoffset = 4,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FlashBurst",
+			texture = "kk_scorch_02",
+			emit = {
+				{0, 2},
+				{0.035, 1},
+			},
+			lifetime = {0.1, 0.14},
+			size = {
+				{0, 10, 0},
+				{0.35, 26, 0},
+				{1, 30, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 244, 190},
+				},
+				{
+					1,
+					{255, 170, 60},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.8,
+			rotation = {0, 360},
+			zoffset = 3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "GroundRing",
+			texture = "kk_circle_03",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, -1.9, 0},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {0.34, 0.34},
+			size = {
+				{0, 4, 0},
+				{0.18, 26, 0},
+				{0.5, 38, 0},
+				{1, 46, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 214, 140},
+				},
+				{
+					1,
+					{255, 150, 70},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.3,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "AirRing",
+			texture = "kk_smoke_10",
+			emit = {
+				{0.015, 1},
+			},
+			lifetime = {0.26, 0.26},
+			size = {
+				{0, 8, 0},
+				{0.3, 30, 0},
+				{1, 38, 0},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.5, 0.65, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 214, 160},
+				},
+				{
+					1,
+					{230, 196, 160},
+				},
+			},
+			light_emission = 0.1,
+			zoffset = 2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "WindArcs",
+			texture = "kk_twirl_02",
+			emit = {
+				{0.02, 3},
+			},
+			lifetime = {0.22, 0.28},
+			size = {
+				{0, 12, 0},
+				{0.4, 32, 0},
+				{1, 40, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.55, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 248, 230},
+				},
+				{
+					1,
+					{255, 230, 190},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-160, 160},
+			zoffset = 1.5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "WindArcs2",
+			texture = "kk_twirl_01",
+			emit = {
+				{0.05, 2},
+			},
+			lifetime = {0.2, 0.26},
+			size = {
+				{0, 14, 0},
+				{0.4, 36, 0},
+				{1, 44, 0},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.55, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 248, 230},
+				},
+				{
+					1,
+					{255, 230, 190},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-160, 160},
+			zoffset = 1.5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "WindStreaks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0, 16},
+			},
+			direction = "Front",
+			spread = {180, 8},
+			speed = {130, 190},
+			drag = 9,
+			lifetime = {0.16, 0.24},
+			size = {
+				{0, 12, 3},
+				{1, 18, 3},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 248, 225},
+				},
+				{
+					1,
+					{255, 225, 170},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.5,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FireballA",
+			texture = "kk_fire_01",
+			emit = {
+				{0, 7},
+				{0.04, 3},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 2.5,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {18, 34},
+			drag = 4.2,
+			accel = {0, 10, 0},
+			lifetime = {0.5, 0.75},
+			size = {
+				{0, 6, 1.8},
+				{0.15, 16, 3.2},
+				{0.6, 22, 3.3},
+				{1, 24, 3.6},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.45, 0.05, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 205},
+				},
+				{
+					0.12,
+					{255, 214, 92},
+				},
+				{
+					0.35,
+					{255, 150, 42},
+				},
+				{
+					0.65,
+					{226, 82, 22},
+				},
+				{
+					1,
+					{112, 36, 16},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FireballB",
+			texture = "kk_fire_02",
+			emit = {
+				{0, 6},
+				{0.05, 3},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 2.5,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {18, 34},
+			drag = 4.2,
+			accel = {0, 10, 0},
+			lifetime = {0.5, 0.75},
+			size = {
+				{0, 5, 1.5},
+				{0.15, 14, 2.8},
+				{0.6, 20, 3},
+				{1, 22, 3.3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.45, 0.05, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 205},
+				},
+				{
+					0.12,
+					{255, 214, 92},
+				},
+				{
+					0.35,
+					{255, 150, 42},
+				},
+				{
+					0.65,
+					{226, 82, 22},
+				},
+				{
+					1,
+					{112, 36, 16},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FireCore",
+			texture = "kk_fire_02",
+			emit = {
+				{0, 3},
+			},
+			lifetime = {0.28, 0.34},
+			speed = {0, 4},
+			size = {
+				{0, 8, 2},
+				{0.3, 18, 3},
+				{1, 20, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 250, 220},
+				},
+				{
+					0.4,
+					{255, 220, 110},
+				},
+				{
+					1,
+					{255, 150, 50},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 2,
+			rotation = {0, 360},
+			rot_speed = {-90, 90},
+			zoffset = 1,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FireTongues",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.01, 10},
+				{0.07, 4},
+			},
+			direction = "Top",
+			spread = {110, 110},
+			speed = {50, 90},
+			drag = 6.5,
+			accel = {0, -10, 0},
+			lifetime = {0.36, 0.52},
+			size = {
+				{0, 6, 1.8},
+				{0.2, 16, 4},
+				{1, 13, 3.25},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FireTongues2",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.02, 8},
+			},
+			direction = "Top",
+			spread = {110, 110},
+			speed = {45, 85},
+			drag = 6.5,
+			accel = {0, -10, 0},
+			lifetime = {0.34, 0.5},
+			size = {
+				{0, 5, 1.5},
+				{0.2, 14, 3.5},
+				{1, 11, 2.75},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Column",
+			texture = "kk_muzzle_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.03, 5},
+			},
+			direction = "Top",
+			spread = {14, 14},
+			speed = {60, 95},
+			drag = 5,
+			accel = {0, 0, 0},
+			lifetime = {0.4, 0.55},
+			size = {
+				{0, 10, 3},
+				{0.2, 22, 5.5},
+				{1, 18, 4.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Pops",
+			texture = "kk_fire_01",
+			emit = {
+				{0.1, 3},
+				{0.17, 2},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 7,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {4, 10},
+			drag = 4,
+			accel = {0, 4, 0},
+			lifetime = {0.34, 0.44},
+			size = {
+				{0, 4, 1.2},
+				{0.15, 8, 1.6},
+				{0.6, 10, 1.5},
+				{1, 10, 1.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.45, 0.05, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 205},
+				},
+				{
+					0.12,
+					{255, 214, 92},
+				},
+				{
+					0.35,
+					{255, 150, 42},
+				},
+				{
+					0.65,
+					{226, 82, 22},
+				},
+				{
+					1,
+					{112, 36, 16},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Sparks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0, 30},
+				{0.06, 16},
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {70, 140},
+			drag = 4,
+			accel = {0, -60, 0},
+			lifetime = {0.25, 0.5},
+			size = {
+				{0, 9, 3},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.5,
+					{255, 170, 60},
+				},
+				{
+					1,
+					{230, 80, 20},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.8,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Debris",
+			texture = "kz_debris_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0.02, 14},
+			},
+			direction = "Top",
+			spread = {70, 70},
+			speed = {40, 75},
+			drag = 1.2,
+			accel = {0, -110, 0},
+			lifetime = {0.7, 0.95},
+			size = {
+				{0, 1.6, 0.7},
+				{1, 1.4, 0.6},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			rot_speed = {-420, 420},
+			zoffset = -0.5,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "GroundDust",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.02, 14},
+			},
+			offset = {0, -1.2, 0},
+			direction = "Front",
+			spread = {180, 4},
+			speed = {55, 95},
+			drag = 5.5,
+			accel = {0, 5, 0},
+			lifetime = {0.5, 0.7},
+			size = {
+				{0, 5, 1},
+				{0.4, 11, 2},
+				{1, 14, 2},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.5, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{226, 206, 178},
+				},
+				{
+					1,
+					{205, 192, 176},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = -0.5,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Smoke",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.24, 4},
+				{0.32, 2},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 4,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {16, 28},
+			drag = 1.6,
+			accel = {0, 18, 0},
+			lifetime = {0.75, 0.92},
+			size = {
+				{0, 14, 3},
+				{0.5, 28, 4},
+				{1, 34, 4},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.25, 0.2, 0},
+				{0.75, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{112, 98, 90},
+				},
+				{
+					0.5,
+					{128, 118, 112},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -7,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Smoke2",
+			texture = "kk_smoke_08",
+			emit = {
+				{0.28, 4},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 4,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {14, 24},
+			drag = 1.6,
+			accel = {0, 16, 0},
+			lifetime = {0.72, 0.9},
+			size = {
+				{0, 12, 3},
+				{0.5, 26, 4},
+				{1, 32, 4},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.25, 0.2, 0},
+				{0.75, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{112, 98, 90},
+				},
+				{
+					0.5,
+					{128, 118, 112},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -7,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Embers",
+			texture = "kk_flare_01",
+			emit = {
+				{0.12, 18},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 4,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {120, 120},
+			speed = {10, 30},
+			drag = 2,
+			accel = {0, 14, 0},
+			lifetime = {0.45, 0.7},
+			size = {
+				{0, 2.2, 0.6},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.7, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 140},
+				},
+				{
+					1,
+					{255, 110, 40},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+	},
+	light = {
+		color = {255, 150, 60},
+		brightness = 4,
+		range = 30,
+		time = 0.35,
+	},
+}
+
+-- Explosión de fuego estilo anime (impacto de la H1). Dura 1.3 s y cierra limpio.
+function KaijuFireVFX.Explosion(cf: CFrame, scale: number?, shake: number?): Part
+	return play(SPEC_Explosion, cf, scale, nil, shake)
+end
+
+local SPEC_ExplosionAnime = {
+	name = "ExplosionAnime",
+	duration = 1.3,
+	layers = {
+		{
+			name = "FlashBurst",
+			texture = "fx_burst_a",
+			emit = {
+				{0, 2},
+			},
+			offset = {0, 4, 0},
+			lifetime = {0.12, 0.15},
+			size = {
+				{0, 10, 0},
+				{0.3, 34, 0},
+				{1, 40, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.55, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 170},
+				},
+				{
+					1,
+					{255, 180, 80},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			zoffset = 6,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FlashStar",
+			texture = "fx_star",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 4, 0},
+			lifetime = {0.16, 0.16},
+			size = {
+				{0, 20, 0},
+				{0.25, 52, 0},
+				{1, 30, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 200},
+				},
+				{
+					1,
+					{255, 200, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 0},
+			zoffset = 7,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Glow",
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 5, 0},
+			lifetime = {0.4, 0.4},
+			size = {
+				{0, 18, 0},
+				{0.15, 40, 0},
+				{1, 46, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.5, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 214, 110},
+				},
+				{
+					1,
+					{255, 130, 40},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = -2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "GroundRing",
+			texture = "fx_shock_spiky",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, -1.9, 0},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {0.36, 0.36},
+			size = {
+				{0, 6, 0},
+				{0.25, 40, 0},
+				{1, 60, 0},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.5, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 214, 120},
+				},
+				{
+					1,
+					{255, 140, 50},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.2,
+			rotation = {0, 360},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "AirRing",
+			texture = "fx_shock_soft",
+			emit = {
+				{0.02, 1},
+			},
+			offset = {0, 5, 0},
+			lifetime = {0.24, 0.24},
+			size = {
+				{0, 10, 0},
+				{0.4, 44, 0},
+				{1, 54, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 190},
+				},
+				{
+					1,
+					{255, 190, 110},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1,
+			zoffset = 3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "WindSwirl",
+			texture = "fx_wind_lines",
+			emit = {
+				{0, 2},
+				{0.06, 1},
+			},
+			offset = {0, -1.2, 0},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			lifetime = {0.4, 0.48},
+			size = {
+				{0, 12, 2},
+				{0.3, 40, 4},
+				{1, 58, 4},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.25, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 222, 120},
+				},
+				{
+					0.5,
+					{255, 160, 56},
+				},
+				{
+					1,
+					{240, 96, 28},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.3,
+			rotation = {0, 360},
+			rot_speed = {-640, -460},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+		},
+		{
+			name = "WindSwirl2",
+			texture = "fx_wind_swirl",
+			emit = {
+				{0.03, 2},
+			},
+			offset = {0, 0.5, 0},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			spread = {14, 14},
+			speed = {0.01, 0.01},
+			lifetime = {0.38, 0.44},
+			size = {
+				{0, 14, 2},
+				{0.3, 36, 3},
+				{1, 50, 3},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 222, 120},
+				},
+				{
+					0.5,
+					{255, 160, 56},
+				},
+				{
+					1,
+					{240, 96, 28},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.2,
+			rotation = {0, 360},
+			rot_speed = {420, 600},
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+		},
+		{
+			name = "ArcsFlat",
+			texture = "fx_feather_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0, 6},
+				{0.05, 4},
+			},
+			offset = {0, -0.8, 0},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			spread = {18, 18},
+			speed = {0.01, 0.01},
+			lifetime = {0.36, 0.48},
+			size = {
+				{0, 12, 3},
+				{0.3, 30, 5},
+				{1, 42, 5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.65, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 222, 120},
+				},
+				{
+					0.5,
+					{255, 160, 56},
+				},
+				{
+					1,
+					{240, 96, 28},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.3,
+			rotation = {0, 360},
+			rot_speed = {-520, -320},
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+		},
+		{
+			name = "ArcsOut",
+			texture = "fx_feather_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0, 10},
+				{0.05, 6},
+			},
+			offset = {0, 4, 0},
+			shape = {
+				type = "Sphere",
+				radius = 4,
+				style = "Surface",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {30, 60},
+			drag = 6,
+			lifetime = {0.3, 0.42},
+			size = {
+				{0, 8, 2},
+				{0.3, 18, 3},
+				{1, 22, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 222, 120},
+				},
+				{
+					0.5,
+					{255, 160, 56},
+				},
+				{
+					1,
+					{240, 96, 28},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.3,
+			rotation = {0, 360},
+			rot_speed = {-480, 480},
+			zoffset = 2,
+			accel = {0, 0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FireFan",
+			texture = "fx_burst_fan",
+			emit = {
+				{0.02, 2},
+			},
+			offset = {0, 6, 0},
+			lifetime = {0.36, 0.42},
+			size = {
+				{0, 14, 0},
+				{0.25, 40, 0},
+				{1, 46, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 196, 80},
+				},
+				{
+					0.7,
+					{255, 138, 40},
+				},
+				{
+					1,
+					{220, 74, 20},
+				},
+			},
+			light_emission = 0.55,
+			brightness = 1.3,
+			rotation = {-12, 12},
+			zoffset = 0.5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "FlamesOut",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			emit = {
+				{0.01, 10},
+				{0.06, 6},
+			},
+			offset = {0, 3, 0},
+			shape = {
+				type = "Sphere",
+				radius = 3,
+				style = "Surface",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {40, 80},
+			drag = 6,
+			accel = {0, 12, 0},
+			lifetime = {0.4, 0.58},
+			size = {
+				{0, 6, 2},
+				{0.25, 17, 3},
+				{1, 14, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 186, 70},
+				},
+				{
+					0.35,
+					{255, 132, 38},
+				},
+				{
+					0.75,
+					{226, 78, 22},
+				},
+				{
+					1,
+					{150, 40, 14},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.4,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "Core",
+			texture = "fx_smoke_round",
+			emit = {
+				{0, 3},
+			},
+			offset = {0, 5, 0},
+			shape = {
+				type = "Sphere",
+				radius = 2,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {2, 6},
+			drag = 3,
+			accel = {0, 6, 0},
+			lifetime = {0.42, 0.52},
+			size = {
+				{0, 10, 2},
+				{0.2, 26, 3},
+				{1, 30, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.55, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 226, 120},
+				},
+				{
+					0.35,
+					{255, 170, 60},
+				},
+				{
+					1,
+					{220, 80, 24},
+				},
+			},
+			light_emission = 0.55,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = 1,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Streaks",
+			texture = "fx_line",
+			orientation = "VelocityParallel",
+			offset = {0, 4, 0},
+			emit = {
+				{0, 28},
+				{0.05, 14},
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {90, 170},
+			drag = 4.5,
+			accel = {0, -40, 0},
+			lifetime = {0.22, 0.4},
+			size = {
+				{0, 14, 4},
+				{1, 5, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 238, 150},
+				},
+				{
+					0.5,
+					{255, 184, 60},
+				},
+				{
+					1,
+					{255, 110, 24},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "CurveStreaks",
+			texture = "fx_line_curve",
+			emit = {
+				{0.02, 8},
+			},
+			offset = {0, 4, 0},
+			shape = {
+				type = "Sphere",
+				radius = 6,
+				style = "Surface",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {20, 40},
+			drag = 5,
+			lifetime = {0.2, 0.3},
+			size = {
+				{0, 10, 2},
+				{1, 16, 2},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 222, 120},
+				},
+				{
+					0.5,
+					{255, 160, 56},
+				},
+				{
+					1,
+					{240, 96, 28},
+				},
+			},
+			light_emission = 0.9,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-300, 300},
+			accel = {0, 0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Twinkles",
+			texture = "fx_spark4",
+			emit = {
+				{0.08, 14},
+			},
+			offset = {0, 6, 0},
+			shape = {
+				type = "Sphere",
+				radius = 9,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {8, 22},
+			drag = 2,
+			accel = {0, 8, 0},
+			lifetime = {0.3, 0.55},
+			size = {
+				{0, 0, 0},
+				{0.15, 3.5, 1},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 160},
+				},
+				{
+					1,
+					{255, 150, 50},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "Debris",
+			texture = "kz_debris_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0.02, 10},
+			},
+			direction = "Top",
+			spread = {70, 70},
+			speed = {40, 75},
+			drag = 1.2,
+			accel = {0, -110, 0},
+			lifetime = {0.7, 0.95},
+			size = {
+				{0, 1.6, 0.7},
+				{1, 1.4, 0.6},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			rot_speed = {-420, 420},
+			zoffset = -0.5,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Smoke",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0.2, 5},
+				{0.28, 3},
+			},
+			offset = {0, 7, 0},
+			shape = {
+				type = "Sphere",
+				radius = 5,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {10, 20},
+			drag = 1.6,
+			accel = {0, 14, 0},
+			lifetime = {0.75, 0.9},
+			size = {
+				{0, 14, 3},
+				{0.5, 26, 4},
+				{1, 32, 4},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.2, 0.15, 0},
+				{0.7, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{92, 78, 74},
+				},
+				{
+					0.5,
+					{110, 98, 94},
+				},
+				{
+					1,
+					{132, 124, 120},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -9,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+		},
+	},
+	light = {
+		color = {255, 160, 60},
+		brightness = 5,
+		range = 36,
+		time = 0.45,
+	},
+}
+
+-- Explosión de fuego estilo ANIME (texturas Effekseer CC0: medias lunas, remolinos, estallido). 1.3 s, cierra limpio.
+function KaijuFireVFX.ExplosionAnime(cf: CFrame, scale: number?, shake: number?): Part
+	return play(SPEC_ExplosionAnime, cf, scale, nil, shake)
+end
+
+local SPEC_FireLine = {
+	name = "FireLine",
+	duration = 2.5,
+	layers = {
+		{
+			name = "CrackA",
+			texture = "kk_spark_01",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			emit = {
+				{0.05, 1, 0, 0.72, 0.15},
+				{0.104, 1, 0.077, -0.66, 0.15},
+				{0.158, 1, 0.154, 0.38, 0.15},
+				{0.212, 1, 0.231, -0.31, 0.15},
+				{0.265, 1, 0.308, 0.17, 0.15},
+				{0.319, 1, 0.385, -0.55, 0.15},
+				{0.373, 1, 0.462, -0.17, 0.15},
+				{0.427, 1, 0.538, 0.79, 0.15},
+				{0.481, 1, 0.615, 0.07, 0.15},
+				{0.535, 1, 0.692, -0.37, 0.15},
+				{0.588, 1, 0.769, -0.76, 0.15},
+				{0.642, 1, 0.846, -0.29, 0.15},
+				{0.696, 1, 0.923, 0.63, 0.15},
+				{0.75, 1, 1, 0.1, 0.15},
+			},
+			lifetime = {2.05, 2.15},
+			size = {
+				{0, 3, 0},
+				{0.04, 14, 2},
+				{0.75, 14, 2},
+				{1, 11, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.7, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 160},
+				},
+				{
+					0.3,
+					{255, 170, 60},
+				},
+				{
+					1,
+					{220, 70, 20},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.8,
+			rotation = {0, 360},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "CrackB",
+			texture = "kk_spark_02",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			emit = {
+				{0.093, 1, 0.018, -0.86, 0.12},
+				{0.121, 1, 0.058, 1.2, 0.12},
+				{0.179, 1, 0.141, -0.91, 0.12},
+				{0.246, 1, 0.237, -0.37, 0.12},
+				{0.306, 1, 0.323, -0.64, 0.12},
+				{0.362, 1, 0.403, -0.43, 0.12},
+				{0.406, 1, 0.466, 1.04, 0.12},
+				{0.462, 1, 0.546, 1.02, 0.12},
+				{0.517, 1, 0.624, -1.08, 0.12},
+				{0.575, 1, 0.708, 0.21, 0.12},
+				{0.613, 1, 0.762, -0.74, 0.12},
+				{0.682, 1, 0.86, 0.2, 0.12},
+				{0.738, 1, 0.941, 0.66, 0.12},
+				{0.78, 1, 1, 0.16, 0.12},
+			},
+			lifetime = {2, 2.1},
+			size = {
+				{0, 3, 0},
+				{0.04, 12, 2},
+				{0.75, 12, 2},
+				{1, 9, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.7, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 160},
+				},
+				{
+					0.3,
+					{255, 170, 60},
+				},
+				{
+					1,
+					{220, 70, 20},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.6,
+			rotation = {0, 360},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FuseHead",
+			texture = "kk_star_06",
+			emit = {
+				{0.05, 1, 0, 0, 1},
+				{0.104, 1, 0.077, 0, 1},
+				{0.158, 1, 0.154, 0, 1},
+				{0.212, 1, 0.231, 0, 1},
+				{0.265, 1, 0.308, 0, 1},
+				{0.319, 1, 0.385, 0, 1},
+				{0.373, 1, 0.462, 0, 1},
+				{0.427, 1, 0.538, 0, 1},
+				{0.481, 1, 0.615, 0, 1},
+				{0.535, 1, 0.692, 0, 1},
+				{0.588, 1, 0.769, 0, 1},
+				{0.642, 1, 0.846, 0, 1},
+				{0.696, 1, 0.923, 0, 1},
+				{0.75, 1, 1, 0, 1},
+			},
+			lifetime = {0.12, 0.15},
+			size = {
+				{0, 6, 0},
+				{0.3, 11, 0},
+				{1, 7, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 230, 160},
+				},
+				{
+					1,
+					{255, 170, 80},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			zoffset = 2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FuseSparks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.05, 6, 0, 0, 0.5},
+				{0.104, 6, 0.077, 0, 0.5},
+				{0.158, 6, 0.154, 0, 0.5},
+				{0.212, 6, 0.231, 0, 0.5},
+				{0.265, 6, 0.308, 0, 0.5},
+				{0.319, 6, 0.385, 0, 0.5},
+				{0.373, 6, 0.462, 0, 0.5},
+				{0.427, 6, 0.538, 0, 0.5},
+				{0.481, 6, 0.615, 0, 0.5},
+				{0.535, 6, 0.692, 0, 0.5},
+				{0.588, 6, 0.769, 0, 0.5},
+				{0.642, 6, 0.846, 0, 0.5},
+				{0.696, 6, 0.923, 0, 0.5},
+				{0.75, 6, 1, 0, 0.5},
+			},
+			direction = "Top",
+			spread = {55, 55},
+			speed = {30, 60},
+			drag = 3,
+			accel = {0, -70, 0},
+			lifetime = {0.25, 0.4},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					1,
+					{240, 110, 30},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.8,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "FuseFlames",
+			texture = "kk_muzzle_05",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.05, 2, 0, 0, 0.3},
+				{0.104, 2, 0.077, 0, 0.3},
+				{0.158, 2, 0.154, 0, 0.3},
+				{0.212, 2, 0.231, 0, 0.3},
+				{0.265, 2, 0.308, 0, 0.3},
+				{0.319, 2, 0.385, 0, 0.3},
+				{0.373, 2, 0.462, 0, 0.3},
+				{0.427, 2, 0.538, 0, 0.3},
+				{0.481, 2, 0.615, 0, 0.3},
+				{0.535, 2, 0.692, 0, 0.3},
+				{0.588, 2, 0.769, 0, 0.3},
+				{0.642, 2, 0.846, 0, 0.3},
+				{0.696, 2, 0.923, 0, 0.3},
+				{0.75, 2, 1, 0, 0.3},
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {18, 30},
+			drag = 3,
+			accel = {0, 0, 0},
+			lifetime = {0.32, 0.45},
+			size = {
+				{0, 3, 0.9},
+				{0.2, 8, 2},
+				{1, 6, 1.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptFlash",
+			texture = "kk_scorch_02",
+			emit = {
+				{0.95, 1, 0, 0, 3},
+				{0.981, 1, 0.154, 0, 3},
+				{1.012, 1, 0.308, 0, 3},
+				{1.042, 1, 0.462, 0, 3},
+				{1.073, 1, 0.615, 0, 3},
+				{1.104, 1, 0.769, 0, 3},
+				{1.135, 1, 0.923, 0, 3},
+			},
+			lifetime = {0.09, 0.12},
+			size = {
+				{0, 8, 0},
+				{0.35, 20, 0},
+				{1, 22, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					1,
+					{255, 160, 60},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.7,
+			rotation = {0, 360},
+			zoffset = 3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptRing",
+			texture = "kk_circle_03",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			emit = {
+				{0.95, 1, 0, 0, 0.2},
+				{0.996, 1, 0.231, 0, 0.2},
+				{1.042, 1, 0.462, 0, 0.2},
+				{1.088, 1, 0.692, 0, 0.2},
+				{1.135, 1, 0.923, 0, 0.2},
+			},
+			lifetime = {0.3, 0.3},
+			size = {
+				{0, 3, 0},
+				{0.2, 18, 0},
+				{0.5, 26, 0},
+				{1, 30, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 214, 140},
+				},
+				{
+					1,
+					{255, 150, 70},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.3,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptColumn",
+			texture = "kk_muzzle_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.95, 3, 0, 1.85, 0.5},
+				{0.965, 3, 0.077, 0.82, 0.5},
+				{0.981, 3, 0.154, -1.01, 0.5},
+				{0.996, 3, 0.231, -1.16, 0.5},
+				{1.012, 3, 0.308, -0.16, 0.5},
+				{1.027, 3, 0.385, -0.02, 0.5},
+				{1.042, 3, 0.462, 1.32, 0.5},
+				{1.058, 3, 0.538, -1.06, 0.5},
+				{1.073, 3, 0.615, -0.93, 0.5},
+				{1.088, 3, 0.692, 1.61, 0.5},
+				{1.104, 3, 0.769, -1.55, 0.5},
+				{1.119, 3, 0.846, 1.97, 0.5},
+				{1.135, 3, 0.923, 0.48, 0.5},
+				{1.15, 3, 1, 0.64, 0.5},
+			},
+			direction = "Top",
+			spread = {14, 14},
+			speed = {70, 115},
+			drag = 4.5,
+			accel = {0, 0, 0},
+			lifetime = {0.45, 0.62},
+			size = {
+				{0, 8, 2.4},
+				{0.2, 21, 5.25},
+				{1, 17, 4.25},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptColumn2",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.97, 2, 0, 0.81, 0.5},
+				{0.985, 2, 0.077, -1.51, 0.5},
+				{1.001, 2, 0.154, -0.03, 0.5},
+				{1.016, 2, 0.231, -0.21, 0.5},
+				{1.032, 2, 0.308, -1.23, 0.5},
+				{1.047, 2, 0.385, -0.88, 0.5},
+				{1.062, 2, 0.462, 1.44, 0.5},
+				{1.078, 2, 0.538, 2.22, 0.5},
+				{1.093, 2, 0.615, -1.31, 0.5},
+				{1.108, 2, 0.692, 0.38, 0.5},
+				{1.124, 2, 0.769, 0.89, 0.5},
+				{1.139, 2, 0.846, 1.68, 0.5},
+				{1.155, 2, 0.923, -1.01, 0.5},
+				{1.17, 2, 1, 2.38, 0.5},
+			},
+			direction = "Top",
+			spread = {18, 18},
+			speed = {60, 100},
+			drag = 4.5,
+			accel = {0, 0, 0},
+			lifetime = {0.42, 0.58},
+			size = {
+				{0, 7, 2.1},
+				{0.2, 18, 4.5},
+				{1, 15, 3.75},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptBurst",
+			texture = "kk_fire_01",
+			emit = {
+				{0.95, 2, 0, -0.63, 3},
+				{0.965, 2, 0.077, 1.83, 3},
+				{0.981, 2, 0.154, 0.01, 3},
+				{0.996, 2, 0.231, -2.1, 3},
+				{1.012, 2, 0.308, 0.58, 3},
+				{1.027, 2, 0.385, -0.6, 3},
+				{1.042, 2, 0.462, -0.24, 3},
+				{1.058, 2, 0.538, -1.71, 3},
+				{1.073, 2, 0.615, -1.95, 3},
+				{1.088, 2, 0.692, 2.12, 3},
+				{1.104, 2, 0.769, 1.37, 3},
+				{1.119, 2, 0.846, 1.23, 3},
+				{1.135, 2, 0.923, -1.04, 3},
+				{1.15, 2, 1, 1.13, 3},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 1.5,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {8, 20},
+			drag = 4,
+			accel = {0, 12, 0},
+			lifetime = {0.55, 0.75},
+			size = {
+				{0, 7, 2.1},
+				{0.15, 15, 3},
+				{0.6, 19, 2.85},
+				{1, 20, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.45, 0.05, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 246, 205},
+				},
+				{
+					0.12,
+					{255, 214, 92},
+				},
+				{
+					0.35,
+					{255, 150, 42},
+				},
+				{
+					0.65,
+					{226, 82, 22},
+				},
+				{
+					1,
+					{112, 36, 16},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptDebris",
+			texture = "kz_debris_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0.95, 3, 0, 0, 1},
+				{0.965, 3, 0.077, 0, 1},
+				{0.981, 3, 0.154, 0, 1},
+				{0.996, 3, 0.231, 0, 1},
+				{1.012, 3, 0.308, 0, 1},
+				{1.027, 3, 0.385, 0, 1},
+				{1.042, 3, 0.462, 0, 1},
+				{1.058, 3, 0.538, 0, 1},
+				{1.073, 3, 0.615, 0, 1},
+				{1.088, 3, 0.692, 0, 1},
+				{1.104, 3, 0.769, 0, 1},
+				{1.119, 3, 0.846, 0, 1},
+				{1.135, 3, 0.923, 0, 1},
+				{1.15, 3, 1, 0, 1},
+			},
+			direction = "Top",
+			spread = {45, 45},
+			speed = {40, 72},
+			drag = 1.2,
+			accel = {0, -110, 0},
+			lifetime = {0.7, 0.9},
+			size = {
+				{0, 1.5, 0.6},
+				{1, 1.3, 0.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			rot_speed = {-420, 420},
+			zoffset = -0.5,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptSparks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.95, 5, 0, 0, 2},
+				{0.965, 5, 0.077, 0, 2},
+				{0.981, 5, 0.154, 0, 2},
+				{0.996, 5, 0.231, 0, 2},
+				{1.012, 5, 0.308, 0, 2},
+				{1.027, 5, 0.385, 0, 2},
+				{1.042, 5, 0.462, 0, 2},
+				{1.058, 5, 0.538, 0, 2},
+				{1.073, 5, 0.615, 0, 2},
+				{1.088, 5, 0.692, 0, 2},
+				{1.104, 5, 0.769, 0, 2},
+				{1.119, 5, 0.846, 0, 2},
+				{1.135, 5, 0.923, 0, 2},
+				{1.15, 5, 1, 0, 2},
+			},
+			direction = "Top",
+			spread = {75, 75},
+			speed = {70, 130},
+			drag = 4,
+			accel = {0, -60, 0},
+			lifetime = {0.25, 0.45},
+			size = {
+				{0, 10, 2},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.5,
+					{255, 170, 60},
+				},
+				{
+					1,
+					{230, 80, 20},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.8,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptWindR",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.95, 1, 0, 0, 2},
+				{0.981, 1, 0.154, 0, 2},
+				{1.012, 1, 0.308, 0, 2},
+				{1.042, 1, 0.462, 0, 2},
+				{1.073, 1, 0.615, 0, 2},
+				{1.104, 1, 0.769, 0, 2},
+				{1.135, 1, 0.923, 0, 2},
+			},
+			direction = "Right",
+			spread = {20, 10},
+			speed = {120, 170},
+			drag = 9,
+			lifetime = {0.16, 0.22},
+			size = {
+				{0, 12, 2},
+				{1, 18, 2},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 248, 225},
+				},
+				{
+					1,
+					{255, 225, 170},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.5,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "EruptWindL",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.95, 1, 0, 0, 2},
+				{0.981, 1, 0.154, 0, 2},
+				{1.012, 1, 0.308, 0, 2},
+				{1.042, 1, 0.462, 0, 2},
+				{1.073, 1, 0.615, 0, 2},
+				{1.104, 1, 0.769, 0, 2},
+				{1.135, 1, 0.923, 0, 2},
+			},
+			direction = "Left",
+			spread = {20, 10},
+			speed = {120, 170},
+			drag = 9,
+			lifetime = {0.16, 0.22},
+			size = {
+				{0, 12, 2},
+				{1, 18, 2},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 248, 225},
+				},
+				{
+					1,
+					{255, 225, 170},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.5,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Scorch",
+			texture = "kz_scorch",
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			emit = {
+				{0.95, 1, 0, 0.41, 0.1},
+				{0.965, 1, 0.077, 0.88, 0.1},
+				{0.981, 1, 0.154, -0.49, 0.1},
+				{0.996, 1, 0.231, 0.32, 0.1},
+				{1.012, 1, 0.308, 0.37, 0.1},
+				{1.027, 1, 0.385, 0.56, 0.1},
+				{1.042, 1, 0.462, -0.55, 0.1},
+				{1.058, 1, 0.538, -0.28, 0.1},
+				{1.073, 1, 0.615, 0.61, 0.1},
+				{1.088, 1, 0.692, -0.7, 0.1},
+				{1.104, 1, 0.769, 0.33, 0.1},
+				{1.119, 1, 0.846, 0.3, 0.1},
+				{1.135, 1, 0.923, -0.33, 0.1},
+				{1.15, 1, 1, -0.59, 0.1},
+			},
+			lifetime = {1.3, 1.4},
+			size = {
+				{0, 8, 1},
+				{0.1, 14, 2},
+				{1, 15, 2},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.35, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			zoffset = -0.2,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Wall",
+			texture = "kk_muzzle_03",
+			orientation = "VelocityParallel",
+			emit = {
+				{1.09, 3, 0, -2.93, 0.5},
+				{1.105, 3, 0.077, -2.05, 0.5},
+				{1.121, 3, 0.154, -2.9, 0.5},
+				{1.136, 3, 0.231, 1.09, 0.5},
+				{1.152, 3, 0.308, 3, 0.5},
+				{1.167, 3, 0.385, -0.97, 0.5},
+				{1.182, 3, 0.462, -1.32, 0.5},
+				{1.198, 3, 0.538, -1.63, 0.5},
+				{1.213, 3, 0.615, 2.25, 0.5},
+				{1.228, 3, 0.692, -1.66, 0.5},
+				{1.244, 3, 0.769, 0.07, 0.5},
+				{1.259, 3, 0.846, -0.27, 0.5},
+				{1.275, 3, 0.923, -2.53, 0.5},
+				{1.29, 3, 1, -0.84, 0.5},
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {40, 70},
+			drag = 4,
+			accel = {0, 0, 0},
+			lifetime = {0.42, 0.55},
+			size = {
+				{0, 7, 2.1},
+				{0.2, 16, 4},
+				{1, 13, 3.25},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.25,
+					{255, 190, 70},
+				},
+				{
+					0.6,
+					{250, 120, 30},
+				},
+				{
+					1,
+					{180, 50, 18},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.7,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Smoke",
+			texture = "kk_smoke_07",
+			emit = {
+				{1.25, 1, 0, -0.12, 6},
+				{1.265, 1, 0.077, -0.32, 6},
+				{1.281, 1, 0.154, 0.95, 6},
+				{1.296, 1, 0.231, 0.81, 6},
+				{1.312, 1, 0.308, -1.19, 6},
+				{1.327, 1, 0.385, -2.15, 6},
+				{1.342, 1, 0.462, -1.14, 6},
+				{1.358, 1, 0.538, 2.74, 6},
+				{1.373, 1, 0.615, 2.36, 6},
+				{1.388, 1, 0.692, 1, 6},
+				{1.404, 1, 0.769, -0.26, 6},
+				{1.419, 1, 0.846, -1.22, 6},
+				{1.435, 1, 0.923, -1.14, 6},
+				{1.45, 1, 1, 1.73, 6},
+			},
+			direction = "Top",
+			spread = {40, 40},
+			speed = {14, 26},
+			drag = 1.6,
+			accel = {0, 16, 0},
+			lifetime = {0.75, 0.92},
+			size = {
+				{0, 12, 3},
+				{0.5, 24, 4},
+				{1, 30, 4},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.25, 0.2, 0},
+				{0.75, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{112, 98, 90},
+				},
+				{
+					0.5,
+					{128, 118, 112},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -7,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Smoke2",
+			texture = "kk_smoke_08",
+			emit = {
+				{1.31, 1, 0, 1.71, 6},
+				{1.325, 1, 0.077, 0.07, 6},
+				{1.341, 1, 0.154, 2.98, 6},
+				{1.356, 1, 0.231, -2.11, 6},
+				{1.372, 1, 0.308, -1.44, 6},
+				{1.387, 1, 0.385, -1.39, 6},
+				{1.402, 1, 0.462, -1.05, 6},
+				{1.418, 1, 0.538, 0.42, 6},
+				{1.433, 1, 0.615, -2.58, 6},
+				{1.448, 1, 0.692, 0.25, 6},
+				{1.464, 1, 0.769, 1.4, 6},
+				{1.479, 1, 0.846, -0.51, 6},
+				{1.495, 1, 0.923, 1.37, 6},
+				{1.51, 1, 1, -0.62, 6},
+			},
+			direction = "Top",
+			spread = {40, 40},
+			speed = {12, 22},
+			drag = 1.6,
+			accel = {0, 14, 0},
+			lifetime = {0.72, 0.9},
+			size = {
+				{0, 11, 3},
+				{0.5, 22, 4},
+				{1, 28, 4},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.25, 0.2, 0},
+				{0.75, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{112, 98, 90},
+				},
+				{
+					0.5,
+					{128, 118, 112},
+				},
+				{
+					1,
+					{150, 144, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -7,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+		{
+			name = "Embers",
+			texture = "kk_flare_01",
+			emit = {
+				{1.15, 3, 0, 0, 4},
+				{1.165, 3, 0.077, 0, 4},
+				{1.181, 3, 0.154, 0, 4},
+				{1.196, 3, 0.231, 0, 4},
+				{1.212, 3, 0.308, 0, 4},
+				{1.227, 3, 0.385, 0, 4},
+				{1.242, 3, 0.462, 0, 4},
+				{1.258, 3, 0.538, 0, 4},
+				{1.273, 3, 0.615, 0, 4},
+				{1.288, 3, 0.692, 0, 4},
+				{1.304, 3, 0.769, 0, 4},
+				{1.319, 3, 0.846, 0, 4},
+				{1.335, 3, 0.923, 0, 4},
+				{1.35, 3, 1, 0, 4},
+			},
+			direction = "Top",
+			spread = {110, 110},
+			speed = {10, 28},
+			drag = 2,
+			accel = {0, 14, 0},
+			lifetime = {0.45, 0.7},
+			size = {
+				{0, 2.2, 0.6},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.7, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 140},
+				},
+				{
+					1,
+					{255, 110, 40},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+		},
+	},
+	light = {
+		color = {255, 140, 50},
+		brightness = 3,
+		range = 40,
+		time = 0.6,
+	},
+}
+
+-- Línea de fuego (H3): KaijuFireVFX.FireLine(CFrame.lookAt(origen, origen + direccion), largo, escala).
+function KaijuFireVFX.FireLine(cf: CFrame, length: number?, scale: number?): Part
+	return play(SPEC_FireLine, cf, scale, (length or 90) * (scale or 1))
+end
+
+return KaijuFireVFX
