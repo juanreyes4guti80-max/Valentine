@@ -103,7 +103,7 @@ KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
 
 ### Rendimiento
 
-En el pico, la H1 llega a unas 1200 partículas, la H1 Ignition a unas 1600 y la H3 a unas 1700. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
+En el pico, la H1 llega a unas 1200 partículas; la H1 Ignition y la H3, a unas 1600; y la H3 Ignition, a unas 1700. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
 
 ## Para que se vea como en el video
 

@@ -81,13 +81,13 @@ class TexBank:
             im = fr.resize((w_px, h_px), Image.BILINEAR)
             if a:
                 im = im.rotate(a, resample=Image.BICUBIC, expand=True)
-            s = np.asarray(im, dtype=np.float32) / 255.0
+            s = np.asarray(im, dtype=np.uint8)      # en uint8: 4 veces más sprites en el caché
             self.bytes = getattr(self, "bytes", 0) + s.nbytes
-            if self.bytes > 1.5e9:
+            if self.bytes > 2.5e9:
                 self.cache.clear()
                 self.bytes = s.nbytes
             self.cache[key] = s
-        return s
+        return s.astype(np.float32) * (1.0 / 255.0)
 
 
 # --------------------------------------------------------------- cámara
@@ -364,7 +364,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 continue
             sp = m.L["sprite"]
             px = cam.f * m.size / pr[2]
-            spr = tb.sprite(sp["texture"], sp.get("layout", "Grid2x2"), m.frame, px, px, m.rot).copy()
+            spr = tb.sprite(sp["texture"], sp.get("layout", "Grid2x2"), m.frame, px, px, m.rot)
             col = np.array(sp.get("color", (255, 255, 255)), float) / 255
             spr[..., :3] *= col
             draw_sprite(buf, spr, pr[0], pr[1], 0.0, 1.0)
@@ -447,8 +447,7 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y):
         dx, dy = a[0] - b[0], a[1] - b[1]
         ang = math.degrees(math.atan2(dx, -dy))
         px = f * size / z
-        spr = tb.sprite(L["texture"], layout, idx, px, px, -ang + p.rot)
-        spr = spr.copy()
+        spr = tb.sprite(L["texture"], layout, idx, px, px, -ang + p.rot)   # copia nueva: se puede teñir
         spr[..., :3] *= col
         spr[..., 3] *= (1 - tr)
 
@@ -476,7 +475,6 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y):
     else:
         px = f * size / z
         spr = tb.sprite(L["texture"], layout, idx, px, px, p.rot)
-    spr = spr.copy()
     spr[..., :3] *= col
     spr[..., 3] *= (1 - tr)
 
