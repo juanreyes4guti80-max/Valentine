@@ -34,12 +34,11 @@ def lua(v, ind=0):
 
 def norm_layer(L):
     """Rellena valores por defecto y traduce el flipbook 'estático aleatorio'."""
-    assert "points" not in L, f"{L['name']}: 'points' no está soportado en el módulo; usa 'emit' con (t, n, u, lado, alto)"
     o = dict(L)
     for k in ("rock_emit", "rock_stream"):
         if k in o:
             o[k] = [[list(e) for e in var] for var in o[k]]
-    for k in ("final_emit", "final_stream", "cone_emit", "ring_emit", "zstream"):
+    for k in ("final_emit", "final_stream", "cone_emit", "ring_emit", "zstream", "points"):
         if k in o:
             o[k] = [list(e) for e in o[k]]
     if "zdist" in o:
@@ -53,6 +52,7 @@ def norm_layer(L):
         o["emit"] = [list(e) for e in o.get("emit", [])]
         sp = dict(o["sprite"])
         o["rock"] = {"size": list(sp["size"]), "spin": list(sp.get("rot_speed", (0, 0))),
+                     "material": sp.get("material", "Slate"),
                      "color": list(sp.get("color", (95, 78, 70)))}
         del o["sprite"]
         o["trails"] = [norm_layer(T) for T in o.get("trails", [])]
@@ -103,6 +103,7 @@ def layer_end(L, jitter=0.0):
     starts += [ev[0] + jitter for ev in L.get("final_emit", [])]
     starts += [ev[0] for ev in L.get("cone_emit", [])]
     starts += [ev[0] for ev in L.get("ring_emit", [])]
+    starts += [ev[0] for ev in L.get("points", [])]
     if L.get("type") == "meteor":
         after = 0.0
         for T in L.get("trails", []):
@@ -498,6 +499,10 @@ end
 local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
 	local localPos = holder.CFrame:PointToObjectSpace(worldPos)
 	for _, LL in L.land do
+		if LL.decal then
+			playDecalAt(LL, holder, s, LL.emit[1][2], holder.CFrame.Rotation + worldPos)
+			continue
+		end
 		local e = buildEmitter(LL, holder, s, localPos)
 		if LL.stream then
 			runStream(LL, e)
@@ -527,7 +532,7 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		rock.CanQuery = false
 		rock.CanTouch = false
 		rock.CastShadow = false
-		rock.Material = Enum.Material.Slate
+		rock.Material = (Enum.Material :: any)[L.rock.material or "Slate"]
 		rock.Color = Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
 		rock.Size = Vector3.new(sz, sz * 0.8, sz * 0.9)
 		rock.CFrame = CFrame.new(pos)
@@ -898,10 +903,27 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 					end
 				end)
 			end
+			for _, ev in L.points or {} do
+				task.delay(ev[1], function()
+					if holder.Parent then
+						playDecalAt(L, holder, s, ev[2], holder.CFrame * CFrame.new(Vector3.new(ev[3], ev[4], ev[5]) * s))
+					end
+				end)
+			end
 		else
 			local e, carrier = buildEmitter(L, holder, s, nil, len)
 			if #L.emit > 0 then
 				scheduleBursts(L, e, carrier, holder, s, len)
+			end
+			for _, ev in L.points or {} do
+				-- (t, n, x, y, z): posición local suelta alrededor del centro
+				local n = quality(ev[2])
+				task.delay(ev[1], function()
+					if e.Parent then
+						placeCarrier(carrier, holder, holder.CFrame:PointToWorldSpace(Vector3.new(ev[3], ev[4], ev[5]) * s))
+						e:Emit(n)
+					end
+				end)
 			end
 			if L.stream then
 				runStream(L, e)

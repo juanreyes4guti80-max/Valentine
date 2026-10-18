@@ -337,6 +337,10 @@ end
 local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
 	local localPos = holder.CFrame:PointToObjectSpace(worldPos)
 	for _, LL in L.land do
+		if LL.decal then
+			playDecalAt(LL, holder, s, LL.emit[1][2], holder.CFrame.Rotation + worldPos)
+			continue
+		end
 		local e = buildEmitter(LL, holder, s, localPos)
 		if LL.stream then
 			runStream(LL, e)
@@ -366,7 +370,7 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		rock.CanQuery = false
 		rock.CanTouch = false
 		rock.CastShadow = false
-		rock.Material = Enum.Material.Slate
+		rock.Material = (Enum.Material :: any)[L.rock.material or "Slate"]
 		rock.Color = Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
 		rock.Size = Vector3.new(sz, sz * 0.8, sz * 0.9)
 		rock.CFrame = CFrame.new(pos)
@@ -737,10 +741,27 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 					end
 				end)
 			end
+			for _, ev in L.points or {} do
+				task.delay(ev[1], function()
+					if holder.Parent then
+						playDecalAt(L, holder, s, ev[2], holder.CFrame * CFrame.new(Vector3.new(ev[3], ev[4], ev[5]) * s))
+					end
+				end)
+			end
 		else
 			local e, carrier = buildEmitter(L, holder, s, nil, len)
 			if #L.emit > 0 then
 				scheduleBursts(L, e, carrier, holder, s, len)
+			end
+			for _, ev in L.points or {} do
+				-- (t, n, x, y, z): posición local suelta alrededor del centro
+				local n = quality(ev[2])
+				task.delay(ev[1], function()
+					if e.Parent then
+						placeCarrier(carrier, holder, holder.CFrame:PointToWorldSpace(Vector3.new(ev[3], ev[4], ev[5]) * s))
+						e:Emit(n)
+					end
+				end)
 			end
 			if L.stream then
 				runStream(L, e)
@@ -2949,6 +2970,7 @@ local SPEC_AstralClash = {
 			rock = {
 				size = {3, 5.5},
 				spin = {-480, 480},
+				material = "Slate",
 				color = {66, 58, 88},
 			},
 		},

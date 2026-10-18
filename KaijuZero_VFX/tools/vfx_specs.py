@@ -879,7 +879,7 @@ GIANT = {
 # H1 IGNITION: la misma explosión gigante, 1.5 veces más grande, 1.5 veces más intensa y carmesí
 # ============================================================================
 _G_MAP = [(0, 0), (32, 8), (60, 12), (104, 24), (160, 60), (218, 136), (246, 236), (255, 250)]
-_NEUTRAL = ("Dust", "Smoke", "Wisp", "Stem", "CapRing", "Scorch")     # humo y polvo: no son fuego
+_NEUTRAL = ("Dust", "Smoke", "Wisp", "Stem", "CapRing", "Scorch", "Ash")     # humo y polvo: no son fuego
 _TRAILS = {   # las rocas que salen volando también arden en carmesí (igual que en la H3 Ignition)
     "MeteorFire": [(0, (255, 236, 236)), (0.3, (255, 92, 104)), (1, (190, 24, 40))],
     "MeteorSmoke": [(0, (210, 44, 56)), (0.2, (78, 58, 62)), (1, (118, 110, 114))],
@@ -927,6 +927,13 @@ def ignitionize(spec, name, size_k=1.5, k=1.5, doc=""):
         # más partículas por ráfaga; el destello y el resplandor no se duplican (se quemarían a blanco)
         if not L.get("decal") and not nm.startswith(("Flash", "Glow")):
             L["emit"] = [(e[0], e[1] if e[1] == 1 else round(e[1] * k)) + tuple(e[2:]) for e in L.get("emit", [])]
+            if L.get("points"):
+                L["points"] = [(e[0], e[1] if e[1] == 1 else round(e[1] * k)) + tuple(e[2:]) for e in L["points"]]
+        sp = L.get("sprite")
+        if sp:      # rocas fundidas: costra más roja y resplandor carmesí (vista previa)
+            sp["color"] = crimson(sp["color"], neutral=True)
+            if sp.get("glow"):
+                sp["glow"] = dict(sp["glow"], color=crimson(sp["glow"]["color"]))
         if L.get("stream"):
             L["stream"] = [(a, b, round(r0 * k, 2), round(r1 * k, 2)) for a, b, r0, r1 in L["stream"]]
         for sub in L.get("trails", []) + L.get("land", []):
@@ -943,13 +950,19 @@ def ignitionize(spec, name, size_k=1.5, k=1.5, doc=""):
     return out
 
 
+# la H1 ahora es la explosión de LAVA (vfx_lava.py); la anterior se conserva como GiantExplosionClassic
+import vfx_lava as _VL
+
+GIANT_CLASSIC = dict(GIANT, name="GiantExplosionClassic",
+                     doc="La explosión gigante anterior (fuego, estilo detonación), por si quieres volver a ella. " + GIANT["doc"])
 GIANT_IGNITION = ignitionize(
-    GIANT, "GiantExplosionIgnition",
-    doc="H1 IGNITION: la explosión gigante en carmesí, 1.5 veces más grande y más intensa (más partículas, "
-        "más rocas, luz y sacudida más fuertes); el fuego carmesí queda en el suelo 5 s.")
+    _VL.LAVA_EXPLOSION, "GiantExplosionIgnition",
+    doc="H1 IGNITION: la explosión de lava en carmesí, 1.5 veces más grande y más intensa (más magma, "
+        "más rocas fundidas, luz y sacudida más fuertes); la lava carmesí queda viva en el suelo 5 s.")
 
 import vfx_pillars as _VP
 
-SPECS = {"GiantExplosion": GIANT, "GiantExplosionIgnition": GIANT_IGNITION,
+SPECS = {"GiantExplosion": _VL.LAVA_EXPLOSION, "GiantExplosionIgnition": GIANT_IGNITION,
+         "GiantExplosionClassic": GIANT_CLASSIC,
          "H3_Detonation": _VP.H3_N, "H3_DetonationIgnition": _VP.H3_I,
          "Explosion": EXPLOSION, "ExplosionAnime": EXPLOSION_ANIME, "FireLine": FIRELINE}

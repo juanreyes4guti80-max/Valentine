@@ -72,7 +72,9 @@ class TexBank:
         def q(v):
             v = max(1.0, float(v))
             return max(1, int(round(1.04 ** round(math.log(v) / math.log(1.04)))))
-        w_px, h_px = q(w_px), q(h_px)
+        # una partícula que pasa pegada a la cámara no puede pedir un sprite de miles de píxeles (memoria)
+        k = min(1.0, 2600.0 / max(w_px, h_px, 1.0))
+        w_px, h_px = q(w_px * k), q(h_px * k)
         a = int(round(angle / 3.0)) * 3 % 360
         key = (name, layout, idx, w_px, h_px, a)
         s = self.cache.get(key)
@@ -83,7 +85,7 @@ class TexBank:
                 im = im.rotate(a, resample=Image.BICUBIC, expand=True)
             s = np.asarray(im, dtype=np.uint8)      # en uint8: 4 veces más sprites en el caché
             self.bytes = getattr(self, "bytes", 0) + s.nbytes
-            if self.bytes > 2.5e9:
+            if self.bytes > 1.5e9:
                 self.cache.clear()
                 self.bytes = s.nbytes
             self.cache[key] = s
@@ -434,6 +436,12 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 continue
             sp = m.L["sprite"]
             px = cam.f * m.size / pr[2]
+            gl = sp.get("glow")          # solo en la vista previa: el resplandor de la roca fundida
+            if gl:
+                gs = tb.sprite(gl["texture"], "None", 0, px * gl["size_k"], px * gl["size_k"], 0)
+                gs[..., :3] *= np.array(gl["color"], float) / 255
+                gs[..., 3] *= gl["alpha"]
+                draw_sprite(buf, gs, pr[0], pr[1], 1.0, gl.get("brightness", 1.4))
             spr = tb.sprite(sp["texture"], sp.get("layout", "Grid2x2"), m.frame, px, px, m.rot)
             col = np.array(sp.get("color", (255, 255, 255)), float) / 255
             spr[..., :3] *= col

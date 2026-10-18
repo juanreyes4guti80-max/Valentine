@@ -33,4 +33,10 @@ kk_trace_01.png
 kk_twirl_01.png
 kk_twirl_02.png
 kz_debris_2x2.png
+kz_lava_cracks.png
+kz_lava_drop.png
+kz_lava_glob_2x2.png
+kz_lava_pool.png
+kz_lava_rock_2x2.png
+kz_lava_splat.png
 kz_scorch.png
