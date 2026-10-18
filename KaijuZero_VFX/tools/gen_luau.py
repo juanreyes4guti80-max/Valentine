@@ -1848,7 +1848,8 @@ def build(specs, name, doc):
             out += head + \
                 "-- mouth = la boca (Vector3 o CFrame): ahí se forma. targets = un enemigo o una lista (Vector3, BasePart\n" \
                 "-- o Model): detona en medio de ellos y la explosión los cubre a todos. radius = radio de la detonación\n" \
-                f"-- (si no, se calcula con los enemigos: mínimo {o['min_radius']:g} × escala). Detona a los " \
+                f"-- (si no, se calcula con los enemigos: mínimo {o['min_radius'] * spec.get('scale_mult', 1):g} × escala). " \
+                f"Detona a los " \
                 f"{o['collapse'][1]:g} s (ver {key}Impact).\n" + \
                 f"function KaijuFireVFX.{key}(mouth: Vector3 | CFrame, targets: any, scale: number?, shake: number?, " \
                 f"radius: number?): Part\n" \

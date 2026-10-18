@@ -251,6 +251,9 @@ def black_hole_spec():
                 "y detona en medio de los enemigos (la explosión los cubre a todos) con destrucción de cubos. "
                 "Para el combate por turnos: golpea a dos enemigos a la vez."),
         "duration": DET + 1.4,
+        # todo el efecto va al doble de tamaño (el agujero, su altura y su arco, la detonación y los cubos);
+        # escala multiplica encima de esto
+        "scale_mult": 2.0,
         "zone": {"radius": R0, "height": 40},
         "orb": {"form": FORM, "travel": TRAVEL, "collapse": COLLAPSE, "size": (0.0, 1.3, 5.0, 0.7),
                 "height": HEIGHT, "arc": 6, "tilt": 24, "lens": 4.2, "lens_transparency": 0.62,

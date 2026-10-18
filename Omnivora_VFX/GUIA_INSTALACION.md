@@ -116,8 +116,8 @@ evento:FireAllClients("Pilar", centro, RADIO)
 ### Agujero negro: parámetros
 
 - **`boca`**: dónde se forma, normalmente un Attachment en la boca del modelo de Omnívora (`Vector3` o `CFrame`).
-- **`enemigos`**: un enemigo o una lista. Cada uno puede ser un `Vector3`, una `BasePart` (por ejemplo el `HumanoidRootPart`) o un `Model`. El agujero vuela hasta el **centro de los enemigos**, a unos 8 studs × escala sobre el suelo, y detona ahí. La explosión **los cubre a todos**: su radio llega hasta el enemigo más lejano del centro más 7 studs × escala, y como mínimo mide 14 × escala. Si la lista está vacía y `boca` es un `CFrame`, sale 70 studs × escala hacia adelante.
-- **`escala`**: tamaño general. Al llegar, el núcleo negro mide unos 10 studs de ancho y el disco unos 45 (× escala).
+- **`enemigos`**: un enemigo o una lista. Cada uno puede ser un `Vector3`, una `BasePart` (por ejemplo el `HumanoidRootPart`) o un `Model`. El agujero vuela hasta el **centro de los enemigos**, a unos 16 studs × escala sobre el suelo, y detona ahí. La explosión **los cubre a todos**: su radio llega hasta el enemigo más lejano del centro más 14 studs × escala, y como mínimo mide 28 × escala. Si la lista está vacía y `boca` es un `CFrame`, sale 140 studs × escala hacia adelante.
+- **`escala`**: tamaño general. Al llegar, el núcleo negro mide unos 20 studs de ancho y el disco unos 90 (× escala). Con `escala` 0.5 se ve como la primera versión, que era la mitad de grande.
 - **`sacudida`**: `0` o `nil` la desactiva, `1` es normal y `2` es fuerte.
 - **`radio`** (opcional): fuerza el radio de la detonación en studs.
 

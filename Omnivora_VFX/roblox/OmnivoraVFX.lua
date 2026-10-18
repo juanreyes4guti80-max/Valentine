@@ -8367,6 +8367,7 @@ local SPEC_BlackHole = {
 		{2.1, 1.6, 0.9},
 	},
 	shake_ramp = {0.3, 2.1, 0.08, 0.5, 1.6},
+	scale_mult = 2,
 	zone = {
 		radius = 16,
 		height = 40,
@@ -8514,7 +8515,7 @@ local SPEC_BlackHole = {
 -- OMNÍVORA: un AGUJERO NEGRO se forma frente a su boca, avanza creciendo y distorsionando el entorno, y detona en medio de los enemigos (la explosión los cubre a todos) con destrucción de cubos. Para el combate por turnos: golpea a dos enemigos a la vez.
 -- mouth = la boca (Vector3 o CFrame): ahí se forma. targets = un enemigo o una lista (Vector3, BasePart
 -- o Model): detona en medio de ellos y la explosión los cubre a todos. radius = radio de la detonación
--- (si no, se calcula con los enemigos: mínimo 14 × escala). Detona a los 2.1 s (ver BlackHoleImpact).
+-- (si no, se calcula con los enemigos: mínimo 28 × escala). Detona a los 2.1 s (ver BlackHoleImpact).
 function OmnivoraVFX.BlackHole(mouth: Vector3 | CFrame, targets: any, scale: number?, shake: number?, radius: number?): Part
 	return playOrb(SPEC_BlackHole, mouth, targets, scale, shake, radius)
 end
