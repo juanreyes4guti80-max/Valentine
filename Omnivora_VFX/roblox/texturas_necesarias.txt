@@ -1,3 +1,4 @@
+fx_aurora.png
 fx_beam.png
 fx_beam_wavy.png
 fx_electric_ball.png
@@ -23,11 +24,12 @@ kk_star_06.png
 kk_star_08.png
 kk_star_09.png
 kk_trace_01.png
+kk_trace_03.png
+kk_trace_04.png
 kk_trace_06.png
-kk_trace_07.png
 kk_twirl_01.png
 kk_twirl_02.png
 kz_scorch.png
 om_cracks.png
 om_cubes_2x2.png
-om_slab.png
+om_nebula_2x2.png

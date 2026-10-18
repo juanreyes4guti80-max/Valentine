@@ -6,8 +6,8 @@
 |---|---|
 | `roblox/OmnivoraVFX.rbxmx` | El ModuleScript listo para insertar en Studio. |
 | `roblox/OmnivoraVFX.lua` | El mismo código en texto, si prefieres copiar y pegar. |
-| `roblox/texturas_necesarias.txt` | Las 33 imágenes que usa el módulo. |
-| `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 33). |
+| `roblox/texturas_necesarias.txt` | Las 35 imágenes que usa el módulo. |
+| `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 35). |
 | `preview/` | Video simulado del efecto. |
 
 Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los módulos de Kaiju Zero, Astral Colossus y Omnívora.
@@ -16,11 +16,11 @@ Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los mód
 
 | Función | Qué es | Duración |
 |---|---|---|
-| `CosmicPillar(cf, radio, altura, escala, sacudida)` | **Pilar cósmico**: en la zona circular elegida brota un **cilindro de energía** que sube (no un pilar sólido). Primero hay una **carga de 0.5 s**: se marca el círculo en el suelo, el suelo se agrieta con luz, la energía y el polvo se absorben hacia el centro, crece un orbe eléctrico y los cubos del suelo levitan temblando. Luego viene la **erupción**, con destello, ondas en el suelo y una explosión de **cubos**. El **pilar dura 2 s**. Es **denso**, casi no se ve a través: azul muy oscuro que se aclara hacia los bordes, con estelas celestes que suben, destellos blancos, anillos que trepan, relámpagos, tres oleadas de energía y estrellas que giran en espiral. Al final **colapsa**: el cuerpo se desvanece, la energía sale disparada hacia arriba y quedan estrellas. | 3 s (los cubos del suelo se desvanecen hasta los 4 s) |
+| `CosmicPillar(cf, radio, altura, escala, sacudida)` | **Pilar cósmico**: en la zona circular elegida brota un **cilindro de energía** que sube (no un pilar sólido). Primero hay una **carga de 0.5 s**: se marca el círculo en el suelo, el suelo se agrieta con luz, la energía y el polvo se absorben hacia el centro, crece un orbe eléctrico y los cubos del suelo levitan temblando. Luego viene la **erupción**, con destello, ondas en el suelo y una explosión de **cubos**. El **pilar dura 2 s**. Es **denso**, casi no se ve a través, y **cósmico**: por dentro es una nebulosa de azul muy oscuro con vetas azules y púrpura y puntitos de estrella, de bordes ondulados (nada cuadrado). Lleva estelas celestes y púrpura que suben ondulando, velos de aurora, destellos blancos, anillos que trepan, relámpagos, tres oleadas de energía y estrellas que giran en espiral. Al final **colapsa**: el cuerpo se desvanece, la energía sale disparada hacia arriba y quedan estrellas. | 3 s (los cubos del suelo se desvanecen hasta los 4 s) |
 | `Shake(intensidad, duración)` | Sacudida de cámara corta. Solo funciona en el cliente. | — |
 | `ShakeRamp(inicial, final, duración)` | Sacudida continua que crece de `inicial` a `final` y se detiene al terminar. Es la que usa el pilar. Solo funciona en el cliente. | — |
 
-**Paleta:** la del modelo de Omnívora. Domina el azul muy oscuro, que se aclara a azul y celeste, con destellos blancos. El púrpura casi rosado de su boca es solo un acento: aparece en los anillos de remolino, en algunos arcos y en algunos cubos. Es más oscura y densa que la de Astral Colossus (lavanda y blanco), para que se distingan.
+**Paleta:** la del modelo de Omnívora. Domina el azul muy oscuro, que se aclara a azul y celeste, con destellos blancos. El púrpura intenso de su boca acompaña sin dominar: está en las vetas de la nebulosa, en estelas y auroras que suben entre las celestes, en destellos que giran, en los anillos de remolino y en algunos cubos. Es más oscura y densa que la de Astral Colossus (lavanda y blanco), para que se distingan.
 
 **Sacudida de cámara:** tiembla sin parar desde que empieza la carga, cada vez más fuerte, y se detiene en el colapso, junto con el pilar.
 
@@ -126,13 +126,13 @@ end)
 
 ### Rendimiento
 
-En el pico hay unas 700 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 85 emisores. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
+En el pico hay unas 800 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 97 emisores. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
 
 ## Para que se vea como en el video
 
 - La vista previa usa **Bloom**. En `Lighting` agrega un `BloomEffect` con *Intensity* 0.6–1, *Size* 24 y *Threshold* 1.5–2. Si se ve demasiado brillante, sube el *Threshold*.
 - El círculo, las grietas, las ondas y la marca oscura del suelo son **Decals** en el plano del centro. Están pensados para suelo plano: en una pendiente fuerte pueden quedar flotando o enterrados.
-- El cuerpo denso del pilar son franjas anchas casi opacas (`om_slab`) apiladas, que se dibujan detrás de las estelas y los destellos (`ZOffset`). En el colapso se desvanecen.
+- El cuerpo del pilar es `om_nebula_2x2`: una textura que ya trae sus colores (nebulosa, estrellas, bordes ondulados), por eso su `Color` es blanco. Son franjas casi opacas apiladas que se dibujan detrás de las estelas y los destellos (`ZOffset`). En el colapso se desvanecen.
 - Las estrellas van pegadas a piezas invisibles que giran (`LockedToPart`): por eso suben en espiral.
 - En el video, los cubos son grises porque el suelo de la simulación no tiene material. En el juego toman el color y el material del suelo.
 

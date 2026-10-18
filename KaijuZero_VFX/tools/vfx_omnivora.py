@@ -1,5 +1,5 @@
 """OMNÍVORA — VFX cósmicos con los colores de su modelo: azul muy oscuro que se aclara a azul y celeste,
-destellos blancos, y el púrpura casi rosado de su boca solo como acento.
+destellos blancos, y el púrpura intenso de su boca acompañando (sin dominar).
 
 Habilidad "Pilar cósmico": Omnívora elige una zona circular y de ella brota un PILAR DE ENERGÍA (un
 cilindro de energía que sube, no un pilar sólido).
@@ -8,8 +8,8 @@ cilindro de energía que sube, no un pilar sólido).
   0.5 s        ERUPCIÓN: destello, ondas en el suelo, anillos que suben disparados, rayos y la explosión
                de cubos (muchos pequeños y algunos grandes: unos se desintegran en el aire, otros caen).
   0.5 - 2.5 s  PILAR (2 s): un cuerpo DENSO de azul muy oscuro (casi no se ve a través) que se aclara
-               hacia los bordes, con estelas celestes que suben, anillos que trepan, relámpagos, destellos
-               blancos que giran en espiral y cubos que el pilar se traga.
+               hacia los bordes, con estelas celestes y púrpura que suben, anillos que trepan, relámpagos,
+               destellos blancos y púrpura que giran en espiral y cubos que el pilar se traga.
   2.5 s        COLAPSO: la energía sale disparada hacia arriba, un último destello y quedan estrellas.
 Omnívora va un escalón por encima de Astral Colossus: más denso, más oscuro, más destrucción. La cámara
 tiembla sin parar y cada vez más fuerte hasta que el pilar colapsa.
@@ -32,7 +32,7 @@ SURGES = (0.95, 1.45, 1.95)  # oleadas de energía durante el pilar
 
 # ----------------------------------------------------------------------------- colores
 # Como el modelo de Omnívora: domina el azul MUY oscuro, que se aclara a azul y celeste, con destellos
-# blancos. El púrpura casi rosado de su boca es solo un acento (el color que menos aparece).
+# blancos. El púrpura intenso de su boca acompaña en estelas, destellos y anillos (sin dominar).
 WHITE, CELESTE, BLUE, NAVY = (240, 248, 255), (110, 185, 255), (40, 90, 220), (14, 28, 90)
 PINK = (190, 80, 235)
 BODY = [(0, (22, 44, 125)), (0.5, (16, 32, 100)), (1, (10, 20, 70))]                # cuerpo denso del pilar
@@ -47,10 +47,13 @@ SHOCK = [(0, (180, 225, 255)), (0.5, (90, 150, 255)), (1, (30, 70, 200))]
 BOLT = [(0, (240, 248, 255)), (0.5, (150, 210, 255)), (1, (60, 120, 235))]
 STAR = [(0, (255, 255, 255)), (0.5, (220, 238, 255)), (1, (140, 190, 255))]
 PINKS = [(0, (230, 150, 255)), (0.5, PINK), (1, (110, 40, 190))]                     # acento de la boca
+MOUTH = [(0, (225, 140, 255)), (0.4, (190, 70, 250)), (1, (115, 30, 200))]           # estelas púrpura (boca)
+MOUTHG = [(0, (120, 40, 210)), (0.5, (100, 30, 190)), (1, (70, 20, 150))]             # brillo púrpura suave
 VOIDC = [(0, (10, 16, 52)), (0.5, (6, 10, 40)), (1, (4, 6, 26))]                    # suelo que se abre
 DUST = [(0, (150, 154, 168)), (0.5, (128, 132, 146)), (1, (110, 114, 128))]           # polvo del suelo (claro)
 SCORCH = [(0, (8, 12, 36)), (1, (14, 20, 50))]
 INWARD = [(0, (40, 90, 230)), (0.6, (120, 190, 255)), (1, WHITE)]                    # se calienta al llegar
+NEBW = [(0, (255, 255, 255)), (1, (225, 225, 240))]                                 # la textura ya trae el color
 CRACKC = [(0, (90, 160, 255)), (0.15, (190, 230, 255)), (0.3, (80, 150, 255)), (1, (30, 60, 180))]
 CUBE_GRAY = (112, 106, 112)    # color de los cubos en la vista previa (en el juego: el del suelo)
 
@@ -182,14 +185,17 @@ def eruption_layers(g):
              lifetime=(0.32, 0.36), size=[(0, 0.28 * H0), (1, 0.3 * H0)],
              transparency=[(0, 0.6), (0.15, 0.2), (0.6, 0.35), (1, 1)], color=FLASH, light_emission=1.0, brightness=1.2,
              ring_emit=[(round(TC + 0.2 * h, 3), 1, 0.0, 0.0, h) for h in (0.08, 0.22, 0.36, 0.5, 0.64, 0.78, 0.92)]),
-        dict(name="LaunchBody", texture="om_slab", rel="r", hu="H", orientation="FacingCameraWorldUp",
-             lifetime=(0.55, 0.65), size=[(0, 2.2 * R0), (0.3, 2.45 * R0), (1, 2.5 * R0)],
-             transparency=[(0, 1), (0.12, 0.3), (0.8, 0.35), (1, 1)], color=BODY, light_emission=0.12,
+        dict(name="LaunchBody", texture="om_nebula_2x2", flipbook=STATIC2x2, rel="r", hu="H",
+             orientation="FacingCameraWorldUp", lifetime=(0.55, 0.65), size=[(0, 2.2 * R0), (0.3, 2.45 * R0), (1, 2.5 * R0)],
+             transparency=[(0, 1), (0.12, 0.25), (0.8, 0.3), (1, 1)], color=NEBW, light_emission=0.1,
              zoffset=-4, ring_emit=[(round(TC + 0.18 * h, 3), 1, 0.0, 0.0, h)
                                     for h in (0.06, 0.18, 0.3, 0.42, 0.54, 0.66, 0.78)]),
         dict(name="LaunchStreaks", texture="kk_trace_01", rel="r", orientation="VelocityParallel", direction="Top",
              speed_h=(1.6, 2.4), lifetime=(0.25, 0.4), size=[(0, 6), (0.3, 26), (1, 16)], color=STREAK,
              light_emission=1.0, brightness=1.05, ring_emit=scatter(g, 40, (TC, TC + 0.06), (0.3, 1.0), (0.0, 4.0))),
+        dict(name="LaunchPurple", texture="kk_trace_01", rel="r", orientation="VelocityParallel", direction="Top",
+             speed_h=(1.5, 2.2), lifetime=(0.25, 0.4), size=[(0, 6), (0.3, 26), (1, 16)], color=MOUTH,
+             light_emission=1.0, brightness=1.15, ring_emit=scatter(g, 24, (TC, TC + 0.06), (0.3, 1.0), (0.0, 4.0))),
         dict(name="EruptSpikes", texture="fx_spikes", rel="r", orientation="FacingCameraWorldUp",
              lifetime=(0.32, 0.4), size=[(0, 0.5 * R0), (0.3, 1.0 * R0), (1, 1.15 * R0)],
              transparency=[(0, 0.5), (0.3, 0.35), (1, 1)], color=RINGC, light_emission=0.7, brightness=1.0,
@@ -222,20 +228,25 @@ FADE = (TE - 0.02, 0.25)     # lo que queda del cuerpo se desvanece en el colaps
 
 def pillar_layers(g):
     H = "H"
-    S = 2.45 * R0            # om_slab: la franja densa ocupa el diámetro del pilar
+    S = 2.45 * R0            # om_nebula_2x2: el cuerpo ocupa el diámetro del pilar
     L = [
         # el CUERPO: franjas anchas casi opacas de azul muy oscuro, más claras hacia los bordes, que suben
         # despacio. Varias apiladas no dejan ver a través del pilar.
-        dict(name="Body", texture="om_slab", rel="r", hu=H, orientation="FacingCameraWorldUp", direction="Top",
-             speed_h=(0.1, 0.18), lifetime=(0.9, 1.2), size=[(0, 0.95 * S), (0.5, 1.0 * S), (1, 1.04 * S)],
-             transparency=[(0, 1), (0.15, 0.3), (0.8, 0.35), (1, 1)], color=BODY, light_emission=0.12,
+        dict(name="Body", texture="om_nebula_2x2", flipbook=STATIC2x2, rel="r", hu=H, orientation="FacingCameraWorldUp",
+             direction="Top", speed_h=(0.1, 0.18), lifetime=(0.9, 1.2), size=[(0, 0.95 * S, 0.05 * S), (0.5, 1.0 * S, 0.05 * S), (1, 1.04 * S, 0.05 * S)],
+             transparency=[(0, 1), (0.15, 0.25), (0.8, 0.3), (1, 1)], color=NEBW, light_emission=0.1,
              zoffset=-4, zstream=W(12, start=1.0), zdist={"r": (0.0, 0.08), "h": (0.04, 0.7)}, radial=False,
              cover=True, fade_at=FADE),
         # luz azul que sube por los bordes del cuerpo (el azul oscuro se aclara hacia afuera)
-        dict(name="BodyRim", texture="om_slab", rel="r", hu=H, orientation="FacingCameraWorldUp", direction="Top",
-             speed_h=(0.12, 0.2), lifetime=(0.8, 1.1), size=[(0, 0.98 * S), (1, 1.06 * S)],
-             transparency=[(0, 1), (0.2, 0.62), (0.8, 0.66), (1, 1)], color=DEEPB, light_emission=1.0,
+        dict(name="BodyRim", texture="om_nebula_2x2", flipbook=STATIC2x2, rel="r", hu=H, orientation="FacingCameraWorldUp",
+             direction="Top", speed_h=(0.12, 0.2), lifetime=(0.8, 1.1), size=[(0, 0.98 * S), (1, 1.06 * S)],
+             transparency=[(0, 1), (0.2, 0.7), (0.8, 0.72), (1, 1)], color=DEEPB, light_emission=1.0,
              brightness=1.0, zoffset=-3, zstream=W(8, start=1.0), zdist={"r": (0.0, 0.08), "h": (0.05, 0.75)},
+             radial=False, cover=True, fade_at=FADE),
+        dict(name="BodyPurple", texture="om_nebula_2x2", flipbook=STATIC2x2, rel="r", hu=H,
+             orientation="FacingCameraWorldUp", direction="Top", speed_h=(0.12, 0.2), lifetime=(0.7, 1.0),
+             size=[(0, 0.9 * S), (1, 1.0 * S)], transparency=[(0, 1), (0.3, 0.6), (0.7, 0.64), (1, 1)], color=MOUTH,
+             light_emission=1.0, brightness=1.0, zoffset=-3, zstream=W(7, start=1.0), zdist={"r": (0.0, 0.08), "h": (0.1, 0.7)},
              radial=False, cover=True, fade_at=FADE),
         dict(name="WavyFlow", texture="fx_beam_wavy", rel="r", hu=H, orientation="FacingCameraWorldUp", direction="Top",
              speed_h=(0.4, 0.55), lifetime=(0.7, 0.9), size=[(0, 30), (0.5, 40), (1, 44)],
@@ -243,19 +254,39 @@ def pillar_layers(g):
              brightness=1.0, zoffset=-2, zstream=W(26), zdist={"r": (0.25, 0.85), "h": (0.0, 0.45)}, radial=False,
              cover=True, fade_at=FADE),
         # bordes y estelas de energía celeste encima del cuerpo
-        dict(name="WallBeams", texture="fx_beam", rel="r", hu=H, orientation="FacingCameraWorldUp", direction="Top",
+        dict(name="WallBeams", texture="fx_beam_wavy", rel="r", hu=H, orientation="FacingCameraWorldUp", direction="Top",
              speed_h=(0.55, 0.75), lifetime=(0.55, 0.7), size=[(0, 30), (0.5, 36), (1, 38)],
-             transparency=[(0, 1), (0.2, 0.55), (0.7, 0.62), (1, 1)], color=ENERGY, light_emission=0.8,
-             brightness=1.0, zoffset=1, zstream=W(70), zdist={"r": (0.88, 1.0), "h": (0.0, 0.5)}, radial=False,
+             transparency=[(0, 1), (0.2, 0.6), (0.7, 0.66), (1, 1)], color=ENERGY, light_emission=0.8,
+             brightness=0.9, zoffset=1, zstream=W(40), zdist={"r": (0.88, 1.0), "h": (0.0, 0.5)}, radial=False,
              cover=True, fade_at=FADE),
-        dict(name="CoreStreaks", texture="kk_trace_01", rel="r", hu=H, orientation="VelocityParallel", direction="Top",
-             speed_h=(1.2, 1.8), lifetime=(0.25, 0.35), size=[(0, 4), (0.3, 18), (1, 10)], color=STREAK,
-             light_emission=1.0, brightness=1.2, zoffset=2, zstream=W(30),
+        dict(name="CoreStreaks", texture="kk_trace_03", rel="r", hu=H, orientation="VelocityParallel", direction="Top",
+             speed_h=(1.2, 1.8), lifetime=(0.25, 0.35), size=[(0, 4), (0.3, 22), (1, 12)], color=STREAK,
+             light_emission=1.0, brightness=1.2, zoffset=2, zstream=W(25),
              zdist={"r": (0.1, 0.7), "h": (0.0, 0.4), "area": True}, radial=False, cover=True),
-        dict(name="WallStreaks", texture="kk_trace_07", rel="r", hu=H, orientation="VelocityParallel", direction="Top",
-             speed_h=(1.0, 1.4), lifetime=(0.35, 0.5), size=[(0, 8), (0.3, 28), (1, 18)], color=STREAK,
+        dict(name="WallStreaks", texture="kk_trace_04", rel="r", hu=H, orientation="VelocityParallel", direction="Top",
+             speed_h=(1.0, 1.4), lifetime=(0.35, 0.5), size=[(0, 8), (0.3, 34), (1, 22)], color=STREAK,
              transparency=[(0, 0.3), (0.7, 0.5), (1, 1)], light_emission=0.9, brightness=1.1, zoffset=2,
-             zstream=W(90), zdist={"r": (0.85, 1.0), "h": (0.0, 0.4)}, radial=False, cover=True),
+             zstream=W(70), zdist={"r": (0.85, 1.0), "h": (0.0, 0.4)}, radial=False, cover=True),
+        # estelas púrpura (como la boca de Omnívora) que suben entre las celestes
+        dict(name="PurpleStreaks", texture="kk_trace_03", rel="r", hu=H, orientation="VelocityParallel",
+             direction="Top", speed_h=(0.9, 1.3), lifetime=(0.4, 0.55), size=[(0, 8), (0.3, 34), (1, 22)],
+             color=MOUTH, transparency=[(0, 0.2), (0.7, 0.4), (1, 1)], light_emission=1.0, brightness=1.3,
+             zoffset=2, zstream=W(95), zdist={"r": (0.78, 1.0), "h": (0.0, 0.45)}, radial=False, cover=True),
+        # auroras: velos de plasma azul y púrpura que suben pegados al pilar (lo hacen orgánico, cósmico)
+        dict(name="AuroraBlue", texture="fx_aurora", rel="r", hu=H, orientation="FacingCameraWorldUp", direction="Top",
+             speed_h=(0.3, 0.45), lifetime=(0.6, 0.9), size=[(0, 22), (0.5, 30), (1, 34)],
+             transparency=[(0, 1), (0.25, 0.55), (0.75, 0.6), (1, 1)], color=ENERGY, light_emission=0.9,
+             brightness=1.0, zoffset=1, zstream=W(16), zdist={"r": (0.55, 1.0), "h": (0.0, 0.6)}, radial=False,
+             cover=True, fade_at=FADE),
+        dict(name="AuroraPurple", texture="fx_aurora", rel="r", hu=H, orientation="FacingCameraWorldUp", direction="Top",
+             speed_h=(0.3, 0.45), lifetime=(0.6, 0.9), size=[(0, 22), (0.5, 30), (1, 34)],
+             transparency=[(0, 1), (0.25, 0.5), (0.75, 0.55), (1, 1)], color=MOUTH, light_emission=0.9,
+             brightness=1.05, zoffset=1, zstream=W(18), zdist={"r": (0.55, 1.0), "h": (0.0, 0.6)}, radial=False,
+             cover=True, fade_at=FADE),
+        dict(name="PurpleCore", texture="kk_trace_04", rel="r", hu=H, orientation="VelocityParallel", direction="Top",
+             speed_h=(1.1, 1.6), lifetime=(0.25, 0.35), size=[(0, 4), (0.3, 20), (1, 10)], color=MOUTH,
+             light_emission=1.0, brightness=1.3, zoffset=2, zstream=W(35),
+             zdist={"r": (0.2, 0.75), "h": (0.0, 0.4), "area": True}, radial=False, cover=True),
         # destellos blancos sobre el cuerpo (como los puntitos de sus placas)
         dict(name="BodySparkles", texture="fx_particle02", rel="r", hu=H, direction="Top", speed_h=(0.02, 0.06),
              lifetime=(0.3, 0.6), size=[(0, 0), (0.3, 0.8, 0.2), (1, 0)], color=[(0, WHITE), (1, (190, 225, 255))],
@@ -282,6 +313,10 @@ def pillar_layers(g):
              lifetime=(1.4, 1.9), size=[(0, 0), (0.15, 2.2, 0.6), (0.85, 1.6), (1, 0)], color=STAR,
              light_emission=1.0, brightness=1.7, rotation=(0, 45), zoffset=3, zstream=W(40),
              zdist={"r": (0.6, 1.05), "h": (0.0, 0.08)}, radial=False, clear_at=TE + 0.02, spin=210, slots=8),
+        dict(name="VortexPurple", texture="fx_spark002", rel="r", hu=H, direction="Top", speed_h=(0.25, 0.4),
+             lifetime=(1.2, 1.7), size=[(0, 0), (0.15, 2.0, 0.5), (0.85, 1.4), (1, 0)], color=MOUTH,
+             light_emission=1.0, brightness=1.6, rotation=(0, 45), zoffset=3, zstream=W(26),
+             zdist={"r": (0.6, 1.05), "h": (0.0, 0.08)}, radial=False, clear_at=TE + 0.02, spin=210, slots=6),
         dict(name="VortexTwinkle", texture="kk_star_06", rel="r", hu=H, direction="Top", speed_h=(0.15, 0.3),
              lifetime=(1.2, 1.8), size=TWINKLE, color=STAR, light_emission=1.0, brightness=1.7, rotation=(0, 30),
              zoffset=3, zstream=W(18), zdist={"r": (0.6, 1.0), "h": (0.0, 0.1)}, radial=False, clear_at=TE + 0.02,
@@ -315,10 +350,11 @@ def pillar_layers(g):
              brightness=1.0, zoffset=-6, zstream=W(14), zdist={"r": (0.0, 0.2), "h": (0.05, 0.85)}, radial=False),
     ]
     # oleadas: el pilar late (anillo rápido, estelas, destello en el pie y rayos)
-    sr, ss, sf, sb = [], [], [], []
+    sr, ss, sf, sb, sp = [], [], [], [], []
     for ts in SURGES:
         sr += center(ts, 1.0)
         ss += scatter(g, 18, (ts, ts + 0.04), (0.5, 1.0), (0.0, 4.0))
+        sp += scatter(g, 10, (ts, ts + 0.04), (0.5, 1.0), (0.0, 4.0))
         sf += center(ts, 3.0)
         sb += scatter(g, 3, (ts, ts + 0.08), (0.95, 1.05), (0.1, 0.7), area=False)
     L += [
@@ -329,6 +365,9 @@ def pillar_layers(g):
         dict(name="SurgeStreaks", texture="kk_trace_01", rel="r", orientation="VelocityParallel", direction="Top",
              speed_h=(1.4, 2.0), lifetime=(0.3, 0.4), size=[(0, 6), (0.3, 24), (1, 14)], color=STREAK,
              light_emission=1.0, brightness=1.2, zoffset=2, ring_emit=ss),
+        dict(name="SurgePurple", texture="kk_trace_01", rel="r", orientation="VelocityParallel", direction="Top",
+             speed_h=(1.4, 2.0), lifetime=(0.3, 0.4), size=[(0, 6), (0.3, 24), (1, 14)], color=MOUTH,
+             light_emission=1.0, brightness=1.2, zoffset=2, ring_emit=sp),
         dict(name="SurgeFlash", texture="fx_glow", rel="r", lifetime=(0.18, 0.18), size=[(0, 1.0 * R0), (1, 1.4 * R0)],
              transparency=[(0, 0.4), (1, 1)], color=FLASH, light_emission=1.0, brightness=1.1, zoffset=3, ring_emit=sf),
         dict(name="SurgeThunder", texture="fx_thunder", rel="h", hu=H, orientation="FacingCameraWorldUp",
