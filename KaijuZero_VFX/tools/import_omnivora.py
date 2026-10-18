@@ -2,6 +2,7 @@
 normalizadas igual que las de Astral Colossus (escala de grises + alfa real), y dos propias:
   om_cubes_2x2  cubitos sombreados (4 orientaciones) para las esquirlas más pequeñas
   om_cracks     grietas que salen del centro de la zona (para un Decal del suelo)
+  om_slab       franja vertical ancha y densa: el cuerpo del pilar (más clara hacia los bordes)
 Las que vienen alargadas (rayos de 64x256, 64x512) se centran en un cuadrado: Roblox dibuja las
 partículas cuadradas y así el rayo queda fino.
 uso: python -I import_omnivora.py <carpeta_kenney> <carpeta Effekseer Release/Sample> <outdir>"""
@@ -28,8 +29,6 @@ EFFEKSEER = {
     "fx_glow": "01_AndrewFM01/Texture/glow.png",
     "fx_spark002": "01_NextSoft01/Texture/Spark002.png",
     "fx_particle02": "01_NextSoft01/Texture/Particle02.png",
-    "fx_fog3001": "01_NextSoft01/Texture/Fog3001.png",
-    "fx_fog2001": "01_NextSoft01/Texture/Fog2001.png",
     "fx_wind_swirl": "01_Pierre02/Texture/Wind.png",
 }
 OWN = ["kz_scorch"]      # generada para Kaiju Zero (marca oscura del suelo)
@@ -143,6 +142,28 @@ def cracks(dst, size=512, seed=5):
     Image.fromarray(img2, "RGBA").save(dst)
 
 
+def slab(dst, size=256, seed=3):
+    """Cuerpo denso del pilar: una franja vertical ancha (casi opaca) con bordes suaves que se apaga arriba y
+    abajo, más oscura en el centro y más clara hacia los lados (como las placas de Omnívora: azul oscuro que
+    se aclara), con filamentos verticales suaves. Varias apiladas forman un cilindro que casi no deja ver."""
+    from scipy.ndimage import gaussian_filter1d
+    rng = np.random.default_rng(seed)
+    x = (np.arange(size) + 0.5) / size - 0.5
+    y = (np.arange(size) + 0.5) / size
+    ax = np.clip((0.47 - np.abs(x)) / 0.17, 0, 1)
+    ax = ax * ax * (3 - 2 * ax)
+    # arriba se apaga más despacio que abajo: la punta del pilar se deshace en vez de cortarse
+    ay = np.minimum(np.clip(y / 0.42, 0, 1), np.clip((1 - y) / 0.18, 0, 1))
+    ay = ay * ay * (3 - 2 * ay)
+    n = gaussian_filter1d(rng.normal(0, 1, size), 3)
+    n = (n - n.min()) / (n.max() - n.min())
+    alpha = ay[:, None] * (ax * (0.86 + 0.14 * n))[None, :]
+    rim = np.clip(np.abs(x) / 0.38, 0, 1) ** 2
+    lum = np.repeat(((0.42 + 0.58 * rim) * (0.88 + 0.12 * n))[None, :], size, 0)
+    img = np.stack([lum * 255] * 3 + [alpha * 255], -1).astype(np.uint8)
+    Image.fromarray(img, "RGBA").save(dst)
+
+
 def main(KEN, EFF, OUT):
     os.makedirs(OUT, exist_ok=True)
     for n in KENNEY:
@@ -161,7 +182,8 @@ def main(KEN, EFF, OUT):
         print("OK", name)
     cubes_2x2(os.path.join(OUT, "om_cubes_2x2.png"))
     cracks(os.path.join(OUT, "om_cracks.png"))
-    print("OK om_cubes_2x2, om_cracks")
+    slab(os.path.join(OUT, "om_slab.png"))
+    print("OK om_cubes_2x2, om_cracks, om_slab")
     here = os.path.dirname(os.path.abspath(__file__))
     for lic in ("KENNEY_LICENSE.txt", "EFFEKSEER_SAMPLES_LICENSE_CC0.txt"):
         shutil.copy(os.path.join(here, "..", "textures", lic), os.path.join(OUT, lic))

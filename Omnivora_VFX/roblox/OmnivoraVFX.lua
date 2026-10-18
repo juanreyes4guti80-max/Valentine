@@ -29,8 +29,6 @@ OmnivoraVFX.TEXTURES = {
 	fx_beam = "rbxassetid://0",
 	fx_beam_wavy = "rbxassetid://0",
 	fx_electric_ball = "rbxassetid://0",
-	fx_fog2001 = "rbxassetid://0",
-	fx_fog3001 = "rbxassetid://0",
 	fx_glow = "rbxassetid://0",
 	fx_halo = "rbxassetid://0",
 	fx_laser_thin = "rbxassetid://0",
@@ -60,6 +58,7 @@ OmnivoraVFX.TEXTURES = {
 	kz_scorch = "rbxassetid://0",
 	om_cracks = "rbxassetid://0",
 	om_cubes_2x2 = "rbxassetid://0",
+	om_slab = "rbxassetid://0",
 }
 
 -- Dónde se crean los efectos (puedes cambiarlo por una carpeta de VFX)
@@ -629,6 +628,34 @@ function OmnivoraVFX.Shake(intensity: number, duration: number?)
 	end)
 end
 
+-- Sacudida continua que crece de i0 a i1 durante `duration` y se detiene al final (solo cliente).
+-- power > 1 hace que crezca más hacia el final.
+function OmnivoraVFX.ShakeRamp(i0: number, i1: number, duration: number, power: number?)
+	if not RunService:IsClient() then
+		return
+	end
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local t0 = time()
+	local pw = power or 1
+	local name = "KZShakeRamp" .. tostring(rng:NextInteger(1, 1000000000))
+	local seed = rng:NextNumber(0, 1000)
+	RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
+		local t = time() - t0
+		if t > duration then
+			RunService:UnbindFromRenderStep(name)
+			return
+		end
+		local a = i0 + (i1 - i0) * (t / duration) ^ pw
+		local rx = math.noise(seed, t * 24) * a * 0.03
+		local ry = math.noise(seed + 17, t * 24) * a * 0.03
+		local rz = math.noise(seed + 31, t * 16) * a * 0.015
+		cam.CFrame = cam.CFrame * CFrame.Angles(rx, ry, rz)
+	end)
+end
+
 -- luces, sacudida y limpieza (comunes a todos los efectos)
 local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, lights: { { pos: Vector3, t: number } })
 	if OmnivoraVFX.UseLight and spec.light then
@@ -653,12 +680,17 @@ local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, 
 		end
 	end
 	if shake and shake > 0 then
+		if spec.shake_ramp then
+			-- {t0, t1, intensidad inicial, intensidad final, curva}: tiembla sin parar y cada vez más
+			local r = spec.shake_ramp
+			task.delay(r[1], OmnivoraVFX.ShakeRamp, shake * r[3], shake * r[4], r[2] - r[1], r[5])
+		end
 		if spec.shakes then
 			-- {t, intensidad relativa, duración}
 			for _, sk in spec.shakes do
 				task.delay(sk[1], OmnivoraVFX.Shake, shake * sk[2], sk[3])
 			end
-		else
+		elseif not spec.shake_ramp then
 			OmnivoraVFX.Shake(shake, 0.9)
 		end
 	end
@@ -977,6 +1009,34 @@ local function clearAt(e: ParticleEmitter, t: number)
 		if e.Parent then
 			e:Clear()
 		end
+	end)
+end
+
+-- desvanece las partículas que quedan (cambiar la curva del emisor afecta también a las ya emitidas)
+local function fadeOut(e: ParticleEmitter, t0: number, dur: number)
+	task.delay(t0, function()
+		if not e.Parent then
+			return
+		end
+		local base = e.Transparency.Keypoints
+		local start = time()
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function()
+			if not e.Parent then
+				conn:Disconnect()
+				return
+			end
+			local u = math.clamp((time() - start) / dur, 0, 1)
+			local kps = table.create(#base)
+			for i, k in base do
+				kps[i] = NumberSequenceKeypoint.new(k.Time, k.Value + (1 - k.Value) * u)
+			end
+			e.Transparency = NumberSequence.new(kps)
+			if u >= 1 then
+				conn:Disconnect()
+				e:Clear()
+			end
+		end)
 	end)
 end
 
@@ -1305,6 +1365,9 @@ local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?
 				if L.clear_at then
 					clearAt(e, L.clear_at)
 				end
+				if L.fade_at then
+					fadeOut(e, L.fade_at[1], L.fade_at[2])
+				end
 			end
 		else
 			local e, a = zoneEmitter(L, Z, holder)
@@ -1324,6 +1387,9 @@ local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?
 			if L.clear_at then
 				clearAt(e, L.clear_at)
 			end
+			if L.fade_at then
+				fadeOut(e, L.fade_at[1], L.fade_at[2])
+			end
 		end
 	end
 	if spec.cubes then
@@ -1337,7 +1403,7 @@ end
 local SPEC_CosmicPillar = {
 	name = "CosmicPillar",
 	duration = 3,
-	cleanup = 4.29,
+	cleanup = 4.34,
 	layers = {
 		{
 			name = "ZoneRing",
@@ -1358,15 +1424,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{100, 105, 255},
+					{200, 235, 255},
 				},
 				{
 					0.4,
-					{90, 50, 245},
+					{110, 180, 255},
 				},
 				{
 					1,
-					{60, 18, 190},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 0.8,
@@ -1407,15 +1473,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 75, 255},
+					{90, 150, 255},
 				},
 				{
 					0.5,
-					{85, 38, 230},
+					{50, 100, 230},
 				},
 				{
 					1,
-					{48, 14, 150},
+					{25, 50, 170},
 				},
 			},
 			light_emission = 0.6,
@@ -1456,15 +1522,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{32, 10, 72},
+					{10, 16, 52},
 				},
 				{
 					0.5,
-					{16, 5, 38},
+					{6, 10, 40},
 				},
 				{
 					1,
-					{10, 4, 24},
+					{4, 6, 26},
 				},
 			},
 			light_emission = 0,
@@ -1510,19 +1576,19 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{130, 70, 255},
+					{90, 160, 255},
 				},
 				{
 					0.15,
-					{120, 120, 255},
+					{190, 230, 255},
 				},
 				{
 					0.3,
-					{120, 55, 250},
+					{80, 150, 255},
 				},
 				{
 					1,
-					{80, 25, 200},
+					{30, 60, 180},
 				},
 			},
 			light_emission = 0.8,
@@ -1565,15 +1631,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 75, 255},
+					{40, 80, 210},
 				},
 				{
 					0.5,
-					{85, 38, 230},
+					{25, 50, 160},
 				},
 				{
 					1,
-					{48, 14, 150},
+					{12, 25, 100},
 				},
 			},
 			light_emission = 0.7,
@@ -1615,15 +1681,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{95, 45, 235},
+					{40, 90, 230},
 				},
 				{
 					0.6,
-					{80, 90, 255},
+					{120, 190, 255},
 				},
 				{
 					1,
-					{170, 160, 255},
+					{240, 248, 255},
 				},
 			},
 			light_emission = 1,
@@ -1741,15 +1807,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{225, 220, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{150, 145, 255},
+					{220, 238, 255},
 				},
 				{
 					1,
-					{110, 80, 255},
+					{140, 190, 255},
 				},
 			},
 			light_emission = 1,
@@ -1863,15 +1929,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 100, 124},
+					{150, 154, 168},
 				},
 				{
 					0.5,
-					{88, 80, 102},
+					{128, 132, 146},
 				},
 				{
 					1,
-					{72, 66, 86},
+					{110, 114, 128},
 				},
 			},
 			light_emission = 0.05,
@@ -1925,15 +1991,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{170, 160, 255},
+					{240, 248, 255},
 				},
 				{
 					0.35,
-					{105, 85, 255},
+					{110, 185, 255},
 				},
 				{
 					1,
-					{105, 40, 240},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
@@ -1971,15 +2037,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 75, 255},
+					{40, 80, 210},
 				},
 				{
 					0.5,
-					{85, 38, 230},
+					{25, 50, 160},
 				},
 				{
 					1,
-					{48, 14, 150},
+					{12, 25, 100},
 				},
 			},
 			light_emission = 1,
@@ -2012,15 +2078,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
@@ -2063,15 +2129,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
@@ -2121,15 +2187,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{170, 160, 255},
+					{240, 248, 255},
 				},
 				{
 					0.35,
-					{105, 85, 255},
+					{110, 185, 255},
 				},
 				{
 					1,
-					{105, 40, 240},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
@@ -2172,15 +2238,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{150, 130, 255},
+					{235, 245, 255},
 				},
 				{
 					0.25,
-					{100, 75, 255},
+					{140, 200, 255},
 				},
 				{
 					1,
-					{70, 24, 200},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
@@ -2218,15 +2284,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{120, 115, 255},
+					{180, 225, 255},
 				},
 				{
 					0.5,
-					{95, 50, 240},
+					{90, 150, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 0.9,
@@ -2261,15 +2327,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{150, 130, 255},
+					{235, 245, 255},
 				},
 				{
 					0.25,
-					{100, 75, 255},
+					{140, 200, 255},
 				},
 				{
 					1,
-					{70, 24, 200},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
@@ -2311,15 +2377,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{120, 115, 255},
+					{180, 225, 255},
 				},
 				{
 					0.5,
-					{95, 50, 240},
+					{90, 150, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 1,
@@ -2357,15 +2423,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{120, 115, 255},
+					{180, 225, 255},
 				},
 				{
 					0.5,
-					{95, 50, 240},
+					{90, 150, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 0.5,
@@ -2404,15 +2470,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{120, 115, 255},
+					{180, 225, 255},
 				},
 				{
 					0.5,
-					{95, 50, 240},
+					{90, 150, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 0.7,
@@ -2451,15 +2517,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 75, 255},
+					{90, 150, 255},
 				},
 				{
 					0.5,
-					{85, 38, 230},
+					{50, 100, 230},
 				},
 				{
 					1,
-					{48, 14, 150},
+					{25, 50, 170},
 				},
 			},
 			light_emission = 0.5,
@@ -2502,15 +2568,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{90, 95, 255},
+					{170, 220, 255},
 				},
 				{
 					0.5,
-					{75, 55, 245},
+					{90, 160, 255},
 				},
 				{
 					1,
-					{50, 20, 170},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 0.9,
@@ -2550,15 +2616,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{150, 130, 255},
+					{235, 245, 255},
 				},
 				{
 					0.25,
-					{100, 75, 255},
+					{140, 200, 255},
 				},
 				{
 					1,
-					{70, 24, 200},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
@@ -2598,15 +2664,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{150, 130, 255},
+					{235, 245, 255},
 				},
 				{
 					0.25,
-					{100, 75, 255},
+					{140, 200, 255},
 				},
 				{
 					1,
-					{70, 24, 200},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
@@ -2633,6 +2699,61 @@ local SPEC_CosmicPillar = {
 			emit = {},
 		},
 		{
+			name = "LaunchBody",
+			texture = "om_slab",
+			rel = "r",
+			hu = "H",
+			orientation = "FacingCameraWorldUp",
+			lifetime = {0.55, 0.65},
+			size = {
+				{0, 39.6, 0},
+				{0.3, 44.1, 0},
+				{1, 45, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.12, 0.3, 0},
+				{0.8, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{22, 44, 125},
+				},
+				{
+					0.5,
+					{16, 32, 100},
+				},
+				{
+					1,
+					{10, 20, 70},
+				},
+			},
+			light_emission = 0.12,
+			zoffset = -4,
+			ring_emit = {
+				{0.511, 1, 0, 0, 0.06},
+				{0.532, 1, 0, 0, 0.18},
+				{0.554, 1, 0, 0, 0.3},
+				{0.576, 1, 0, 0, 0.42},
+				{0.597, 1, 0, 0, 0.54},
+				{0.619, 1, 0, 0, 0.66},
+				{0.64, 1, 0, 0, 0.78},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
 			name = "LaunchStreaks",
 			texture = "kk_trace_01",
 			rel = "r",
@@ -2648,15 +2769,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 115, 255},
+					{215, 240, 255},
 				},
 				{
 					0.5,
-					{95, 55, 250},
+					{120, 190, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{45, 100, 230},
 				},
 			},
 			light_emission = 1,
@@ -2737,15 +2858,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{90, 95, 255},
+					{170, 220, 255},
 				},
 				{
 					0.5,
-					{75, 55, 245},
+					{90, 160, 255},
 				},
 				{
 					1,
-					{50, 20, 170},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 0.7,
@@ -2796,15 +2917,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
@@ -2850,23 +2971,23 @@ local SPEC_CosmicPillar = {
 				{1, 18, 2},
 			},
 			transparency = {
-				{0, 0.4, 0},
-				{0.3, 0.35, 0},
-				{0.7, 0.65, 0},
+				{0, 0.5, 0},
+				{0.3, 0.5, 0},
+				{0.7, 0.75, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{110, 100, 124},
+					{150, 154, 168},
 				},
 				{
 					0.5,
-					{88, 80, 102},
+					{128, 132, 146},
 				},
 				{
 					1,
-					{72, 66, 86},
+					{110, 114, 128},
 				},
 			},
 			light_emission = 0.05,
@@ -2922,8 +3043,8 @@ local SPEC_CosmicPillar = {
 			drag = 0.4,
 			lifetime = {0.8, 1.2},
 			size = {
-				{0, 0.6, 0.25},
-				{1, 0.5, 0.2},
+				{0, 0.3, 0.12},
+				{1, 0.24, 0.1},
 			},
 			rotation = {0, 360},
 			rot_speed = {-500, 500},
@@ -2940,36 +3061,86 @@ local SPEC_CosmicPillar = {
 			ground_mix = 1,
 			lit = true,
 			ring_emit = {
-				{0.5, 3, 0.0245, 0.867, 0.6},
-				{0.5, 3, 0.095, 0.666, 0.6},
+				{0.5, 3, 0.0188, 0.628, 0.6},
+				{0.5, 3, 0.0216, 0.533, 0.6},
+				{0.5, 3, 0.0245, 0.863, 0.6},
+				{0.5, 3, 0.0361, 0.467, 0.6},
+				{0.5, 3, 0.0801, 0.985, 0.6},
+				{0.5, 3, 0.0883, 0.867, 0.6},
+				{0.5, 3, 0.0919, 0.842, 0.6},
+				{0.5, 3, 0.095, 0.653, 0.6},
+				{0.5, 3, 0.1163, 0.529, 0.6},
+				{0.5, 3, 0.1232, 0.275, 0.6},
+				{0.5, 3, 0.1415, 0.874, 0.6},
+				{0.5, 3, 0.1503, 0.844, 0.6},
 				{0.5, 3, 0.1584, 0.987, 0.6},
-				{0.5, 3, 0.2183, 0.55, 0.6},
-				{0.5, 3, 0.2591, 0.969, 0.6},
-				{0.5, 3, 0.2666, 0.37, 0.6},
-				{0.5, 3, 0.3392, 0.952, 0.6},
-				{0.5, 3, 0.3405, 0.49, 0.6},
-				{0.5, 3, 0.4585, 0.398, 0.6},
-				{0.5, 3, 0.4594, 0.645, 0.6},
-				{0.5, 3, 0.5365, 0.514, 0.6},
-				{0.5, 3, 0.5418, 0.707, 0.6},
-				{0.5, 3, 0.5675, 0.324, 0.6},
-				{0.5, 3, 0.5675, 0.415, 0.6},
-				{0.5, 3, 0.5812, 0.962, 0.6},
+				{0.5, 3, 0.179, 0.994, 0.6},
+				{0.5, 3, 0.1955, 0.765, 0.6},
+				{0.5, 3, 0.2006, 0.803, 0.6},
+				{0.5, 3, 0.2183, 0.53, 0.6},
+				{0.5, 3, 0.2237, 0.642, 0.6},
+				{0.5, 3, 0.2352, 0.413, 0.6},
+				{0.5, 3, 0.2591, 0.968, 0.6},
+				{0.5, 3, 0.2666, 0.333, 0.6},
+				{0.5, 3, 0.2731, 0.288, 0.6},
+				{0.5, 3, 0.2808, 0.531, 0.6},
+				{0.5, 3, 0.3065, 0.451, 0.6},
+				{0.5, 3, 0.315, 0.564, 0.6},
+				{0.5, 3, 0.3182, 0.676, 0.6},
+				{0.5, 3, 0.3314, 0.544, 0.6},
+				{0.5, 3, 0.3392, 0.95, 0.6},
+				{0.5, 3, 0.3405, 0.466, 0.6},
+				{0.5, 3, 0.3436, 0.746, 0.6},
+				{0.5, 3, 0.3537, 0.838, 0.6},
+				{0.5, 3, 0.3612, 0.829, 0.6},
+				{0.5, 3, 0.3816, 0.62, 0.6},
+				{0.5, 3, 0.4079, 0.788, 0.6},
+				{0.5, 3, 0.4329, 0.286, 0.6},
+				{0.5, 3, 0.4585, 0.364, 0.6},
+				{0.5, 3, 0.4594, 0.631, 0.6},
+				{0.5, 3, 0.49, 0.927, 0.6},
+				{0.5, 3, 0.5365, 0.492, 0.6},
+				{0.5, 3, 0.5418, 0.696, 0.6},
+				{0.5, 3, 0.5675, 0.279, 0.6},
+				{0.5, 3, 0.5675, 0.383, 0.6},
+				{0.5, 3, 0.572, 0.684, 0.6},
+				{0.5, 3, 0.5812, 0.961, 0.6},
+				{0.5, 3, 0.5912, 0.813, 0.6},
+				{0.5, 3, 0.603, 0.731, 0.6},
+				{0.5, 3, 0.6161, 0.48, 0.6},
+				{0.5, 3, 0.6223, 0.584, 0.6},
+				{0.5, 3, 0.6253, 0.85, 0.6},
 				{0.5, 3, 0.6805, 0.982, 0.6},
-				{0.5, 3, 0.7193, 0.772, 0.6},
-				{0.5, 3, 0.7295, 0.5, 0.6},
-				{0.5, 3, 0.7455, 0.381, 0.6},
-				{0.5, 3, 0.7802, 0.934, 0.6},
-				{0.5, 3, 0.8033, 0.511, 0.6},
-				{0.5, 3, 0.8068, 0.345, 0.6},
-				{0.5, 3, 0.8143, 0.886, 0.6},
-				{0.5, 3, 0.8561, 0.882, 0.6},
-				{0.5, 3, 0.8736, 0.624, 0.6},
-				{0.5, 3, 0.8828, 0.712, 0.6},
-				{0.5, 3, 0.9016, 0.907, 0.6},
-				{0.5, 3, 0.9018, 0.482, 0.6},
-				{0.5, 3, 0.9499, 0.822, 0.6},
-				{0.5, 3, 0.9571, 0.873, 0.6},
+				{0.5, 3, 0.6911, 0.601, 0.6},
+				{0.5, 3, 0.7035, 0.904, 0.6},
+				{0.5, 3, 0.7188, 0.482, 0.6},
+				{0.5, 3, 0.7193, 0.764, 0.6},
+				{0.5, 3, 0.7279, 1, 0.6},
+				{0.5, 3, 0.7295, 0.477, 0.6},
+				{0.5, 3, 0.7455, 0.346, 0.6},
+				{0.5, 3, 0.7483, 0.634, 0.6},
+				{0.5, 3, 0.75, 0.998, 0.6},
+				{0.5, 3, 0.7609, 0.848, 0.6},
+				{0.5, 3, 0.7802, 0.932, 0.6},
+				{0.5, 3, 0.7832, 0.876, 0.6},
+				{0.5, 3, 0.7841, 0.663, 0.6},
+				{0.5, 3, 0.8033, 0.489, 0.6},
+				{0.5, 3, 0.8068, 0.304, 0.6},
+				{0.5, 3, 0.8109, 0.772, 0.6},
+				{0.5, 3, 0.8143, 0.882, 0.6},
+				{0.5, 3, 0.8203, 0.721, 0.6},
+				{0.5, 3, 0.8561, 0.878, 0.6},
+				{0.5, 3, 0.8678, 0.868, 0.6},
+				{0.5, 3, 0.8736, 0.609, 0.6},
+				{0.5, 3, 0.8828, 0.701, 0.6},
+				{0.5, 3, 0.885, 0.671, 0.6},
+				{0.5, 3, 0.9016, 0.904, 0.6},
+				{0.5, 3, 0.9018, 0.458, 0.6},
+				{0.5, 3, 0.9084, 0.654, 0.6},
+				{0.5, 3, 0.9418, 0.769, 0.6},
+				{0.5, 3, 0.9499, 0.816, 0.6},
+				{0.5, 3, 0.9502, 0.368, 0.6},
+				{0.5, 3, 0.9571, 0.869, 0.6},
 			},
 			transparency = {
 				{0, 0, 0},
@@ -2995,15 +3166,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
@@ -3011,11 +3182,11 @@ local SPEC_CosmicPillar = {
 			rotation = {0, 360},
 			zoffset = 2,
 			ring_emit = {
-				{0.539, 1, 0.3436, 0.923, 8.32},
-				{0.54, 1, 0.0361, 0.948, 3.986},
-				{0.638, 1, 0.3314, 0.828, 4.984},
-				{0.657, 1, 0.2237, 1.001, 6.481},
-				{0.688, 1, 0.3065, 0.926, 3.802},
+				{0.623, 1, 0.9979, 0.779, 5.908},
+				{0.631, 1, 0.5129, 0.972, 12.08},
+				{0.644, 1, 0.5784, 1.072, 4.514},
+				{0.652, 1, 0.2665, 1.031, 10.681},
+				{0.658, 1, 0.3734, 0.837, 12.031},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -3044,15 +3215,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
@@ -3060,11 +3231,11 @@ local SPEC_CosmicPillar = {
 			rotation = {0, 360},
 			zoffset = 2,
 			ring_emit = {
-				{0.536, 1, 0.1232, 1.095, 2.165},
-				{0.563, 1, 0.8203, 0.809, 7.852},
-				{0.621, 1, 0.6161, 0.901, 4.154},
-				{0.644, 1, 0.572, 0.772, 7.184},
-				{0.657, 1, 0.4079, 0.861, 9.149},
+				{0.547, 1, 0.4392, 0.936, 6.504},
+				{0.602, 1, 0.649, 0.985, 3.931},
+				{0.605, 1, 0.8668, 0.906, 7.347},
+				{0.632, 1, 0.4018, 0.962, 8.016},
+				{0.636, 1, 0.0695, 0.871, 7.255},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -3077,6 +3248,185 @@ local SPEC_CosmicPillar = {
 			},
 			rot_speed = {0, 0},
 			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Body",
+			texture = "om_slab",
+			rel = "r",
+			hu = "H",
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			speed_h = {0.1, 0.18},
+			lifetime = {0.9, 1.2},
+			size = {
+				{0, 41.895, 0},
+				{0.5, 44.1, 0},
+				{1, 45.864, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.15, 0.3, 0},
+				{0.8, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{22, 44, 125},
+				},
+				{
+					0.5,
+					{16, 32, 100},
+				},
+				{
+					1,
+					{10, 20, 70},
+				},
+			},
+			light_emission = 0.12,
+			zoffset = -4,
+			zstream = {
+				{0.5, 0.58, 12, 12},
+				{0.58, 2.38, 12, 12},
+				{2.38, 2.5, 12, 0},
+			},
+			zdist = {
+				r = {0, 0.08},
+				h = {0.04, 0.7},
+				area = false,
+			},
+			radial = false,
+			cover = true,
+			fade_at = {2.48, 0.25},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BodyRim",
+			texture = "om_slab",
+			rel = "r",
+			hu = "H",
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			speed_h = {0.12, 0.2},
+			lifetime = {0.8, 1.1},
+			size = {
+				{0, 43.218, 0},
+				{1, 46.746, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.62, 0},
+				{0.8, 0.66, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{40, 80, 210},
+				},
+				{
+					0.5,
+					{25, 50, 160},
+				},
+				{
+					1,
+					{12, 25, 100},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = -3,
+			zstream = {
+				{0.5, 0.58, 8, 8},
+				{0.58, 2.38, 8, 8},
+				{2.38, 2.5, 8, 0},
+			},
+			zdist = {
+				r = {0, 0.08},
+				h = {0.05, 0.75},
+				area = false,
+			},
+			radial = false,
+			cover = true,
+			fade_at = {2.48, 0.25},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "WavyFlow",
+			texture = "fx_beam_wavy",
+			rel = "r",
+			hu = "H",
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			speed_h = {0.4, 0.55},
+			lifetime = {0.7, 0.9},
+			size = {
+				{0, 30, 0},
+				{0.5, 40, 0},
+				{1, 44, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.25, 0.6, 0},
+				{0.75, 0.66, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{40, 80, 210},
+				},
+				{
+					0.5,
+					{25, 50, 160},
+				},
+				{
+					1,
+					{12, 25, 100},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1,
+			zoffset = -2,
+			zstream = {
+				{0.5, 0.58, 9.1, 26},
+				{0.58, 2.38, 26, 26},
+				{2.38, 2.5, 26, 0},
+			},
+			zdist = {
+				r = {0.25, 0.85},
+				h = {0, 0.45},
+				area = false,
+			},
+			radial = false,
+			cover = true,
+			fade_at = {2.48, 0.25},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3097,30 +3447,31 @@ local SPEC_CosmicPillar = {
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.2, 0.5, 0},
-				{0.7, 0.58, 0},
+				{0.2, 0.55, 0},
+				{0.7, 0.62, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{55, 60, 230},
+					{200, 235, 255},
 				},
 				{
-					0.5,
-					{80, 35, 225},
+					0.4,
+					{110, 180, 255},
 				},
 				{
 					1,
-					{40, 12, 130},
+					{40, 90, 220},
 				},
 			},
-			light_emission = 0.45,
-			brightness = 0.85,
+			light_emission = 0.8,
+			brightness = 1,
+			zoffset = 1,
 			zstream = {
-				{0.5, 0.58, 42, 120},
-				{0.58, 2.38, 120, 120},
-				{2.38, 2.5, 120, 0},
+				{0.5, 0.58, 24.5, 70},
+				{0.58, 2.38, 70, 70},
+				{2.38, 2.5, 70, 0},
 			},
 			zdist = {
 				r = {0.88, 1},
@@ -3129,13 +3480,13 @@ local SPEC_CosmicPillar = {
 			},
 			radial = false,
 			cover = true,
+			fade_at = {2.48, 0.25},
 			speed = {0, 0},
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3157,26 +3508,27 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 115, 255},
+					{215, 240, 255},
 				},
 				{
 					0.5,
-					{95, 55, 250},
+					{120, 190, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{45, 100, 230},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.1,
+			brightness = 1.2,
+			zoffset = 2,
 			zstream = {
-				{0.5, 0.58, 8.75, 25},
-				{0.58, 2.38, 25, 25},
-				{2.38, 2.5, 25, 0},
+				{0.5, 0.58, 10.5, 30},
+				{0.58, 2.38, 30, 30},
+				{2.38, 2.5, 30, 0},
 			},
 			zdist = {
-				r = {0.1, 0.5},
+				r = {0.1, 0.7},
 				h = {0, 0.4},
 				area = true,
 			},
@@ -3192,7 +3544,6 @@ local SPEC_CosmicPillar = {
 			},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3214,15 +3565,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 115, 255},
+					{215, 240, 255},
 				},
 				{
 					0.5,
-					{95, 55, 250},
+					{120, 190, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{45, 100, 230},
 				},
 			},
 			transparency = {
@@ -3230,8 +3581,9 @@ local SPEC_CosmicPillar = {
 				{0.7, 0.5, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.8,
-			brightness = 1,
+			light_emission = 0.9,
+			brightness = 1.1,
+			zoffset = 2,
 			zstream = {
 				{0.5, 0.58, 31.5, 90},
 				{0.58, 2.38, 90, 90},
@@ -3250,55 +3602,44 @@ local SPEC_CosmicPillar = {
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
 		},
 		{
-			name = "WavyFlow",
-			texture = "fx_beam_wavy",
+			name = "BodySparkles",
+			texture = "fx_particle02",
 			rel = "r",
 			hu = "H",
-			orientation = "FacingCameraWorldUp",
 			direction = "Top",
-			speed_h = {0.4, 0.55},
-			lifetime = {0.7, 0.9},
+			speed_h = {0.02, 0.06},
+			lifetime = {0.3, 0.6},
 			size = {
-				{0, 30, 0},
-				{0.5, 40, 0},
-				{1, 44, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.25, 0.62, 0},
-				{0.75, 0.68, 0},
-				{1, 1, 0},
+				{0, 0, 0},
+				{0.3, 0.8, 0.2},
+				{1, 0, 0},
 			},
 			color = {
 				{
 					0,
-					{70, 75, 240},
-				},
-				{
-					0.5,
-					{50, 45, 210},
+					{240, 248, 255},
 				},
 				{
 					1,
-					{36, 20, 160},
+					{190, 225, 255},
 				},
 			},
-			light_emission = 0.5,
-			brightness = 0.85,
+			light_emission = 1,
+			brightness = 1.8,
+			zoffset = 3,
 			zstream = {
-				{0.5, 0.58, 9.1, 26},
-				{0.58, 2.38, 26, 26},
-				{2.38, 2.5, 26, 0},
+				{0.5, 0.58, 31.5, 90},
+				{0.58, 2.38, 90, 90},
+				{2.38, 2.5, 90, 0},
 			},
 			zdist = {
-				r = {0.25, 0.85},
-				h = {0, 0.45},
+				r = {0.5, 1},
+				h = {0, 0.95},
 				area = false,
 			},
 			radial = false,
@@ -3307,9 +3648,13 @@ local SPEC_CosmicPillar = {
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3329,26 +3674,27 @@ local SPEC_CosmicPillar = {
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.08, 0.35, 0},
-				{0.75, 0.55, 0},
+				{0.08, 0.3, 0},
+				{0.75, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{90, 95, 255},
+					{170, 220, 255},
 				},
 				{
 					0.5,
-					{75, 55, 245},
+					{90, 160, 255},
 				},
 				{
 					1,
-					{50, 20, 170},
+					{30, 70, 200},
 				},
 			},
-			light_emission = 0.8,
-			brightness = 1,
+			light_emission = 0.9,
+			brightness = 1.1,
+			zoffset = 2,
 			zstream = {
 				{0.5, 0.58, 5, 5},
 				{0.58, 2.38, 5, 5},
@@ -3367,7 +3713,6 @@ local SPEC_CosmicPillar = {
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3396,19 +3741,20 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 75, 255},
+					{230, 150, 255},
 				},
 				{
 					0.5,
-					{85, 38, 230},
+					{190, 80, 235},
 				},
 				{
 					1,
-					{48, 14, 150},
+					{110, 40, 190},
 				},
 			},
 			light_emission = 0.8,
 			brightness = 1,
+			zoffset = 2,
 			zstream = {
 				{0.5, 0.58, 3, 3},
 				{0.58, 2.38, 3, 3},
@@ -3425,7 +3771,6 @@ local SPEC_CosmicPillar = {
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3444,20 +3789,21 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.4,
 			rotation = {-12, 12},
+			zoffset = 3,
 			zstream = {
 				{0.5, 0.58, 3.5, 10},
 				{0.58, 2.38, 10, 10},
@@ -3479,7 +3825,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3501,34 +3846,35 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{225, 220, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{150, 145, 255},
+					{220, 238, 255},
 				},
 				{
 					1,
-					{110, 80, 255},
+					{140, 190, 255},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.7,
 			rotation = {0, 45},
+			zoffset = 3,
 			zstream = {
 				{0.5, 0.58, 14, 40},
 				{0.58, 2.38, 40, 40},
 				{2.38, 2.5, 40, 0},
 			},
 			zdist = {
-				r = {0.3, 0.95},
+				r = {0.6, 1.05},
 				h = {0, 0.08},
 				area = false,
 			},
 			radial = false,
 			clear_at = 2.52,
 			spin = 210,
-			slots = 12,
+			slots = 8,
 			speed = {0, 0},
 			spread = {0, 0},
 			accel = {0, 0, 0},
@@ -3538,7 +3884,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -3564,27 +3909,28 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{225, 220, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{150, 145, 255},
+					{220, 238, 255},
 				},
 				{
 					1,
-					{110, 80, 255},
+					{140, 190, 255},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.7,
 			rotation = {0, 30},
+			zoffset = 3,
 			zstream = {
 				{0.5, 0.58, 6.3, 18},
 				{0.58, 2.38, 18, 18},
 				{2.38, 2.5, 18, 0},
 			},
 			zdist = {
-				r = {0.2, 0.9},
+				r = {0.6, 1},
 				h = {0, 0.1},
 				area = false,
 			},
@@ -3601,7 +3947,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -3624,29 +3969,30 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{210, 200, 255},
+					{240, 248, 255},
 				},
 				{
 					1,
-					{140, 110, 255},
+					{150, 200, 255},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.6,
+			zoffset = 3,
 			zstream = {
 				{0.5, 0.58, 21, 60},
 				{0.58, 2.38, 60, 60},
 				{2.38, 2.5, 60, 0},
 			},
 			zdist = {
-				r = {0.1, 1},
+				r = {0.5, 1.05},
 				h = {0, 0.1},
 				area = true,
 			},
 			radial = false,
 			clear_at = 2.52,
 			spin = 210,
-			slots = 10,
+			slots = 8,
 			speed = {0, 0},
 			spread = {0, 0},
 			accel = {0, 0, 0},
@@ -3657,127 +4003,6 @@ local SPEC_CosmicPillar = {
 			},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "VoidClouds",
-			texture = "fx_fog3001",
-			rel = "r",
-			hu = "H",
-			direction = "Top",
-			speed_h = {0.08, 0.16},
-			lifetime = {1, 1.3},
-			size = {
-				{0, 8, 0},
-				{0.3, 18, 0},
-				{1, 24, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.25, 0.48, 0},
-				{0.7, 0.54, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{32, 10, 72},
-				},
-				{
-					0.5,
-					{16, 5, 38},
-				},
-				{
-					1,
-					{10, 4, 24},
-				},
-			},
-			light_emission = 0,
-			rotation = {0, 360},
-			rot_speed = {-20, 20},
-			zoffset = -4,
-			zstream = {
-				{0.5, 0.58, 3.5, 10},
-				{0.58, 2.38, 10, 10},
-				{2.38, 2.5, 10, 0},
-			},
-			zdist = {
-				r = {0.15, 0.7},
-				h = {0.02, 0.5},
-				area = false,
-			},
-			radial = false,
-			spin = 150,
-			slots = 6,
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			brightness = 1,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "NebulaClouds",
-			texture = "fx_fog2001",
-			rel = "r",
-			hu = "H",
-			direction = "Top",
-			speed_h = {0.08, 0.16},
-			lifetime = {1, 1.3},
-			size = {
-				{0, 8, 0},
-				{0.3, 18, 0},
-				{1, 24, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.25, 0.6, 0},
-				{0.7, 0.65, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{80, 32, 210},
-				},
-				{
-					0.5,
-					{60, 20, 180},
-				},
-				{
-					1,
-					{38, 10, 120},
-				},
-			},
-			light_emission = 0.45,
-			brightness = 1.3,
-			rotation = {0, 360},
-			rot_speed = {-20, 20},
-			zoffset = -2,
-			zstream = {
-				{0.5, 0.58, 3.5, 10},
-				{0.58, 2.38, 10, 10},
-				{2.38, 2.5, 10, 0},
-			},
-			zdist = {
-				r = {0.15, 0.7},
-				h = {0.02, 0.5},
-				area = false,
-			},
-			radial = false,
-			spin = 150,
-			slots = 6,
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -3802,19 +4027,20 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{90, 95, 255},
+					{170, 220, 255},
 				},
 				{
 					0.5,
-					{75, 55, 245},
+					{90, 160, 255},
 				},
 				{
 					1,
-					{50, 20, 170},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 0.7,
 			brightness = 1,
+			zoffset = 1,
 			zstream = {
 				{0.5, 0.58, 7.7, 22},
 				{0.58, 2.38, 22, 22},
@@ -3833,7 +4059,6 @@ local SPEC_CosmicPillar = {
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3857,19 +4082,20 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{100, 105, 255},
+					{200, 235, 255},
 				},
 				{
 					0.4,
-					{90, 50, 245},
+					{110, 180, 255},
 				},
 				{
 					1,
-					{60, 18, 190},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.5,
+			brightness = 1.4,
+			zoffset = 1,
 			zstream = {
 				{0.5, 0.58, 11.9, 34},
 				{0.58, 2.38, 34, 34},
@@ -3887,7 +4113,6 @@ local SPEC_CosmicPillar = {
 			},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -3911,11 +4136,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{90, 50, 240},
+					{40, 80, 210},
+				},
+				{
+					0.5,
+					{25, 50, 160},
 				},
 				{
 					1,
-					{55, 18, 170},
+					{12, 25, 100},
 				},
 			},
 			light_emission = 0.4,
@@ -3938,117 +4167,6 @@ local SPEC_CosmicPillar = {
 			emit = {},
 		},
 		{
-			name = "BaseDust",
-			texture = "kk_smoke_04",
-			rel = "r",
-			direction = "Top",
-			speed = {1, 3},
-			lifetime = {1, 1.4},
-			size = {
-				{0, 5, 0},
-				{1, 12, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.3, 0.55, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 100, 124},
-				},
-				{
-					0.5,
-					{88, 80, 102},
-				},
-				{
-					1,
-					{72, 66, 86},
-				},
-			},
-			light_emission = 0.05,
-			rotation = {0, 360},
-			zstream = {
-				{0.5, 0.58, 3.5, 10},
-				{0.58, 2.38, 10, 10},
-				{2.38, 2.5, 10, 0},
-			},
-			zdist = {
-				r = {0.6, 1.1},
-				h = {0.5, 2},
-				area = false,
-			},
-			radial = false,
-			spin = 120,
-			slots = 8,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			brightness = 1,
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "TopMist",
-			texture = "fx_fog2001",
-			rel = "r",
-			hu = "H",
-			direction = "Top",
-			spread = {60, 60},
-			speed = {4, 10},
-			lifetime = {0.8, 1.1},
-			size = {
-				{0, 12, 0},
-				{1, 30, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.3, 0.6, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{80, 32, 210},
-				},
-				{
-					0.5,
-					{60, 20, 180},
-				},
-				{
-					1,
-					{38, 10, 120},
-				},
-			},
-			light_emission = 0.5,
-			brightness = 1.2,
-			rotation = {0, 360},
-			zstream = {
-				{0.5, 0.58, 3.5, 10},
-				{0.58, 2.38, 10, 10},
-				{2.38, 2.5, 10, 0},
-			},
-			zdist = {
-				r = {0, 0.8},
-				h = {0.85, 1},
-				area = true,
-			},
-			radial = false,
-			accel = {0, 0, 0},
-			drag = 0,
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
 			name = "TopStars",
 			texture = "fx_spark002",
 			rel = "r",
@@ -4065,20 +4183,21 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{225, 220, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{150, 145, 255},
+					{220, 238, 255},
 				},
 				{
 					1,
-					{110, 80, 255},
+					{140, 190, 255},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.7,
 			rotation = {0, 45},
+			zoffset = 3,
 			zstream = {
 				{0.5, 0.58, 5.6, 16},
 				{0.58, 2.38, 16, 16},
@@ -4097,7 +4216,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -4118,18 +4236,22 @@ local SPEC_CosmicPillar = {
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.3, 0.82, 0},
-				{0.7, 0.85, 0},
+				{0.3, 0.84, 0},
+				{0.7, 0.87, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{85, 45, 240},
+					{40, 80, 210},
+				},
+				{
+					0.5,
+					{25, 50, 160},
 				},
 				{
 					1,
-					{55, 18, 170},
+					{12, 25, 100},
 				},
 			},
 			light_emission = 1,
@@ -4177,19 +4299,20 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{90, 95, 255},
+					{170, 220, 255},
 				},
 				{
 					0.5,
-					{75, 55, 245},
+					{90, 160, 255},
 				},
 				{
 					1,
-					{50, 20, 170},
+					{30, 70, 200},
 				},
 			},
 			light_emission = 0.9,
 			brightness = 1.3,
+			zoffset = 2,
 			ring_emit = {
 				{0.95, 1, 0, 0, 1},
 				{1.45, 1, 0, 0, 1},
@@ -4201,7 +4324,6 @@ local SPEC_CosmicPillar = {
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -4222,74 +4344,75 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{110, 115, 255},
+					{215, 240, 255},
 				},
 				{
 					0.5,
-					{95, 55, 250},
+					{120, 190, 255},
 				},
 				{
 					1,
-					{65, 22, 190},
+					{45, 100, 230},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.2,
+			zoffset = 2,
 			ring_emit = {
-				{0.954, 1, 0.0883, 0.876, 2.942},
-				{0.956, 1, 0.0188, 0.901, 1.415},
-				{0.961, 1, 0.0216, 0.516, 0.947},
-				{0.961, 1, 0.2352, 0.652, 0.46},
-				{0.963, 1, 0.1163, 0.752, 0.926},
-				{0.964, 1, 0.0801, 0.866, 3.869},
-				{0.97, 1, 0.8678, 0.942, 2.947},
-				{0.974, 1, 0.7483, 0.854, 1.449},
-				{0.975, 1, 0.4329, 0.688, 0.083},
-				{0.975, 1, 0.9502, 0.882, 0.312},
-				{0.976, 1, 0.5129, 0.872, 3.36},
-				{0.979, 1, 0.5784, 0.973, 0.838},
-				{0.979, 1, 0.9084, 1, 1.557},
-				{0.98, 1, 0.1503, 0.881, 2.771},
-				{0.98, 1, 0.2665, 0.933, 2.894},
-				{0.98, 1, 0.7035, 0.998, 3.223},
-				{0.982, 1, 0.3816, 0.823, 1.375},
-				{0.985, 1, 0.3537, 0.748, 2.729},
-				{1.451, 1, 0.2864, 0.714, 1.856},
-				{1.452, 1, 0.3593, 0.645, 0.196},
-				{1.452, 1, 0.4479, 0.907, 0.054},
-				{1.456, 1, 0.0881, 0.915, 1.201},
-				{1.462, 1, 0.4692, 0.512, 0.177},
-				{1.462, 1, 0.4916, 0.765, 1.044},
-				{1.468, 1, 0.233, 0.73, 0.805},
-				{1.47, 1, 0.649, 0.885, 0.644},
-				{1.471, 1, 0.1843, 0.934, 1.838},
-				{1.471, 1, 0.8668, 0.798, 1.782},
-				{1.472, 1, 0.0545, 0.651, 1.33},
-				{1.475, 1, 0.9728, 0.96, 1.46},
-				{1.476, 1, 0.4018, 0.861, 2.005},
-				{1.477, 1, 0.0695, 0.755, 1.752},
-				{1.482, 1, 0.9003, 0.629, 1.565},
-				{1.483, 1, 0.0388, 0.871, 3.369},
-				{1.488, 1, 0.4114, 0.551, 2.482},
-				{1.489, 1, 0.6593, 0.974, 0.948},
-				{1.952, 1, 0.2319, 0.973, 2.016},
-				{1.952, 1, 0.3567, 0.549, 3.54},
-				{1.952, 1, 0.725, 0.907, 2.041},
-				{1.956, 1, 0.0191, 0.773, 3.556},
-				{1.957, 1, 0.1301, 0.747, 0.263},
-				{1.959, 1, 0.2754, 0.748, 0.08},
-				{1.962, 1, 0.9046, 0.553, 1.723},
-				{1.969, 1, 0.2726, 0.811, 2.418},
-				{1.975, 1, 0.585, 0.726, 1.88},
-				{1.98, 1, 0.3217, 0.86, 1.322},
-				{1.98, 1, 0.7829, 0.877, 0.716},
-				{1.981, 1, 0.1356, 0.713, 3.462},
-				{1.983, 1, 0.8655, 0.972, 3.536},
-				{1.984, 1, 0.5612, 0.731, 1.231},
-				{1.984, 1, 0.8941, 0.705, 1.29},
-				{1.985, 1, 0.3944, 0.767, 0.548},
-				{1.988, 1, 0.5508, 0.676, 2.384},
-				{1.989, 1, 0.1554, 0.729, 2.89},
+				{0.951, 1, 0.2864, 0.714, 1.856},
+				{0.952, 1, 0.3593, 0.645, 0.196},
+				{0.952, 1, 0.4479, 0.907, 0.054},
+				{0.956, 1, 0.0881, 0.915, 1.201},
+				{0.96, 1, 0.2654, 0.83, 2.153},
+				{0.962, 1, 0.4692, 0.512, 0.177},
+				{0.962, 1, 0.4916, 0.765, 1.044},
+				{0.968, 1, 0.23, 0.676, 0.18},
+				{0.968, 1, 0.233, 0.73, 0.805},
+				{0.971, 1, 0.1843, 0.934, 1.838},
+				{0.972, 1, 0.0545, 0.651, 1.33},
+				{0.975, 1, 0.9728, 0.96, 1.46},
+				{0.981, 1, 0.9967, 0.994, 1.326},
+				{0.982, 1, 0.9003, 0.629, 1.565},
+				{0.983, 1, 0.0388, 0.871, 3.369},
+				{0.984, 1, 0.8941, 0.705, 1.29},
+				{0.988, 1, 0.4114, 0.551, 2.482},
+				{0.989, 1, 0.6593, 0.974, 0.948},
+				{1.452, 1, 0.2319, 0.973, 2.016},
+				{1.452, 1, 0.3567, 0.549, 3.54},
+				{1.452, 1, 0.725, 0.907, 2.041},
+				{1.456, 1, 0.0191, 0.773, 3.556},
+				{1.456, 1, 0.9908, 0.782, 1.266},
+				{1.459, 1, 0.2754, 0.748, 0.08},
+				{1.462, 1, 0.9046, 0.553, 1.723},
+				{1.469, 1, 0.2726, 0.811, 2.418},
+				{1.47, 1, 0.8143, 0.991, 0.162},
+				{1.475, 1, 0.585, 0.726, 1.88},
+				{1.479, 1, 0.3576, 0.74, 2.143},
+				{1.48, 1, 0.3217, 0.86, 1.322},
+				{1.48, 1, 0.7829, 0.877, 0.716},
+				{1.483, 1, 0.8655, 0.972, 3.536},
+				{1.484, 1, 0.5612, 0.731, 1.231},
+				{1.486, 1, 0.6363, 0.94, 2.002},
+				{1.488, 1, 0.5508, 0.676, 2.384},
+				{1.489, 1, 0.1554, 0.729, 2.89},
+				{1.951, 1, 0.1561, 0.56, 0.853},
+				{1.953, 1, 0.7658, 0.752, 2.989},
+				{1.955, 1, 0.0205, 0.684, 2.558},
+				{1.955, 1, 0.2072, 0.545, 2.606},
+				{1.956, 1, 0.8484, 0.926, 2.963},
+				{1.956, 1, 0.9226, 0.93, 1.504},
+				{1.962, 1, 0.1617, 0.966, 1.444},
+				{1.962, 1, 0.7057, 0.601, 2.73},
+				{1.963, 1, 0.2563, 0.903, 1.324},
+				{1.965, 1, 0.5458, 0.611, 1.542},
+				{1.968, 1, 0.0141, 0.707, 3.407},
+				{1.97, 1, 0.3491, 0.829, 2.18},
+				{1.971, 1, 0.1908, 0.651, 2.157},
+				{1.973, 1, 0.2874, 0.995, 0.222},
+				{1.977, 1, 0.8765, 0.759, 3.874},
+				{1.982, 1, 0.3397, 0.657, 3.408},
+				{1.982, 1, 0.6211, 0.895, 2.601},
+				{1.982, 1, 0.644, 0.846, 2.138},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -4301,7 +4424,6 @@ local SPEC_CosmicPillar = {
 			},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -4322,20 +4444,20 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{150, 130, 255},
+					{235, 245, 255},
 				},
 				{
 					0.25,
-					{100, 75, 255},
+					{140, 200, 255},
 				},
 				{
 					1,
-					{70, 24, 200},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.1,
-			zoffset = 2,
+			zoffset = 3,
 			ring_emit = {
 				{0.95, 1, 0, 0, 3},
 				{1.45, 1, 0, 0, 3},
@@ -4367,30 +4489,31 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.4,
 			rotation = {-10, 10},
+			zoffset = 3,
 			ring_emit = {
-				{0.969, 1, 0.4392, 1.009, 0.325},
-				{0.999, 1, 0.9979, 0.97, 0.295},
-				{1.013, 1, 0.3734, 0.984, 0.602},
-				{1.47, 1, 0.2654, 1.009, 0.423},
-				{1.486, 1, 0.23, 0.978, 0.127},
-				{1.512, 1, 0.9967, 1.048, 0.299},
-				{1.962, 1, 0.9908, 0.998, 0.29},
-				{2.009, 1, 0.3576, 0.99, 0.421},
-				{2.022, 1, 0.6363, 1.035, 0.4},
+				{0.964, 1, 0.1301, 0.991, 0.14},
+				{1.013, 1, 0.1356, 0.984, 0.619},
+				{1.02, 1, 0.3944, 0.995, 0.182},
+				{1.454, 1, 0.1166, 1.019, 0.242},
+				{1.472, 1, 0.2116, 0.96, 0.372},
+				{1.485, 1, 0.6521, 0.995, 0.418},
+				{1.964, 1, 0.6239, 0.968, 0.572},
+				{1.985, 1, 0.4959, 0.976, 0.657},
+				{1.987, 1, 0.641, 0.998, 0.137},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -4402,7 +4525,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -4420,20 +4542,21 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.5,
 			rotation = {0, 360},
+			zoffset = 3,
 			zstream = {
 				{0.5, 0.58, 2.1, 6},
 				{0.58, 2.38, 6, 6},
@@ -4455,7 +4578,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -4474,20 +4596,21 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{165, 150, 255},
+					{240, 248, 255},
 				},
 				{
 					0.5,
-					{100, 95, 255},
+					{150, 210, 255},
 				},
 				{
 					1,
-					{95, 40, 230},
+					{60, 120, 235},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.5,
 			rotation = {0, 360},
+			zoffset = 3,
 			zstream = {
 				{0.5, 0.58, 2.1, 6},
 				{0.58, 2.38, 6, 6},
@@ -4509,7 +4632,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -4536,28 +4658,29 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{100, 105, 255},
+					{200, 235, 255},
 				},
 				{
 					0.4,
-					{90, 50, 245},
+					{110, 180, 255},
 				},
 				{
 					1,
-					{60, 18, 190},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.4,
+			brightness = 1.3,
 			rotation = {0, 360},
 			rot_speed = {-320, -220},
+			zoffset = 2,
 			zstream = {
 				{0.5, 0.58, 2.45, 7},
 				{0.58, 2.38, 7, 7},
 				{2.38, 2.5, 7, 0},
 			},
 			zdist = {
-				r = {0.5, 0.95},
+				r = {0.7, 1},
 				h = {0.05, 0.7},
 				area = false,
 			},
@@ -4569,7 +4692,6 @@ local SPEC_CosmicPillar = {
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -4596,28 +4718,29 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{100, 105, 255},
+					{230, 150, 255},
 				},
 				{
-					0.4,
-					{90, 50, 245},
+					0.5,
+					{190, 80, 235},
 				},
 				{
 					1,
-					{60, 18, 190},
+					{110, 40, 190},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.4,
+			brightness = 1.3,
 			rotation = {0, 360},
 			rot_speed = {-320, -220},
+			zoffset = 2,
 			zstream = {
 				{0.5, 0.58, 2.45, 7},
 				{0.58, 2.38, 7, 7},
 				{2.38, 2.5, 7, 0},
 			},
 			zdist = {
-				r = {0.5, 0.95},
+				r = {0.7, 1},
 				h = {0.05, 0.7},
 				area = false,
 			},
@@ -4629,7 +4752,6 @@ local SPEC_CosmicPillar = {
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -4652,68 +4774,69 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{170, 160, 255},
+					{240, 248, 255},
 				},
 				{
 					0.35,
-					{105, 85, 255},
+					{110, 185, 255},
 				},
 				{
 					1,
-					{105, 40, 240},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.4,
+			zoffset = 3,
 			ring_emit = {
-				{2.461, 1, 0.1561, 0.234, 0.064},
+				{2.46, 1, 0.9117, 0.65, 0.24},
 				{2.461, 1, 0.8049, 0.78, 0.223},
-				{2.463, 1, 0.1166, 0.662, 0.071},
-				{2.464, 1, 0.7658, 0.519, 0.224},
+				{2.464, 1, 0.111, 0.604, 0.156},
+				{2.466, 1, 0.9654, 0.22, 0.07},
 				{2.467, 1, 0.395, 0.677, 0.001},
-				{2.468, 1, 0.0205, 0.431, 0.192},
-				{2.468, 1, 0.2072, 0.201, 0.195},
 				{2.469, 1, 0.1791, 0.7, 0.196},
 				{2.469, 1, 0.2935, 0.461, 0.155},
+				{2.469, 1, 0.3726, 0.206, 0.026},
 				{2.469, 1, 0.6245, 0.715, 0.248},
-				{2.469, 1, 0.8484, 0.72, 0.222},
-				{2.469, 1, 0.9226, 0.724, 0.113},
-				{2.471, 1, 0.6239, 0.337, 0.236},
 				{2.472, 1, 0.0317, 0.146, 0.172},
+				{2.472, 1, 0.1302, 0.284, 0.066},
 				{2.475, 1, 0.1712, 0.744, 0.009},
-				{2.477, 1, 0.2116, 0.248, 0.136},
-				{2.478, 1, 0.1617, 0.763, 0.108},
 				{2.478, 1, 0.4566, 0.285, 0.164},
-				{2.479, 1, 0.2563, 0.695, 0.099},
-				{2.479, 1, 0.7057, 0.307, 0.205},
+				{2.478, 1, 0.9682, 0.723, 0.134},
+				{2.479, 1, 0.1687, 0.569, 0.159},
+				{2.481, 1, 0.2723, 0.634, 0.28},
 				{2.481, 1, 0.618, 0.503, 0.085},
-				{2.483, 1, 0.5458, 0.324, 0.116},
+				{2.483, 1, 0.0649, 0.571, 0.096},
+				{2.483, 1, 0.6206, 0.695, 0.134},
 				{2.484, 1, 0.2403, 0.699, 0.274},
-				{2.486, 1, 0.4959, 0.411, 0.279},
-				{2.486, 1, 0.6521, 0.536, 0.159},
-				{2.487, 1, 0.0141, 0.462, 0.256},
+				{2.484, 1, 0.6885, 0.788, 0.274},
+				{2.485, 1, 0.9742, 0.465, 0.188},
 				{2.488, 1, 0.0992, 0.406, 0.203},
-				{2.488, 1, 0.641, 0.552, 0.019},
-				{2.49, 1, 0.8143, 0.791, 0.012},
-				{2.491, 1, 0.1908, 0.384, 0.162},
-				{2.491, 1, 0.3491, 0.611, 0.163},
+				{2.489, 1, 0.7722, 0.374, 0.24},
+				{2.49, 1, 0.2944, 0.672, 0.017},
+				{2.49, 1, 0.4645, 0.305, 0.208},
 				{2.491, 1, 0.4732, 0.692, 0.148},
 				{2.492, 1, 0.8464, 0.675, 0.021},
-				{2.495, 1, 0.2874, 0.794, 0.017},
+				{2.493, 1, 0.5382, 0.796, 0.24},
+				{2.496, 1, 0.4888, 0.676, 0.108},
 				{2.496, 1, 0.5043, 0.325, 0.048},
+				{2.499, 1, 0.8048, 0.772, 0.287},
 				{2.5, 1, 0.2417, 0.465, 0.072},
-				{2.5, 1, 0.8765, 0.528, 0.291},
+				{2.501, 1, 0.9728, 0.588, 0.247},
 				{2.502, 1, 0.0194, 0.592, 0.078},
 				{2.502, 1, 0.1079, 0.273, 0.233},
-				{2.508, 1, 0.3397, 0.394, 0.256},
-				{2.509, 1, 0.6211, 0.686, 0.195},
-				{2.509, 1, 0.644, 0.63, 0.16},
+				{2.502, 1, 0.9042, 0.462, 0.124},
+				{2.505, 1, 0.1597, 0.158, 0.152},
+				{2.506, 1, 0.7197, 0.566, 0.175},
 				{2.509, 1, 0.775, 0.496, 0.053},
 				{2.509, 1, 0.8996, 0.035, 0.224},
 				{2.511, 1, 0.7869, 0.607, 0.238},
+				{2.513, 1, 0.2731, 0.505, 0.108},
 				{2.513, 1, 0.539, 0.562, 0.142},
+				{2.514, 1, 0.4736, 0.554, 0.185},
 				{2.516, 1, 0.5852, 0.127, 0.171},
 				{2.516, 1, 0.7425, 0.192, 0.004},
+				{2.518, 1, 0.1283, 0.351, 0.218},
 				{2.518, 1, 0.2621, 0.551, 0.096},
 				{2.518, 1, 0.4642, 0.548, 0.258},
 			},
@@ -4727,7 +4850,6 @@ local SPEC_CosmicPillar = {
 			},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -4750,20 +4872,20 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{170, 160, 255},
+					{240, 248, 255},
 				},
 				{
 					0.35,
-					{105, 85, 255},
+					{110, 185, 255},
 				},
 				{
 					1,
-					{105, 40, 240},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
-			zoffset = 3,
+			brightness = 1.5,
+			zoffset = 4,
 			ring_emit = {
 				{2.5, 1, 0, 0, 4},
 			},
@@ -4796,15 +4918,15 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{100, 105, 255},
+					{200, 235, 255},
 				},
 				{
 					0.4,
-					{90, 50, 245},
+					{110, 180, 255},
 				},
 				{
 					1,
-					{60, 18, 190},
+					{40, 90, 220},
 				},
 			},
 			light_emission = 0.9,
@@ -4845,66 +4967,67 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{225, 220, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{150, 145, 255},
+					{220, 238, 255},
 				},
 				{
 					1,
-					{110, 80, 255},
+					{140, 190, 255},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.7,
 			rotation = {0, 45},
+			zoffset = 3,
 			ring_emit = {
 				{2.5, 1, 0.3409, 0.253, 0.77},
 				{2.5, 1, 0.6683, 0.895, 0.765},
 				{2.5, 1, 0.8437, 0.807, 0.323},
-				{2.5, 1, 0.9117, 0.731, 0.643},
 				{2.502, 1, 0.0266, 0.377, 0.582},
-				{2.504, 1, 0.111, 0.679, 0.426},
-				{2.505, 1, 0.9654, 0.248, 0.203},
-				{2.508, 1, 0.3726, 0.232, 0.088},
-				{2.51, 1, 0.1302, 0.319, 0.19},
+				{2.506, 1, 0.2491, 0.886, 0.042},
+				{2.509, 1, 0.261, 0.635, 0.08},
+				{2.511, 1, 0.3046, 0.708, 0.289},
 				{2.511, 1, 0.3075, 0.864, 0.731},
+				{2.512, 1, 0.3607, 0.733, 0.706},
 				{2.512, 1, 0.8782, 0.58, 0.17},
-				{2.515, 1, 0.9682, 0.813, 0.368},
-				{2.516, 1, 0.1687, 0.64, 0.432},
+				{2.513, 1, 0.2871, 0.338, 0.624},
+				{2.513, 1, 0.2892, 0.826, 0.158},
+				{2.513, 1, 0.9017, 0.43, 0.786},
+				{2.515, 1, 0.728, 0.55, 0.743},
+				{2.516, 1, 0.748, 0.646, 0.332},
 				{2.517, 1, 0.1805, 0.761, 0.562},
-				{2.518, 1, 0.2723, 0.713, 0.749},
-				{2.519, 1, 0.0649, 0.643, 0.271},
+				{2.518, 1, 0.5783, 0.68, 0.61},
 				{2.52, 1, 0.5516, 0.897, 0.722},
-				{2.52, 1, 0.6206, 0.782, 0.368},
-				{2.52, 1, 0.6885, 0.886, 0.732},
-				{2.521, 1, 0.9742, 0.523, 0.51},
 				{2.522, 1, 0.5468, 0.814, 0.424},
+				{2.524, 1, 0.2106, 0.653, 0.375},
 				{2.524, 1, 0.2173, 0.587, 0.423},
 				{2.524, 1, 0.5719, 0.548, 0.035},
-				{2.524, 1, 0.7722, 0.421, 0.645},
-				{2.525, 1, 0.2944, 0.756, 0.064},
 				{2.525, 1, 0.3004, 0.114, 0.264},
-				{2.525, 1, 0.4645, 0.343, 0.562},
-				{2.527, 1, 0.5382, 0.896, 0.644},
+				{2.525, 1, 0.6739, 0.892, 0.672},
+				{2.525, 1, 0.7721, 0.838, 0.616},
+				{2.525, 1, 0.9837, 0.242, 0.289},
+				{2.526, 1, 0.3653, 0.265, 0.292},
+				{2.526, 1, 0.605, 0.818, 0.553},
+				{2.526, 1, 0.6392, 0.312, 0.366},
 				{2.528, 1, 0.1849, 0.229, 0.066},
+				{2.529, 1, 0.3319, 0.426, 0.19},
 				{2.53, 1, 0.0937, 0.516, 0.564},
-				{2.53, 1, 0.4888, 0.761, 0.3},
+				{2.53, 1, 0.6775, 0.299, 0.3},
 				{2.531, 1, 0.6054, 0.683, 0.224},
-				{2.533, 1, 0.8048, 0.868, 0.767},
-				{2.534, 1, 0.9728, 0.662, 0.663},
-				{2.535, 1, 0.9042, 0.519, 0.342},
-				{2.538, 1, 0.1597, 0.178, 0.414},
-				{2.538, 1, 0.7197, 0.637, 0.475},
+				{2.537, 1, 0.5099, 0.527, 0.634},
 				{2.538, 1, 0.7658, 0.609, 0.791},
+				{2.539, 1, 0.1682, 0.612, 0.047},
 				{2.542, 1, 0.6901, 0.886, 0.03},
 				{2.542, 1, 0.7637, 0.775, 0.272},
+				{2.543, 1, 0.4176, 0.682, 0.219},
 				{2.543, 1, 0.455, 0.848, 0.695},
-				{2.544, 1, 0.2731, 0.568, 0.302},
 				{2.545, 1, 0.3963, 0.763, 0.746},
-				{2.545, 1, 0.4736, 0.624, 0.5},
-				{2.548, 1, 0.1283, 0.395, 0.588},
+				{2.546, 1, 0.0726, 0.83, 0.336},
+				{2.547, 1, 0.4163, 0.401, 0.12},
+				{2.548, 1, 0.1423, 0.56, 0.749},
 				{2.548, 1, 0.525, 0.728, 0.79},
 			},
 			accel = {0, 0, 0},
@@ -4913,7 +5036,6 @@ local SPEC_CosmicPillar = {
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
@@ -4941,160 +5063,52 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{225, 220, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{150, 145, 255},
+					{220, 238, 255},
 				},
 				{
 					1,
-					{110, 80, 255},
+					{140, 190, 255},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.7,
 			rotation = {0, 30},
+			zoffset = 3,
 			ring_emit = {
-				{2.506, 1, 0.2491, 0.886, 0.042},
-				{2.509, 1, 0.261, 0.635, 0.08},
-				{2.511, 1, 0.3046, 0.708, 0.289},
-				{2.512, 1, 0.3607, 0.733, 0.706},
-				{2.513, 1, 0.2871, 0.338, 0.624},
-				{2.513, 1, 0.2892, 0.826, 0.158},
-				{2.513, 1, 0.9017, 0.43, 0.786},
-				{2.515, 1, 0.728, 0.55, 0.743},
-				{2.516, 1, 0.748, 0.646, 0.332},
-				{2.518, 1, 0.5783, 0.68, 0.61},
-				{2.524, 1, 0.2106, 0.653, 0.375},
-				{2.525, 1, 0.6739, 0.892, 0.672},
-				{2.525, 1, 0.7721, 0.838, 0.616},
-				{2.525, 1, 0.9837, 0.242, 0.289},
-				{2.526, 1, 0.3653, 0.265, 0.292},
-				{2.526, 1, 0.605, 0.818, 0.553},
-				{2.529, 1, 0.3319, 0.426, 0.19},
-				{2.53, 1, 0.6775, 0.299, 0.3},
-				{2.537, 1, 0.5099, 0.527, 0.634},
-				{2.539, 1, 0.1682, 0.612, 0.047},
-				{2.543, 1, 0.4176, 0.682, 0.219},
-				{2.546, 1, 0.0726, 0.83, 0.336},
-				{2.547, 1, 0.4163, 0.401, 0.12},
-				{2.548, 1, 0.1423, 0.56, 0.749},
+				{2.501, 1, 0.0758, 0.386, 0.305},
+				{2.503, 1, 0.834, 0.64, 0.472},
+				{2.504, 1, 0.8551, 0.743, 0.021},
+				{2.506, 1, 0.504, 0.844, 0.454},
+				{2.509, 1, 0.1523, 0.604, 0.492},
+				{2.509, 1, 0.3793, 0.685, 0.103},
+				{2.512, 1, 0.7026, 0.548, 0.444},
+				{2.514, 1, 0.5272, 0.482, 0.535},
+				{2.517, 1, 0.1383, 0.499, 0.774},
+				{2.518, 1, 0.6089, 0.818, 0.786},
+				{2.52, 1, 0.4789, 0.522, 0.42},
+				{2.52, 1, 0.6648, 0.602, 0.207},
+				{2.523, 1, 0.4096, 0.463, 0.181},
+				{2.526, 1, 0.1612, 0.327, 0.483},
+				{2.531, 1, 0.5199, 0.673, 0.222},
+				{2.531, 1, 0.9813, 0.657, 0.519},
+				{2.534, 1, 0.1683, 0.189, 0.757},
+				{2.534, 1, 0.4129, 0.443, 0.124},
+				{2.539, 1, 0.2516, 0.225, 0.43},
+				{2.541, 1, 0.3035, 0.119, 0.783},
+				{2.541, 1, 0.5864, 0.368, 0.03},
+				{2.544, 1, 0.0461, 0.384, 0.742},
+				{2.544, 1, 0.3408, 0.896, 0.302},
+				{2.548, 1, 0.1548, 0.698, 0.158},
 			},
 			accel = {0, 0, 0},
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
 			},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "CollapseVoid",
-			texture = "fx_fog3001",
-			rel = "r",
-			hu = "H",
-			direction = "Top",
-			spread = {40, 40},
-			speed = {2, 6},
-			drag = 1,
-			lifetime = {0.8, 1.1},
-			size = {
-				{0, 14, 0},
-				{1, 26, 0},
-			},
-			transparency = {
-				{0, 0.65, 0},
-				{0.5, 0.75, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{32, 10, 72},
-				},
-				{
-					0.5,
-					{16, 5, 38},
-				},
-				{
-					1,
-					{10, 4, 24},
-				},
-			},
-			light_emission = 0,
-			rotation = {0, 360},
-			zoffset = -4,
-			ring_emit = {
-				{2.481, 1, 0.0758, 0.314, 0.251},
-				{2.484, 1, 0.834, 0.503, 0.369},
-				{2.504, 1, 0.1383, 0.397, 0.581},
-				{2.516, 1, 0.6392, 0.26, 0.294},
-				{2.528, 1, 0.1683, 0.177, 0.57},
-				{2.535, 1, 0.2516, 0.2, 0.339},
-				{2.537, 1, 0.5864, 0.3, 0.057},
-				{2.547, 1, 0.1548, 0.546, 0.147},
-			},
-			accel = {0, 0, 0},
-			brightness = 1,
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "CollapseNebula",
-			texture = "fx_fog2001",
-			rel = "r",
-			hu = "H",
-			direction = "Top",
-			spread = {40, 40},
-			speed = {2, 6},
-			drag = 1,
-			lifetime = {0.8, 1.1},
-			size = {
-				{0, 14, 0},
-				{1, 26, 0},
-			},
-			transparency = {
-				{0, 0.6, 0},
-				{0.5, 0.7, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{80, 32, 210},
-				},
-				{
-					0.5,
-					{60, 20, 180},
-				},
-				{
-					1,
-					{38, 10, 120},
-				},
-			},
-			light_emission = 0.45,
-			brightness = 1.3,
-			rotation = {0, 360},
-			zoffset = -2,
-			ring_emit = {
-				{2.486, 1, 0.8551, 0.581, 0.051},
-				{2.488, 1, 0.504, 0.658, 0.356},
-				{2.493, 1, 0.1523, 0.476, 0.383},
-				{2.499, 1, 0.5272, 0.384, 0.413},
-				{2.509, 1, 0.4789, 0.414, 0.332},
-				{2.523, 1, 0.5199, 0.528, 0.193},
-				{2.524, 1, 0.9813, 0.515, 0.402},
-				{2.537, 1, 0.3035, 0.136, 0.588},
-			},
-			accel = {0, 0, 0},
 			rot_speed = {0, 0},
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
@@ -5121,11 +5135,11 @@ local SPEC_CosmicPillar = {
 			color = {
 				{
 					0,
-					{22, 10, 44},
+					{8, 12, 36},
 				},
 				{
 					1,
-					{34, 16, 60},
+					{14, 20, 50},
 				},
 			},
 			light_emission = 0,
@@ -5147,14 +5161,7 @@ local SPEC_CosmicPillar = {
 			emit = {},
 		},
 	},
-	shakes = {
-		{0, 0.3, 0.5},
-		{0.5, 1.6, 0.8},
-		{0.95, 0.4, 0.45},
-		{1.45, 0.4, 0.45},
-		{1.95, 0.4, 0.45},
-		{2.5, 0.7, 0.5},
-	},
+	shake_ramp = {0, 2.5, 0.12, 1.3, 1.4},
 	zone = {
 		radius = 18,
 		height = 120,
@@ -5165,7 +5172,7 @@ local SPEC_CosmicPillar = {
 		{
 			t = 0,
 			h = 4,
-			color = {110, 70, 255},
+			color = {60, 110, 255},
 			brightness = 3,
 			range = 40,
 			rise = 0.5,
@@ -5175,7 +5182,7 @@ local SPEC_CosmicPillar = {
 		{
 			t = 0.5,
 			h = 6,
-			color = {110, 100, 255},
+			color = {120, 190, 255},
 			brightness = 9,
 			range = 60,
 			rise = 0.03,
@@ -5186,7 +5193,7 @@ local SPEC_CosmicPillar = {
 			t = 0.5,
 			h = 0.3,
 			hu = "H",
-			color = {120, 50, 255},
+			color = {50, 100, 255},
 			brightness = 5,
 			range = 60,
 			rise = 0.1,
@@ -5196,7 +5203,7 @@ local SPEC_CosmicPillar = {
 		{
 			t = 2.5,
 			h = 4,
-			color = {110, 90, 255},
+			color = {120, 190, 255},
 			brightness = 5,
 			range = 50,
 			rise = 0.02,
@@ -5206,7 +5213,7 @@ local SPEC_CosmicPillar = {
 		{
 			t = 0.95,
 			h = 4,
-			color = {100, 90, 255},
+			color = {90, 160, 255},
 			brightness = 3,
 			range = 45,
 			rise = 0.02,
@@ -5216,7 +5223,7 @@ local SPEC_CosmicPillar = {
 		{
 			t = 1.45,
 			h = 4,
-			color = {100, 90, 255},
+			color = {90, 160, 255},
 			brightness = 3,
 			range = 45,
 			rise = 0.02,
@@ -5226,7 +5233,7 @@ local SPEC_CosmicPillar = {
 		{
 			t = 1.95,
 			h = 4,
-			color = {100, 90, 255},
+			color = {90, 160, 255},
 			brightness = 3,
 			range = 45,
 			rise = 0.02,
@@ -5238,7 +5245,7 @@ local SPEC_CosmicPillar = {
 		gravity = 160,
 		bounce = 0.32,
 		friction = 0.55,
-		spin = {200, 720},
+		spin = {240, 820},
 		rest = {0.5, 1.3},
 		fade = 0.35,
 		settle = 0.12,
@@ -5247,46 +5254,47 @@ local SPEC_CosmicPillar = {
 		color_var = {0.72, 1.08},
 		dark = 0.15,
 		neon_colors = {
-			{100, 45, 255},
-			{60, 70, 255},
-			{120, 50, 250},
+			{110, 185, 255},
+			{50, 110, 255},
+			{170, 220, 255},
+			{190, 80, 235},
 		},
 		groups = {
 			{
 				name = "Lift",
 				mode = "lift",
-				count = 16,
+				count = 26,
 				t = {0.02, 0.2},
-				r = {0.15, 0.85},
-				size = {0.6, 2.4},
+				r = {0.12, 0.9},
+				size = {0.25, 1.1},
 				skew = 1.8,
-				lift = {1, 4.5},
+				lift = {0.8, 4},
 				release = {0.5, 0.53},
-				out = {18, 45},
-				up = {45, 85},
+				out = {18, 48},
+				up = {45, 90},
 				dissolve = 0.3,
 			},
 			{
 				name = "Blast",
 				mode = "blast",
-				count = 64,
-				t = {0.5, 0.55},
-				r = {0.3, 1.05},
-				size = {0.35, 3.2},
-				skew = 2.6,
-				out = {20, 60},
-				up = {28, 75},
+				count = 150,
+				t = {0.5, 0.56},
+				r = {0.25, 1.05},
+				size = {0.12, 1.3},
+				skew = 2.8,
+				out = {18, 62},
+				up = {26, 80},
 				dissolve = 0.35,
-				neon = 0.12,
+				neon = 0.1,
 			},
 			{
 				name = "Vortex",
 				mode = "vortex",
-				count = 26,
+				count = 44,
 				t = {0.6, 2.25},
-				r = {0.25, 0.85},
-				size = {0.4, 1.8},
-				skew = 2,
+				r = {0.95, 1.25},
+				size = {0.15, 0.8},
+				skew = 2.2,
 				rise = {0.14, 0.26},
 				orbit = {2.4, 3.8},
 				top = {0.4, 0.85},
@@ -5302,27 +5310,27 @@ local SPEC_CosmicPillar = {
 			lifetime = {0.25, 0.4},
 			size = {
 				{0, 0, 0},
-				{0.2, 2.4, 0},
+				{0.2, 1.8, 0},
 				{1, 0, 0},
 			},
 			color = {
 				{
 					0,
-					{225, 220, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{150, 145, 255},
+					{220, 238, 255},
 				},
 				{
 					1,
-					{110, 80, 255},
+					{140, 190, 255},
 				},
 			},
 			light_emission = 1,
 			brightness = 1.7,
 			rotation = {0, 45},
-			emit_n = 3,
+			emit_n = 2,
 			accel = {0, 0, 0},
 			drag = 0,
 			transparency = {

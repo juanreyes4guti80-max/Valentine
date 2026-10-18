@@ -1,8 +1,6 @@
 fx_beam.png
 fx_beam_wavy.png
 fx_electric_ball.png
-fx_fog2001.png
-fx_fog3001.png
 fx_glow.png
 fx_halo.png
 fx_laser_thin.png
@@ -32,3 +30,4 @@ kk_twirl_02.png
 kz_scorch.png
 om_cracks.png
 om_cubes_2x2.png
+om_slab.png

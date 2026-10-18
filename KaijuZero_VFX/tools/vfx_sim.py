@@ -314,6 +314,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         events += zev
     events.sort(key=lambda e: e[0])
     clears = sorted(((L["clear_at"], L) for L in spec["layers"] if L.get("clear_at") is not None), key=lambda c: c[0])
+    fades = [L for L in spec["layers"] if L.get("fade_at")]
     ei = 0
     dt = 1.0 / FPS
     stats = []
@@ -344,6 +345,14 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         # emisión continua dentro de la zona (puntos al azar o ranuras que giran con el pilar)
         for z in zst:
             parts += zone_stream_step(z, t, dt, rng, zone, o0)
+        # capas que se desvanecen (fade_at) y al terminar se borran
+        fade = {}
+        for L in fades:
+            f0, fd = L["fade_at"]
+            if t >= f0:
+                fade[id(L)] = max(0.0, 1 - (t - f0) / fd)
+        if any(v <= 0 for v in fade.values()):
+            parts = [p for p in parts if fade.get(id(p.L), 1.0) > 0]
         # capas que se borran de golpe (Emitter:Clear())
         if clears and clears[0][0] <= t + 1e-9:
             gone = set()
@@ -409,13 +418,14 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             if kind == 1:
                 cubes.draw_cube(buf, cam, obj, t)
                 continue
+            am = fade.get(id(obj.L), 1.0)
             if obj.spin:
                 pos0 = obj.pos
                 obj.pos = wp
-                draw_particle(buf, tb, cam, obj, d, scale, ground_y)
+                draw_particle(buf, tb, cam, obj, d, scale, ground_y, am)
                 obj.pos = pos0
             else:
-                draw_particle(buf, tb, cam, obj, d, scale, ground_y)
+                draw_particle(buf, tb, cam, obj, d, scale, ground_y, am)
         for m in (meteors if draw else []):
             if m.dead:
                 continue
@@ -461,13 +471,15 @@ def decal_glow(L):
     return round(1.0 + 1.5 * L.get("light_emission", 0.0), 3)
 
 
-def draw_particle(buf, tb, cam, p, d, scale, ground_y):
+def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0):
     L = p.L
     tl = min(p.age / p.life, 1.0)
     size = max(eval_seq(L["size"], tl, p.r_size) * p.ks, 0.0)
     if size <= 0.01:
         return
     tr = eval_seq(L.get("transparency", [(0, 0), (1, 0)]), tl, p.r_tr)
+    if amul < 1.0:                     # la capa se está desvaneciendo (fade_at)
+        tr = 1 - (1 - tr) * amul
     if tr >= 0.999:
         return
     col = eval_color(L.get("color", [(0, (255, 255, 255)), (1, (255, 255, 255))]), tl)

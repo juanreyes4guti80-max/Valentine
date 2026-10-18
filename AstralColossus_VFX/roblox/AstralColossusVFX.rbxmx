@@ -618,6 +618,34 @@ function AstralColossusVFX.Shake(intensity: number, duration: number?)
 	end)
 end
 
+-- Sacudida continua que crece de i0 a i1 durante `duration` y se detiene al final (solo cliente).
+-- power > 1 hace que crezca más hacia el final.
+function AstralColossusVFX.ShakeRamp(i0: number, i1: number, duration: number, power: number?)
+	if not RunService:IsClient() then
+		return
+	end
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local t0 = time()
+	local pw = power or 1
+	local name = "KZShakeRamp" .. tostring(rng:NextInteger(1, 1000000000))
+	local seed = rng:NextNumber(0, 1000)
+	RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
+		local t = time() - t0
+		if t > duration then
+			RunService:UnbindFromRenderStep(name)
+			return
+		end
+		local a = i0 + (i1 - i0) * (t / duration) ^ pw
+		local rx = math.noise(seed, t * 24) * a * 0.03
+		local ry = math.noise(seed + 17, t * 24) * a * 0.03
+		local rz = math.noise(seed + 31, t * 16) * a * 0.015
+		cam.CFrame = cam.CFrame * CFrame.Angles(rx, ry, rz)
+	end)
+end
+
 -- luces, sacudida y limpieza (comunes a todos los efectos)
 local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, lights: { { pos: Vector3, t: number } })
 	if AstralColossusVFX.UseLight and spec.light then
@@ -642,12 +670,17 @@ local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, 
 		end
 	end
 	if shake and shake > 0 then
+		if spec.shake_ramp then
+			-- {t0, t1, intensidad inicial, intensidad final, curva}: tiembla sin parar y cada vez más
+			local r = spec.shake_ramp
+			task.delay(r[1], AstralColossusVFX.ShakeRamp, shake * r[3], shake * r[4], r[2] - r[1], r[5])
+		end
 		if spec.shakes then
 			-- {t, intensidad relativa, duración}
 			for _, sk in spec.shakes do
 				task.delay(sk[1], AstralColossusVFX.Shake, shake * sk[2], sk[3])
 			end
-		else
+		elseif not spec.shake_ramp then
 			AstralColossusVFX.Shake(shake, 0.9)
 		end
 	end
@@ -966,6 +999,34 @@ local function clearAt(e: ParticleEmitter, t: number)
 		if e.Parent then
 			e:Clear()
 		end
+	end)
+end
+
+-- desvanece las partículas que quedan (cambiar la curva del emisor afecta también a las ya emitidas)
+local function fadeOut(e: ParticleEmitter, t0: number, dur: number)
+	task.delay(t0, function()
+		if not e.Parent then
+			return
+		end
+		local base = e.Transparency.Keypoints
+		local start = time()
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function()
+			if not e.Parent then
+				conn:Disconnect()
+				return
+			end
+			local u = math.clamp((time() - start) / dur, 0, 1)
+			local kps = table.create(#base)
+			for i, k in base do
+				kps[i] = NumberSequenceKeypoint.new(k.Time, k.Value + (1 - k.Value) * u)
+			end
+			e.Transparency = NumberSequence.new(kps)
+			if u >= 1 then
+				conn:Disconnect()
+				e:Clear()
+			end
+		end)
 	end)
 end
 
@@ -1294,6 +1355,9 @@ local function _playZone(spec: Layer, cf: CFrame, scale: number?, radius: number
 				if L.clear_at then
 					clearAt(e, L.clear_at)
 				end
+				if L.fade_at then
+					fadeOut(e, L.fade_at[1], L.fade_at[2])
+				end
 			end
 		else
 			local e, a = zoneEmitter(L, Z, holder)
@@ -1312,6 +1376,9 @@ local function _playZone(spec: Layer, cf: CFrame, scale: number?, radius: number
 			end
 			if L.clear_at then
 				clearAt(e, L.clear_at)
+			end
+			if L.fade_at then
+				fadeOut(e, L.fade_at[1], L.fade_at[2])
 			end
 		end
 	end
