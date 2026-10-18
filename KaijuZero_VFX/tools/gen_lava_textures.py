@@ -1,8 +1,7 @@
 """Texturas propias de LAVA para la H1 de Kaiju Zero (escala de grises + alfa: Roblox las tiñe con Color,
 así la versión Ignition sale carmesí sola). Los patrones de magma salen de las muestras CC0 de Effekseer.
   kz_lava_glob_2x2  gotas de magma (4 formas): núcleo caliente, borde y manchas de costra más oscuros
-  kz_lava_drop      gota alargada en vuelo (cabeza redonda, cola corta) para los chorros de magma
-  kz_lava_rock_2x2  trozos de roca de lava (4 formas): costra oscura con grietas encendidas
+  kz_lava_drop      gota alargada (cabeza brillante, cola que se apaga) para los chorros de magma
   kz_lava_pool      charco de lava fundida con placas de costra y borde irregular (Decal)
   kz_lava_cracks    grietas volcánicas anchas que salen del centro (Decal)
   kz_lava_splat     salpicadura de lava con gotitas alrededor (Decal)
@@ -44,96 +43,37 @@ def blob_mask(rng, n, r0=0.36, amp=0.09, lobes=7):
 
 
 def glob_2x2(dst, cell=256, seed=7):
-    """Gotas de magma (4 formas): masa fundida irregular, algo estirada, con vetas calientes y placas de costra
-    por dentro y el borde más oscuro. Nada de brillo especular: no debe parecer una bola sombreada."""
     out_g = np.zeros((cell * 2, cell * 2))
     out_a = np.zeros((cell * 2, cell * 2))
     for k in range(4):
         rng = np.random.default_rng(seed + 13 * k)
-        r, rad = blob_mask(rng, cell, r0=0.32 + 0.02 * k, amp=0.045, lobes=5)
-        ys = (1.0, 0.85, 0.92, 0.78)[k]                 # algunas más estiradas
-        yy, xx = np.mgrid[0:cell, 0:cell]
-        x = (xx + 0.5) / cell - 0.5
-        y = ((yy + 0.5) / cell - 0.5) / ys
-        r = np.hypot(x, y)
-        alpha = np.clip((rad - r) / 0.012, 0, 1)
+        # gota casi redonda (líquida), algo estirada, con borde suave
+        r, rad = blob_mask(rng, cell, r0=0.3 + 0.03 * k, amp=0.045, lobes=4)
+        alpha = np.clip((rad - r) / 0.04, 0, 1)
         t = np.clip(r / rad, 0, 1)                         # 0 centro .. 1 borde
-        veins = fbm(rng, cell, octaves=4, base=4.0)
-        crust = fbm(rng, cell, octaves=3, base=6.0)
-        g = 0.5 + 0.3 * (1 - t ** 2) + 0.2 * np.clip((veins - 0.35) / 0.4, 0, 1)   # núcleo y vetas calientes
-        g *= 1 - 0.55 * np.clip((crust - 0.6) / 0.14, 0, 1) * np.clip((t - 0.25) * 2, 0, 1)   # placas de costra
-        g *= 1 - 0.55 * np.clip((t - 0.7) / 0.3, 0, 1) ** 1.5                 # borde que se enfría
+        crust = fbm(rng, cell, octaves=3, base=5.0)
+        g = 1.0 - 0.5 * t ** 2.2                           # núcleo caliente, borde más oscuro
+        g *= 1 - 0.3 * np.clip((crust - 0.62) / 0.15, 0, 1) * np.clip((t - 0.4) * 2, 0, 1)   # algo de costra al borde
+        yy, xx = np.mgrid[0:cell, 0:cell]
+        hl = np.exp(-(((xx / cell - 0.42) ** 2 + (yy / cell - 0.38) ** 2) / 0.004))      # brillo líquido
+        g = np.clip(g + 0.25 * hl, 0, 1)
         r0, c0 = (k // 2) * cell, (k % 2) * cell
-        out_g[r0:r0 + cell, c0:c0 + cell] = np.clip(g, 0, 1)
+        out_g[r0:r0 + cell, c0:c0 + cell] = g
         out_a[r0:r0 + cell, c0:c0 + cell] = alpha
     save(out_g, out_a, dst)
 
 
 def drop(dst, n=256):
-    """Gota de magma en vuelo (la textura apunta hacia arriba): cabeza redonda y gruesa arriba, cuerpo que se
-    afina hacia una cola corta y redondeada, borde algo ondulado. Núcleo caliente, bordes más oscuros."""
-    rng = np.random.default_rng(5)
+    """Gota vertical: cabeza redonda abajo-arriba (la textura apunta hacia arriba) y cola que se afina."""
     yy, xx = np.mgrid[0:n, 0:n]
     x = (xx + 0.5) / n - 0.5
     y = (yy + 0.5) / n                                   # 0 arriba .. 1 abajo
-    head_y, head_r, tail_y, tail_r = 0.28, 0.15, 0.8, 0.06
-    # unión de círculos a lo largo del eje: el radio pasa de la cabeza a la cola (las dos puntas redondas)
-    w = np.zeros((n, n))
-    for c in np.linspace(0, 1, 48):
-        cy = head_y + (tail_y - head_y) * c
-        rr = head_r + (tail_r - head_r) * c ** 0.8
-        rr *= 1 + 0.06 * np.sin(c * 11 + 0.7) * c
-        w = np.maximum(w, rr - np.hypot(x, y - cy))
-    alpha = np.clip(w / 0.018, 0, 1)
-    u = np.clip((y - head_y) / (tail_y - head_y), 0, 1)
-    g = 1.0 - 0.55 * u - 0.35 * np.clip(1 - w / 0.06, 0, 1)
-    g = np.clip(g + 0.1 * (fbm(rng, n, octaves=3, base=6.0) - 0.5), 0.15, 1)
+    head_y = 0.3
+    w = np.where(y < head_y, 0.12 * np.sqrt(np.clip(1 - ((head_y - y) / head_y) ** 2, 0, 1)),
+                 0.12 * np.clip(1 - (y - head_y) / (1 - head_y - 0.05), 0, 1) ** 0.8)
+    alpha = np.clip((w - np.abs(x)) / 0.02, 0, 1)
+    g = np.clip(1.0 - 0.6 * np.clip((y - head_y) / 0.6, 0, 1) - 0.25 * np.abs(x) / 0.12, 0.2, 1)
     save(g, alpha, dst)
-
-
-def rock_2x2(dst, cell=256, seed=17):
-    """Trozos de ROCA DE LAVA (4 formas): silueta angulosa, costra oscura y grietas encendidas entre placas.
-    Con LightEmission bajo y Brightness > 1 la costra queda oscura y solo brillan las grietas."""
-    out_g = np.zeros((cell * 2, cell * 2))
-    out_a = np.zeros((cell * 2, cell * 2))
-    yy, xx = np.mgrid[0:cell, 0:cell].astype(np.float32)
-    for k in range(4):
-        rng = np.random.default_rng(seed + 31 * k)
-        S = cell * 4
-        nv = int(rng.integers(6, 9))
-        angs = (np.arange(nv) + rng.uniform(-0.3, 0.3, nv)) * 2 * np.pi / nv + rng.uniform(0, 6.28)
-        rads = rng.uniform(0.34, 0.46, nv) * S
-        img = Image.new("L", (S, S), 0)
-        V = [(S / 2 + np.cos(a) * r, S / 2 + np.sin(a) * r) for a, r in zip(angs, rads)]
-        pts = []
-        for i in range(nv):                              # lados rectos que se quiebran con muescas
-            (x0, y0), (x1, y1) = V[i], V[(i + 1) % nv]
-            nx, ny = y1 - y0, -(x1 - x0)                 # normal del lado (hacia afuera o adentro: da igual)
-            for j in range(4):
-                f = j / 4
-                jit = rng.uniform(-0.06, 0.04) if j else 0.0
-                pts.append((x0 + (x1 - x0) * f + nx * jit, y0 + (y1 - y0) * f + ny * jit))
-        ImageDraw.Draw(img).polygon(pts, fill=255)
-        alpha = np.asarray(img.resize((cell, cell), Image.LANCZOS), np.float32) / 255
-        # grietas = bordes de celdas de Voronoi con las coordenadas deformadas (líneas quebradas)
-        wx = xx + 34 * (fbm(rng, cell, octaves=4, base=4.0) - 0.5)
-        wy = yy + 34 * (fbm(rng, cell, octaves=4, base=4.0) - 0.5)
-        seeds = rng.uniform(0.1, 0.9, (7 + k, 2)) * cell
-        d = np.sqrt((wx[..., None] - seeds[:, 0]) ** 2 + (wy[..., None] - seeds[:, 1]) ** 2)
-        d.sort(axis=-1)
-        width = (7.0, 6.0, 4.5, 3.6)[k]                  # las dos primeras más calientes (grietas anchas)
-        crack = np.clip(1 - (d[..., 1] - d[..., 0]) / width, 0, 1) ** 1.4
-        glow = gaussian_filter(crack, 4)
-        cf = fbm(rng, cell, octaves=4, base=6.0)
-        crust = 0.07 + 0.13 * cf + 0.25 * np.clip((cf - 0.84) / 0.14, 0, 1)   # costra con zonas aún calientes
-        crack *= 0.6 + 0.4 * fbm(rng, cell, octaves=3, base=5.0)                # grietas que se abren y se cierran
-        g = np.clip(crust + 0.95 * crack + 0.55 * glow, 0, 1)
-        # canto inferior algo más caliente (la roca sale del magma) y un poco de relieve arriba
-        g = np.clip(g + 0.12 * np.clip((yy / cell - 0.55) * 2.5, 0, 1) * glow, 0, 1)
-        r0, c0 = (k // 2) * cell, (k % 2) * cell
-        out_g[r0:r0 + cell, c0:c0 + cell] = g
-        out_a[r0:r0 + cell, c0:c0 + cell] = alpha
-    save(out_g, out_a, dst)
 
 
 def pool(dst, eff, n=512, seed=21):
@@ -235,11 +175,10 @@ def main(eff, out):
     os.makedirs(out, exist_ok=True)
     glob_2x2(os.path.join(out, "kz_lava_glob_2x2.png"))
     drop(os.path.join(out, "kz_lava_drop.png"))
-    rock_2x2(os.path.join(out, "kz_lava_rock_2x2.png"))
     pool(os.path.join(out, "kz_lava_pool.png"), eff)
     cracks(os.path.join(out, "kz_lava_cracks.png"))
     splat(os.path.join(out, "kz_lava_splat.png"))
-    print("OK kz_lava_glob_2x2, kz_lava_drop, kz_lava_rock_2x2, kz_lava_pool, kz_lava_cracks, kz_lava_splat")
+    print("OK kz_lava_glob_2x2, kz_lava_drop, kz_lava_pool, kz_lava_cracks, kz_lava_splat")
 
 
 if __name__ == "__main__":

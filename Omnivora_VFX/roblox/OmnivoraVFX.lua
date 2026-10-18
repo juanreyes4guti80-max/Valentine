@@ -397,6 +397,7 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		for _, TL in L.trails do
 			local te = configureEmitter(TL, s)
 			te.Rate = TL.rate * OmnivoraVFX.Quality
+			te.LockedToPart = TL.locked == true -- p.ej. el resplandor de la roca fundida va pegado a ella
 			te.Enabled = true
 			te.Parent = att
 			table.insert(emitters, te)

@@ -162,7 +162,7 @@ def textures_of(layers):
     return out
 
 
-DOC_KAIJU = """	KaijuFireVFX — VFX de fuego para KAIJU ZERO
+DOC_KAIJU = """	KaijuFireVFX — VFX de fuego y lava para KAIJU ZERO
 	(generado automáticamente desde vfx_specs.py; edita allí y regenera)
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
@@ -543,6 +543,7 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		for _, TL in L.trails do
 			local te = configureEmitter(TL, s)
 			te.Rate = TL.rate * KaijuFireVFX.Quality
+			te.LockedToPart = TL.locked == true -- p.ej. el resplandor de la roca fundida va pegado a ella
 			te.Enabled = true
 			te.Parent = att
 			table.insert(emitters, te)

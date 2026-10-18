@@ -904,10 +904,12 @@ def crimson(c, neutral=False):
     return (round(r * (0.6 + 0.4 * r / 255)), round(g2), round(b2))
 
 
-def ignitionize(spec, name, size_k=1.5, k=1.5, doc=""):
+def ignitionize(spec, name, size_k=1.5, k=1.5, doc="", le_k=1.0, decal_le_k=1.0):
     """Versión Ignition de una explosión: colores carmesí, tamaño ×size_k (vía escala interna) e
     intensidad ×k: más partículas en cada ráfaga, emisión continua más densa, más rocas, luz y
-    sacudida más fuertes. Los tiempos no cambian."""
+    sacudida más fuertes. Los tiempos no cambian.
+    le_k: multiplica el LightEmission de las partículas semi-aditivas (0 < LE < 1): el rojo de la lava
+    no se lava a rosa sobre un cielo claro. decal_le_k: lo mismo en los Decals (su brillo en el suelo)."""
     out = _copy.deepcopy(spec)
     out["name"] = name
     out["doc"] = doc or out.get("doc", "")
@@ -915,6 +917,11 @@ def ignitionize(spec, name, size_k=1.5, k=1.5, doc=""):
 
     def fix(L):
         nm = L["name"]
+        le = L.get("light_emission", 0.0)
+        if L.get("decal") and le > 0:
+            L["light_emission"] = round(le * decal_le_k, 3)
+        elif 0 < le < 1:
+            L["light_emission"] = round(le * le_k, 3)
         if nm in _TRAILS:
             L["color"] = _TRAILS[nm]
         elif "color" in L:
@@ -956,7 +963,7 @@ import vfx_lava as _VL
 GIANT_CLASSIC = dict(GIANT, name="GiantExplosionClassic",
                      doc="La explosión gigante anterior (fuego, estilo detonación), por si quieres volver a ella. " + GIANT["doc"])
 GIANT_IGNITION = ignitionize(
-    _VL.LAVA_EXPLOSION, "GiantExplosionIgnition",
+    _VL.LAVA_EXPLOSION, "GiantExplosionIgnition", le_k=0.4, decal_le_k=0.6,
     doc="H1 IGNITION: la explosión de lava en carmesí, 1.5 veces más grande y más intensa (más magma, "
         "más rocas fundidas, luz y sacudida más fuertes); la lava carmesí queda viva en el suelo 5 s.")
 

@@ -1,6 +1,6 @@
 --!nonstrict
 --[[
-	KaijuFireVFX — VFX de fuego para KAIJU ZERO
+	KaijuFireVFX — VFX de fuego y lava para KAIJU ZERO
 	(generado automáticamente desde vfx_specs.py; edita allí y regenera)
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
@@ -65,7 +65,6 @@ KaijuFireVFX.TEXTURES = {
 	kz_lava_drop = "rbxassetid://0",
 	kz_lava_glob_2x2 = "rbxassetid://0",
 	kz_lava_pool = "rbxassetid://0",
-	kz_lava_rock_2x2 = "rbxassetid://0",
 	kz_lava_splat = "rbxassetid://0",
 	kz_scorch = "rbxassetid://0",
 }
@@ -401,6 +400,7 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		for _, TL in L.trails do
 			local te = configureEmitter(TL, s)
 			te.Rate = TL.rate * KaijuFireVFX.Quality
+			te.LockedToPart = TL.locked == true -- p.ej. el resplandor de la roca fundida va pegado a ella
 			te.Enabled = true
 			te.Parent = att
 			table.insert(emitters, te)
@@ -1433,36 +1433,122 @@ local SPEC_GiantExplosion = {
 	cleanup = 7.2,
 	layers = {
 		{
-			name = "VentGlow",
+			name = "FlashGlow",
 			texture = "fx_glow",
 			emit = {
 				{0, 1},
 			},
-			offset = {0, 2, 0},
-			lifetime = {0.6, 0.6},
+			offset = {0, 6, 0},
+			lifetime = {0.3, 0.3},
 			size = {
-				{0, 8, 0},
-				{0.25, 30, 0},
-				{1, 34, 0},
+				{0, 16, 0},
+				{0.25, 50, 0},
+				{1, 56, 0},
 			},
 			transparency = {
-				{0, 0.35, 0},
-				{0.5, 0.6, 0},
+				{0, 0.25, 0},
+				{0.5, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 130, 45},
+					{255, 170, 70},
+				},
+				{
+					0.4,
+					{255, 120, 40},
 				},
 				{
 					1,
-					{200, 55, 18},
+					{210, 60, 18},
 				},
 			},
-			light_emission = 0.5,
+			light_emission = 1,
 			brightness = 0.9,
-			zoffset = -2,
+			zoffset = 10,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "FlashBurst",
+			texture = "fx_burst_fan",
+			emit = {
+				{0, 2},
+			},
+			offset = {0, 5, 0},
+			lifetime = {0.12, 0.15},
+			size = {
+				{0, 14, 0},
+				{0.4, 38, 0},
+				{1, 42, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.5, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 170, 80},
+				},
+				{
+					1,
+					{230, 80, 25},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			rotation = {0, 360},
+			zoffset = 11,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "Glow",
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 10, 0},
+			lifetime = {1.4, 1.4},
+			size = {
+				{0, 30, 0},
+				{0.1, 80, 0},
+				{1, 90, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.4, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 140, 55},
+				},
+				{
+					1,
+					{200, 60, 20},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 0.9,
+			zoffset = -12,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -1525,7 +1611,7 @@ local SPEC_GiantExplosion = {
 			lifetime = {5.4, 5.4},
 			size = {
 				{0, 20, 0},
-				{0.04, 92, 0},
+				{0.05, 92, 0},
 				{1, 98, 0},
 			},
 			transparency = {
@@ -1536,22 +1622,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
 					0.1,
-					{255, 112, 36},
+					{255, 150, 50},
 				},
 				{
 					0.6,
-					{225, 70, 22},
+					{230, 80, 25},
 				},
 				{
 					1,
 					{130, 34, 12},
 				},
 			},
-			light_emission = 0.8,
+			light_emission = 1,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -1569,13 +1655,13 @@ local SPEC_GiantExplosion = {
 			name = "LavaPool",
 			texture = "kz_lava_pool",
 			emit = {
-				{0.03, 1},
+				{0.02, 1},
 			},
 			offset = {0, 0.2, 0},
 			lifetime = {5.5, 5.5},
 			size = {
 				{0, 10, 0},
-				{0.05, 52, 0},
+				{0.03, 52, 0},
 				{1, 56, 0},
 			},
 			transparency = {
@@ -1586,26 +1672,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 1,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -1620,45 +1706,87 @@ local SPEC_GiantExplosion = {
 			line_u = 0,
 		},
 		{
-			name = "AshSurge",
-			texture = "kk_smoke_07",
+			name = "HeatRing",
+			texture = "kk_circle_03",
 			emit = {
-				{0.04, 20},
+				{0, 1},
 			},
-			offset = {0, 2.5, 0},
-			direction = "Front",
-			spread = {180, 3},
-			speed = {35, 60},
-			drag = 2.2,
-			accel = {0, 5, 0},
-			lifetime = {1.3, 1.8},
+			offset = {0, 0.3, 0},
+			lifetime = {0.45, 0.45},
 			size = {
-				{0, 8, 2},
-				{0.3, 16, 3},
-				{1, 24, 4},
+				{0, 20, 0},
+				{0.3, 70, 0},
+				{1, 120, 0},
 			},
 			transparency = {
-				{0, 0.5, 0},
-				{0.2, 0.32, 0},
-				{0.6, 0.5, 0},
+				{0, 0.55, 0},
+				{0.4, 0.78, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{120, 92, 78},
-				},
-				{
-					0.5,
-					{100, 86, 78},
+					{255, 150, 60},
 				},
 				{
 					1,
-					{92, 86, 82},
+					{220, 70, 25},
+				},
+			},
+			light_emission = 0.4,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "DustWave",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.02, 32},
+			},
+			offset = {0, 2.5, 0},
+			direction = "Front",
+			spread = {180, 3},
+			speed = {95, 150},
+			drag = 3.6,
+			accel = {0, 6, 0},
+			lifetime = {1.1, 1.5},
+			size = {
+				{0, 9, 2},
+				{0.3, 22, 4},
+				{1, 30, 5},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.15, 0.25, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{128, 100, 84},
+				},
+				{
+					0.5,
+					{106, 92, 84},
+				},
+				{
+					1,
+					{96, 90, 86},
 				},
 			},
 			rotation = {0, 360},
-			rot_speed = {-30, 30},
+			rot_speed = {-40, 40},
 			zoffset = -3,
 			light_emission = 0,
 			brightness = 1,
@@ -1666,68 +1794,118 @@ local SPEC_GiantExplosion = {
 			line_u = 0,
 		},
 		{
-			name = "MagmaDome",
-			texture = "kz_lava_glob_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
+			name = "MagmaCore",
+			texture = "kk_fire_02",
 			emit = {
-				{0, 4},
-				{0.08, 3},
+				{0, 3},
+				{0.06, 2},
 			},
-			offset = {0, 1.5, 0},
-			shape = {
-				type = "Box",
-				size = {5, 0.5, 5},
-				style = "Volume",
-			},
+			offset = {0, 6, 0},
+			speed = {0, 5},
 			direction = "Top",
-			spread = {25, 25},
-			speed = {8, 18},
-			drag = 1.5,
-			accel = {0, -20, 0},
-			lifetime = {0.45, 0.6},
+			spread = {180, 180},
+			lifetime = {0.4, 0.5},
 			size = {
-				{0, 6, 1.5},
-				{0.4, 14, 2},
-				{1, 11, 2},
+				{0, 10, 3},
+				{0.3, 24, 4},
+				{1, 26, 4},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 200, 110},
 				},
 				{
-					0.25,
-					{250, 118, 36},
-				},
-				{
-					0.6,
-					{215, 70, 20},
+					0.3,
+					{255, 140, 45},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{225, 70, 20},
 				},
 			},
-			transparency = {
-				{0, 0, 0},
-				{0.7, 0.1, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.2,
 			rotation = {0, 360},
-			rot_speed = {-40, 40},
-			zoffset = 2,
+			rot_speed = {-80, 80},
+			zoffset = 3,
+			accel = {0, 0, 0},
+			drag = 0,
 			orientation = "FacingCamera",
 			line_u = 0,
 		},
 		{
-			name = "LavaGeyser",
+			name = "MagmaBurst",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0, 6},
+				{0.05, 4},
+			},
+			offset = {0, 6, 0},
+			shape = {
+				type = "Sphere",
+				radius = 6,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {18, 36},
+			drag = 3,
+			accel = {0, 8, 0},
+			lifetime = {0.5, 0.75},
+			size = {
+				{0, 8, 2},
+				{0.3, 18, 3},
+				{1, 20, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 140},
+				},
+				{
+					0.15,
+					{255, 170, 60},
+				},
+				{
+					0.4,
+					{250, 120, 30},
+				},
+				{
+					0.75,
+					{225, 70, 15},
+				},
+				{
+					1,
+					{190, 50, 12},
+				},
+			},
+			light_emission = 0.25,
+			brightness = 1.35,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "LavaFountain",
 			texture = "kz_lava_glob_2x2",
 			flipbook = {
 				layout = "Grid2x2",
@@ -1736,36 +1914,39 @@ local SPEC_GiantExplosion = {
 				startRandom = true,
 			},
 			emit = {
-				{0, 30},
+				{0, 44},
+				{0.05, 32},
+				{0.12, 20},
+				{0.2, 12},
 			},
-			offset = {0, 2, 0},
+			offset = {0, 4, 0},
 			direction = "Top",
-			spread = {9, 9},
-			speed = {60, 140},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.2, 2},
+			spread = {18, 18},
+			speed = {90, 150},
+			drag = 0.5,
+			accel = {0, -140, 0},
+			lifetime = {1, 1.4},
 			size = {
-				{0, 2, 0.7},
-				{0.2, 3.8, 1.14},
-				{1, 2.8, 0.84},
+				{0, 3, 1.05},
+				{0.2, 6, 1.8},
+				{1, 4, 1.2},
 			},
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
 			transparency = {
@@ -1773,133 +1954,10 @@ local SPEC_GiantExplosion = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.15,
-			brightness = 1.5,
+			light_emission = 0.55,
+			brightness = 1.45,
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
-			stream = {
-				{0, 0.4, 200, 140},
-				{0.4, 1.3, 140, 10},
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "LavaJet",
-			texture = "kz_lava_drop",
-			orientation = "VelocityParallel",
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {4, 0.5, 4},
-				style = "Volume",
-			},
-			direction = "Top",
-			spread = {3, 3},
-			speed = {115, 150},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {0.3, 0.45},
-			size = {
-				{0, 5, 1},
-				{0.3, 9, 1.5},
-				{1, 7, 1},
-			},
-			color = {
-				{
-					0,
-					{255, 150, 50},
-				},
-				{
-					0.5,
-					{255, 120, 36},
-				},
-				{
-					1,
-					{230, 80, 22},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.6, 0.1, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.3,
-			brightness = 1.8,
-			stream = {
-				{0, 0.35, 70, 55},
-				{0.35, 1.2, 55, 0},
-			},
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "LavaBlobs",
-			texture = "kz_lava_glob_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			emit = {
-				{0.02, 8},
-				{0.1, 6},
-				{0.2, 4},
-			},
-			offset = {0, 2, 0},
-			direction = "Top",
-			spread = {28, 28},
-			speed = {70, 110},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.3, 1.7},
-			size = {
-				{0, 5, 1.75},
-				{0.2, 8, 2.4},
-				{1, 6.5, 1.95},
-			},
-			color = {
-				{
-					0,
-					{255, 150, 52},
-				},
-				{
-					0.25,
-					{250, 118, 36},
-				},
-				{
-					0.6,
-					{215, 70, 20},
-				},
-				{
-					1,
-					{125, 32, 12},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.75, 0.05, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.9,
-			rotation = {0, 360},
-			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
 			zoffset = 0,
 			orientation = "FacingCamera",
 			line_u = 0,
@@ -1914,296 +1972,92 @@ local SPEC_GiantExplosion = {
 				startRandom = true,
 			},
 			emit = {
-				{0, 36},
-				{0.05, 16},
+				{0, 60},
+				{0.04, 28},
 			},
-			offset = {0, 1.5, 0},
+			offset = {0, 2, 0},
 			direction = "Top",
-			spread = {72, 72},
-			speed = {32, 68},
+			spread = {75, 75},
+			speed = {40, 85},
 			drag = 0.5,
 			accel = {0, -150, 0},
-			lifetime = {0.6, 0.9},
+			lifetime = {0.7, 1},
 			size = {
-				{0, 1.6, 0.56},
-				{0.2, 3, 0.9},
-				{1, 2.2, 0.66},
+				{0, 2, 0.7},
+				{0.2, 3.6, 1.08},
+				{1, 2.6, 0.78},
 			},
 			color = {
 				{
 					0,
-					{255, 150, 52},
-				},
-				{
-					0.25,
-					{250, 118, 36},
-				},
-				{
-					0.6,
-					{215, 70, 20},
-				},
-				{
-					1,
-					{125, 32, 12},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.75, 0.05, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.5,
-			rotation = {0, 360},
-			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "CrackBursts",
-			texture = "kz_lava_glob_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			emit = {},
-			offset = {0, 0, 0},
-			direction = "Top",
-			spread = {22, 22},
-			speed = {30, 65},
-			drag = 0.5,
-			accel = {0, -140, 0},
-			lifetime = {0.6, 0.9},
-			size = {
-				{0, 1.6, 0.56},
-				{0.2, 3.2, 0.96},
-				{1, 2.4, 0.72},
-			},
-			color = {
-				{
-					0,
-					{255, 150, 52},
-				},
-				{
-					0.25,
-					{250, 118, 36},
-				},
-				{
-					0.6,
-					{215, 70, 20},
-				},
-				{
-					1,
-					{125, 32, 12},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.75, 0.05, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.5,
-			rotation = {0, 360},
-			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {3, 0.5, 3},
-				style = "Volume",
-			},
-			points = {
-				{0.033, 7, 4.8, 0.6, -11.42},
-				{0.037, 7, -10.84, 0.6, -7.33},
-				{0.04, 7, 11.8, 0.6, -6.65},
-				{0.082, 7, -15.56, 0.6, 12.39},
-				{0.109, 7, 18.76, 0.6, 15.14},
-				{0.117, 7, 2.92, 0.6, 25.14},
-				{0.125, 7, 26.55, 0.6, -0.46},
-				{0.13, 7, 13.57, 0.6, 23.66},
-				{0.135, 7, 1.58, 0.6, -27.96},
-				{0.165, 7, -17.63, 0.6, 27.44},
-				{0.168, 7, -32.68, 0.6, 4.94},
-				{0.194, 7, -12.61, 0.6, -34.88},
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "CrackJets",
-			texture = "kz_lava_drop",
-			orientation = "VelocityParallel",
-			points = {
-				{0.033, 4, 4.8, 0.6, -11.42},
-				{0.037, 4, -10.84, 0.6, -7.33},
-				{0.04, 4, 11.8, 0.6, -6.65},
-				{0.082, 4, -15.56, 0.6, 12.39},
-				{0.109, 4, 18.76, 0.6, 15.14},
-				{0.117, 4, 2.92, 0.6, 25.14},
-				{0.125, 4, 26.55, 0.6, -0.46},
-				{0.13, 4, 13.57, 0.6, 23.66},
-				{0.135, 4, 1.58, 0.6, -27.96},
-				{0.165, 4, -17.63, 0.6, 27.44},
-				{0.168, 4, -32.68, 0.6, 4.94},
-				{0.194, 4, -12.61, 0.6, -34.88},
-			},
-			direction = "Top",
-			spread = {10, 10},
-			speed = {50, 80},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {0.3, 0.45},
-			size = {
-				{0, 2.5, 0.5},
-				{0.3, 4.5, 0.8},
-				{1, 3.5, 0.6},
-			},
-			color = {
-				{
-					0,
-					{255, 150, 52},
-				},
-				{
-					0.25,
-					{250, 118, 36},
-				},
-				{
-					0.6,
-					{215, 70, 20},
-				},
-				{
-					1,
-					{125, 32, 12},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.6, 0.1, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.2,
-			brightness = 1.6,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "CrackPuffs",
-			texture = "kk_smoke_04",
-			points = {
-				{0.033, 2, 4.8, 0.6, -11.42},
-				{0.037, 2, -10.84, 0.6, -7.33},
-				{0.04, 2, 11.8, 0.6, -6.65},
-				{0.082, 2, -15.56, 0.6, 12.39},
-				{0.109, 2, 18.76, 0.6, 15.14},
-				{0.117, 2, 2.92, 0.6, 25.14},
-				{0.125, 2, 26.55, 0.6, -0.46},
-				{0.13, 2, 13.57, 0.6, 23.66},
-				{0.135, 2, 1.58, 0.6, -27.96},
-				{0.165, 2, -17.63, 0.6, 27.44},
-				{0.168, 2, -32.68, 0.6, 4.94},
-				{0.194, 2, -12.61, 0.6, -34.88},
-			},
-			direction = "Top",
-			spread = {20, 20},
-			speed = {8, 16},
-			drag = 1.2,
-			accel = {0, 6, 0},
-			lifetime = {1, 1.4},
-			size = {
-				{0, 4, 1},
-				{1, 14, 3},
-			},
-			transparency = {
-				{0, 0.5, 0},
-				{0.3, 0.45, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 120, 45},
-				},
-				{
-					0.07,
-					{130, 72, 48},
+					{255, 214, 120},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{88, 80, 76},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{185, 44, 12},
 				},
 			},
+			transparency = {
+				{0, 0, 0},
+				{0.75, 0.05, 0},
+				{1, 1, 0},
+			},
+			light_emission = 0.55,
+			brightness = 1.45,
 			rotation = {0, 360},
-			rot_speed = {-30, 30},
-			zoffset = -4,
-			light_emission = 0,
-			brightness = 1,
+			rot_speed = {-220, 220},
+			zoffset = 0,
 			orientation = "FacingCamera",
-			offset = {0, 0, 0},
 			line_u = 0,
-			emit = {},
 		},
 		{
 			name = "LavaDrops",
 			texture = "kz_lava_drop",
 			orientation = "VelocityParallel",
 			emit = {
-				{0, 36},
-				{0.06, 18},
-				{0.15, 10},
+				{0, 60},
+				{0.06, 30},
 			},
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
+			offset = {0, 4, 0},
 			direction = "Top",
-			spread = {45, 45},
-			speed = {70, 120},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {0.8, 1.3},
+			spread = {70, 70},
+			speed = {80, 140},
+			drag = 0.5,
+			accel = {0, -150, 0},
+			lifetime = {0.5, 0.8},
 			size = {
-				{0, 1.5, 0.4},
-				{0.3, 3, 0.6},
-				{1, 2.2, 0.5},
+				{0, 2.5, 0.6},
+				{0.3, 4.5, 1},
+				{1, 3, 0.6},
 			},
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 220, 140},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.15,
+					{255, 170, 60},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.4,
+					{250, 120, 30},
+				},
+				{
+					0.75,
+					{225, 70, 15},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{190, 50, 12},
 				},
 			},
 			transparency = {
@@ -2211,16 +2065,16 @@ local SPEC_GiantExplosion = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.2,
-			brightness = 2,
+			light_emission = 0.6,
+			brightness = 1.5,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
 			line_u = 0,
 		},
 		{
-			name = "LavaRocks",
-			texture = "kz_lava_rock_2x2",
+			name = "LavaChunks",
+			texture = "kz_debris_2x2",
 			flipbook = {
 				layout = "Grid2x2",
 				mode = "Loop",
@@ -2228,218 +2082,209 @@ local SPEC_GiantExplosion = {
 				startRandom = true,
 			},
 			emit = {
-				{0, 26},
+				{0, 36},
 				{0.05, 14},
-				{0.12, 6},
 			},
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
+			offset = {0, 4, 0},
 			direction = "Top",
-			spread = {55, 55},
+			spread = {65, 65},
 			speed = {60, 120},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.1, 1.7},
+			drag = 0.4,
+			accel = {0, -140, 0},
+			lifetime = {0.8, 1.3},
 			size = {
-				{0, 2.4, 1.2},
-				{1, 2.2, 1.1},
+				{0, 1.6, 0.6},
+				{1, 1.4, 0.5},
 			},
 			color = {
 				{
 					0,
-					{255, 150, 60},
+					{150, 70, 40},
 				},
 				{
-					0.4,
-					{245, 108, 34},
+					0.3,
+					{92, 44, 30},
 				},
 				{
 					1,
-					{185, 54, 18},
+					{60, 34, 26},
 				},
 			},
 			light_emission = 0.1,
-			brightness = 1.6,
 			rotation = {0, 360},
-			rot_speed = {-300, 300},
+			rot_speed = {-400, 400},
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
 			},
+			brightness = 1,
 			zoffset = 0,
 			orientation = "FacingCamera",
 			line_u = 0,
 		},
 		{
-			name = "LavaRocksBig",
-			texture = "kz_lava_rock_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
+			name = "MagmaJets",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
 			emit = {
-				{0.02, 6},
-				{0.1, 4},
+				{0.01, 12},
+				{0.07, 6},
 			},
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
+			offset = {0, 6, 0},
 			direction = "Top",
-			spread = {35, 35},
-			speed = {60, 95},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.2, 1.6},
+			spread = {100, 100},
+			speed = {60, 100},
+			drag = 6,
+			accel = {0, -10, 0},
+			lifetime = {0.4, 0.6},
 			size = {
-				{0, 5, 1.5},
-				{1, 4.6, 1.4},
+				{0, 8, 2},
+				{0.3, 22, 4},
+				{1, 18, 3},
 			},
-			color = {
-				{
-					0,
-					{255, 150, 60},
-				},
-				{
-					0.4,
-					{245, 108, 34},
-				},
-				{
-					1,
-					{185, 54, 18},
-				},
-			},
-			light_emission = 0.1,
-			brightness = 1.6,
-			rotation = {0, 360},
-			rot_speed = {-160, 160},
 			transparency = {
 				{0, 0, 0},
-				{1, 0, 0},
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "AshColumn",
-			texture = "kk_smoke_07",
-			offset = {0, 7, 0},
-			shape = {
-				type = "Box",
-				size = {10, 6, 10},
-				style = "Volume",
-			},
-			direction = "Top",
-			spread = {12, 12},
-			speed = {18, 30},
-			drag = 0.8,
-			accel = {0, 6, 0},
-			lifetime = {1.6, 2.2},
-			size = {
-				{0, 12, 3},
-				{0.5, 30, 5},
-				{1, 42, 6},
-			},
-			transparency = {
-				{0, 0.55, 0},
-				{0.12, 0.32, 0},
-				{0.6, 0.45, 0},
+				{0.6, 0.15, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 236, 150},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.3,
+					{255, 166, 50},
 				},
 				{
-					0.2,
-					{74, 60, 55},
-				},
-				{
-					0.6,
-					{88, 80, 76},
+					0.7,
+					{240, 90, 20},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{160, 40, 12},
 				},
 			},
-			rotation = {0, 360},
-			rot_speed = {-20, 20},
-			zoffset = -12,
-			stream = {
-				{0.15, 0.6, 10, 12},
-				{0.6, 2.4, 12, 2},
-			},
-			light_emission = 0,
-			brightness = 1,
-			orientation = "FacingCamera",
+			light_emission = 0.3,
+			brightness = 1.6,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
 			line_u = 0,
-			emit = {},
 		},
 		{
 			name = "AshPlume",
-			texture = "kk_smoke_08",
+			texture = "kk_smoke_07",
 			emit = {
-				{0.35, 4},
-				{0.6, 4},
+				{0.15, 6},
+				{0.3, 6},
+				{0.5, 5},
+				{0.75, 4},
 			},
-			offset = {0, 32, 0},
+			offset = {0, 22, 0},
 			shape = {
-				type = "Sphere",
-				radius = 10,
+				type = "Box",
+				size = {14, 26, 14},
 				style = "Volume",
 			},
 			direction = "Top",
-			spread = {50, 50},
-			speed = {10, 18},
+			spread = {35, 35},
+			speed = {12, 24},
 			drag = 1.2,
-			accel = {0, 8, 0},
-			lifetime = {1.9, 2.4},
+			accel = {0, 9, 0},
+			lifetime = {2, 2.6},
 			size = {
-				{0, 22, 4},
+				{0, 20, 4},
 				{0.4, 40, 6},
-				{1, 52, 6},
+				{1, 54, 6},
 			},
 			transparency = {
-				{0, 0.6, 0},
-				{0.15, 0.38, 0},
+				{0, 0.55, 0},
+				{0.12, 0.36, 0},
 				{0.6, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -12,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "AshPlume2",
+			texture = "kk_smoke_08",
+			emit = {
+				{0.2, 5},
+				{0.45, 4},
+				{0.7, 3},
+			},
+			offset = {0, 34, 0},
+			shape = {
+				type = "Sphere",
+				radius = 12,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {10, 20},
+			drag = 1.2,
+			accel = {0, 8, 0},
+			lifetime = {1.9, 2.4},
+			size = {
+				{0, 22, 4},
+				{0.4, 42, 6},
+				{1, 56, 6},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.12, 0.34, 0},
+				{0.6, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 130, 50},
+				},
+				{
+					0.06,
+					{130, 74, 50},
+				},
+				{
+					0.2,
+					{78, 64, 58},
+				},
+				{
+					0.6,
+					{92, 84, 80},
+				},
+				{
+					1,
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -2457,10 +2302,10 @@ local SPEC_GiantExplosion = {
 				{0.1, 6},
 				{0.3, 5},
 			},
-			offset = {0, 6, 0},
+			offset = {0, 8, 0},
 			shape = {
 				type = "Box",
-				size = {16, 8, 16},
+				size = {16, 10, 16},
 				style = "Volume",
 			},
 			direction = "Top",
@@ -2483,23 +2328,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -2514,10 +2359,9 @@ local SPEC_GiantExplosion = {
 			name = "MoltenRocks",
 			type = "meteor",
 			emit = {
-				{0.02, 12},
-				{0.1, 8},
+				{0.02, 16},
 			},
-			offset = {0, 3, 0},
+			offset = {0, 4, 0},
 			direction = "Top",
 			spread = {58, 58},
 			speed = {70, 118},
@@ -2525,6 +2369,45 @@ local SPEC_GiantExplosion = {
 			drag = 0.2,
 			lifetime = {1.4, 1.8},
 			trails = {
+				{
+					name = "RockGlow",
+					rate = 60,
+					locked = true,
+					texture = "fx_glow",
+					speed = {0, 0},
+					direction = "Top",
+					lifetime = {0.075, 0.075},
+					size = {
+						{0, 6.5, 0.8},
+						{1, 6.5, 0.8},
+					},
+					color = {
+						{
+							0,
+							{255, 80, 10},
+						},
+						{
+							1,
+							{255, 80, 10},
+						},
+					},
+					transparency = {
+						{0, 0.92, 0},
+						{1, 0.92, 0},
+					},
+					light_emission = 1,
+					brightness = 1,
+					spread = {0, 0},
+					accel = {0, 0, 0},
+					drag = 0,
+					rotation = {0, 0},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
 				{
 					name = "RockDrip",
 					rate = 26,
@@ -2547,22 +2430,22 @@ local SPEC_GiantExplosion = {
 					color = {
 						{
 							0,
-							{255, 150, 52},
+							{255, 214, 120},
 						},
 						{
-							0.25,
-							{250, 118, 36},
+							0.2,
+							{255, 150, 40},
 						},
 						{
-							0.6,
-							{215, 70, 20},
+							0.55,
+							{240, 90, 18},
 						},
 						{
 							1,
-							{125, 32, 12},
+							{185, 44, 12},
 						},
 					},
-					light_emission = 0.15,
+					light_emission = 0.4,
 					brightness = 1.5,
 					rotation = {0, 360},
 					drag = 0,
@@ -2579,7 +2462,7 @@ local SPEC_GiantExplosion = {
 				},
 				{
 					name = "RockEmbers",
-					rate = 30,
+					rate = 34,
 					texture = "kk_flare_01",
 					speed = {0, 3},
 					direction = "Top",
@@ -2587,25 +2470,25 @@ local SPEC_GiantExplosion = {
 					lifetime = {0.25, 0.45},
 					size = {
 						{0, 0, 0},
-						{0.15, 2.2, 0.6},
+						{0.15, 2.4, 0.6},
 						{1, 0, 0},
 					},
 					color = {
 						{
 							0,
-							{255, 170, 80},
+							{255, 225, 130},
 						},
 						{
 							0.5,
-							{255, 120, 36},
+							{255, 140, 40},
 						},
 						{
 							1,
-							{220, 58, 15},
+							{220, 60, 15},
 						},
 					},
 					light_emission = 1,
-					brightness = 1.5,
+					brightness = 1.7,
 					accel = {0, 0, 0},
 					drag = 0,
 					transparency = {
@@ -2642,23 +2525,23 @@ local SPEC_GiantExplosion = {
 					color = {
 						{
 							0,
-							{255, 120, 45},
+							{255, 130, 50},
 						},
 						{
-							0.07,
-							{130, 72, 48},
+							0.06,
+							{130, 74, 50},
 						},
 						{
 							0.2,
-							{74, 60, 55},
+							{78, 64, 58},
 						},
 						{
 							0.6,
-							{88, 80, 76},
+							{92, 84, 80},
 						},
 						{
 							1,
-							{108, 102, 98},
+							{112, 106, 102},
 						},
 					},
 					rotation = {0, 360},
@@ -2693,22 +2576,22 @@ local SPEC_GiantExplosion = {
 					color = {
 						{
 							0,
-							{255, 130, 45},
+							{255, 190, 80},
 						},
 						{
 							0.3,
-							{240, 98, 30},
+							{245, 120, 35},
 						},
 						{
 							0.75,
-							{165, 44, 16},
+							{170, 48, 16},
 						},
 						{
 							1,
 							{80, 26, 14},
 						},
 					},
-					light_emission = 0.7,
+					light_emission = 1,
 					rotation = {0, 360},
 					decal = true,
 					orientation = "VelocityPerpendicular",
@@ -2749,22 +2632,22 @@ local SPEC_GiantExplosion = {
 					color = {
 						{
 							0,
-							{255, 150, 52},
+							{255, 214, 120},
 						},
 						{
-							0.25,
-							{250, 118, 36},
+							0.2,
+							{255, 150, 40},
 						},
 						{
-							0.6,
-							{215, 70, 20},
+							0.55,
+							{240, 90, 18},
 						},
 						{
 							1,
-							{125, 32, 12},
+							{185, 44, 12},
 						},
 					},
-					light_emission = 0.15,
+					light_emission = 0.4,
 					brightness = 1.5,
 					rotation = {0, 360},
 					transparency = {
@@ -2788,34 +2671,34 @@ local SPEC_GiantExplosion = {
 					lifetime = {0.3, 0.5},
 					size = {
 						{0, 1.2, 0.4},
-						{0.3, 3.5, 0.8},
-						{1, 2.2, 0.6},
+						{0.3, 4, 0.8},
+						{1, 2.5, 0.6},
 					},
 					transparency = {
-						{0, 0.05, 0},
-						{0.6, 0.2, 0},
+						{0, 0, 0},
+						{0.6, 0.15, 0},
 						{1, 1, 0},
 					},
 					color = {
 						{
 							0,
-							{255, 190, 90},
+							{255, 236, 150},
 						},
 						{
 							0.3,
-							{255, 140, 45},
+							{255, 166, 50},
 						},
 						{
 							0.7,
-							{235, 85, 22},
+							{240, 90, 20},
 						},
 						{
 							1,
 							{160, 40, 12},
 						},
 					},
-					light_emission = 0.3,
-					brightness = 1.4,
+					light_emission = 0.4,
+					brightness = 1.5,
 					stream = {
 						{0, 2.5, 8, 0},
 					},
@@ -2848,23 +2731,23 @@ local SPEC_GiantExplosion = {
 					color = {
 						{
 							0,
-							{255, 120, 45},
+							{255, 130, 50},
 						},
 						{
-							0.07,
-							{130, 72, 48},
+							0.06,
+							{130, 74, 50},
 						},
 						{
 							0.2,
-							{74, 60, 55},
+							{78, 64, 58},
 						},
 						{
 							0.6,
-							{88, 80, 76},
+							{92, 84, 80},
 						},
 						{
 							1,
-							{108, 102, 98},
+							{112, 106, 102},
 						},
 					},
 					rotation = {0, 360},
@@ -2885,29 +2768,27 @@ local SPEC_GiantExplosion = {
 				size = {2.8, 4.4},
 				spin = {-480, 480},
 				material = "CrackedLava",
-				color = {255, 150, 60},
+				color = {150, 62, 32},
 			},
 		},
 		{
 			name = "RainSplats",
 			texture = "kz_lava_splat",
 			points = {
-				{0.602, 1, -9.65, 0.24, -8.77},
-				{0.696, 1, -18.75, 0.24, -25.46},
-				{0.718, 1, 15.67, 0.24, 24.56},
-				{0.724, 1, -8.99, 0.24, 10.71},
-				{0.783, 1, 10.38, 0.24, -10.86},
-				{0.784, 1, -9.22, 0.24, -4.62},
-				{0.846, 1, 30.75, 0.24, -3.41},
-				{0.854, 1, 30.76, 0.24, -6.56},
-				{1.062, 1, -15.62, 0.24, 3.07},
-				{1.113, 1, 15.81, 0.24, 6.86},
-				{1.176, 1, 22.27, 0.24, -5.5},
-				{1.187, 1, 9.13, 0.24, 31.28},
-				{1.251, 1, -5.89, 0.24, 31.44},
-				{1.276, 1, -19.92, 0.24, -19.4},
-				{1.384, 1, 25.96, 0.24, -9.82},
-				{1.402, 1, 20.82, 0.24, 3.84},
+				{0.751, 1, -12.98, 0.24, -11.81},
+				{0.818, 1, -23.26, 0.24, -31.58},
+				{0.833, 1, 19.54, 0.24, 30.62},
+				{0.879, 1, 13.73, 0.24, -14.36},
+				{0.88, 1, -12.84, 0.24, -6.44},
+				{0.924, 1, 38.19, 0.24, -4.24},
+				{0.929, 1, 38.17, 0.24, -8.14},
+				{1.076, 1, -20.51, 0.24, 4.04},
+				{1.157, 1, 28.25, 0.24, -6.97},
+				{1.164, 1, 11.31, 0.24, 38.73},
+				{1.209, 1, -7.3, 0.24, 38.98},
+				{1.227, 1, -24.91, 0.24, -24.26},
+				{1.303, 1, 32.47, 0.24, -12.28},
+				{1.316, 1, 26.59, 0.24, 4.9},
 			},
 			lifetime = {3.4, 3.4},
 			size = {
@@ -2923,22 +2804,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 130, 45},
+					{255, 190, 80},
 				},
 				{
 					0.3,
-					{240, 98, 30},
+					{245, 120, 35},
 				},
 				{
 					0.75,
-					{165, 44, 16},
+					{170, 48, 16},
 				},
 				{
 					1,
 					{80, 26, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 1,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -2958,45 +2839,44 @@ local SPEC_GiantExplosion = {
 			name = "Embers",
 			texture = "kk_flare_01",
 			emit = {
-				{0.1, 24},
-				{0.4, 18},
+				{0.05, 40},
+				{0.3, 30},
+				{0.6, 22},
+				{1, 14},
 			},
-			offset = {0, 8, 0},
+			offset = {0, 10, 0},
 			shape = {
 				type = "Sphere",
-				radius = 12,
+				radius = 14,
 				style = "Volume",
 			},
 			direction = "Top",
-			spread = {60, 60},
-			speed = {10, 30},
+			spread = {120, 120},
+			speed = {10, 35},
 			drag = 1.5,
 			accel = {0, 14, 0},
 			lifetime = {0.9, 1.5},
 			size = {
 				{0, 0, 0},
-				{0.1, 2.2, 0.7},
+				{0.1, 2.6, 0.8},
 				{1, 0, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.2,
-			stream = {
-				{0.2, 2, 30, 6},
-			},
+			brightness = 1.7,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -3005,6 +2885,50 @@ local SPEC_GiantExplosion = {
 			rot_speed = {0, 0},
 			zoffset = 0,
 			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "Sparks",
+			texture = "fx_line",
+			orientation = "VelocityParallel",
+			offset = {0, 6, 0},
+			emit = {
+				{0, 22},
+				{0.06, 10},
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {110, 200},
+			drag = 4,
+			accel = {0, -60, 0},
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 16, 4},
+				{1, 5, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 130},
+				},
+				{
+					0.5,
+					{255, 160, 50},
+				},
+				{
+					1,
+					{240, 90, 20},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
 			line_u = 0,
 		},
 		{
@@ -3028,26 +2952,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -3090,22 +3014,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -3149,15 +3073,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -3199,15 +3123,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -3248,23 +3172,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -3312,19 +3236,19 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
 			transparency = {
@@ -3332,8 +3256,8 @@ local SPEC_GiantExplosion = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.15,
-			brightness = 1.5,
+			light_emission = 0.55,
+			brightness = 1.45,
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
 			shape = {
@@ -3366,26 +3290,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -3428,22 +3352,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -3487,15 +3411,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -3537,15 +3461,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -3586,23 +3510,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -3638,26 +3562,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -3700,22 +3624,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -3759,15 +3683,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -3809,15 +3733,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -3858,23 +3782,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -3910,26 +3834,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -3972,22 +3896,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -4031,15 +3955,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -4081,15 +4005,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -4130,23 +4054,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -4182,26 +4106,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -4244,22 +4168,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -4303,15 +4227,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -4353,15 +4277,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -4402,23 +4326,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -4454,26 +4378,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -4516,22 +4440,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -4575,15 +4499,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -4625,15 +4549,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -4674,23 +4598,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -4726,26 +4650,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -4788,22 +4712,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -4847,15 +4771,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -4897,15 +4821,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -4946,23 +4870,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -4998,26 +4922,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -5060,22 +4984,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -5119,15 +5043,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -5169,15 +5093,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -5218,23 +5142,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -5270,26 +5194,26 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 140, 50},
+					{255, 210, 110},
 				},
 				{
-					0.1,
-					{255, 115, 38},
+					0.08,
+					{255, 160, 55},
 				},
 				{
 					0.55,
-					{232, 82, 26},
+					{235, 96, 30},
 				},
 				{
 					0.85,
-					{168, 48, 17},
+					{170, 50, 18},
 				},
 				{
 					1,
 					{90, 26, 12},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -5332,22 +5256,22 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 150, 52},
+					{255, 214, 120},
 				},
 				{
-					0.25,
-					{250, 118, 36},
+					0.2,
+					{255, 150, 40},
 				},
 				{
-					0.6,
-					{215, 70, 20},
+					0.55,
+					{240, 90, 18},
 				},
 				{
 					1,
-					{125, 32, 12},
+					{185, 44, 12},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.4,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -5391,15 +5315,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 190, 90},
+					{255, 236, 150},
 				},
 				{
 					0.3,
-					{255, 140, 45},
+					{255, 166, 50},
 				},
 				{
 					0.7,
-					{235, 85, 22},
+					{240, 90, 20},
 				},
 				{
 					1,
@@ -5441,15 +5365,15 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 170, 80},
+					{255, 225, 130},
 				},
 				{
 					0.5,
-					{255, 120, 36},
+					{255, 140, 40},
 				},
 				{
 					1,
-					{220, 58, 15},
+					{220, 60, 15},
 				},
 			},
 			light_emission = 1,
@@ -5490,23 +5414,23 @@ local SPEC_GiantExplosion = {
 			color = {
 				{
 					0,
-					{255, 120, 45},
+					{255, 130, 50},
 				},
 				{
-					0.07,
-					{130, 72, 48},
+					0.06,
+					{130, 74, 50},
 				},
 				{
 					0.2,
-					{74, 60, 55},
+					{78, 64, 58},
 				},
 				{
 					0.6,
-					{88, 80, 76},
+					{92, 84, 80},
 				},
 				{
 					1,
-					{108, 102, 98},
+					{112, 106, 102},
 				},
 			},
 			rotation = {0, 360},
@@ -5523,14 +5447,14 @@ local SPEC_GiantExplosion = {
 		},
 	},
 	light = {
-		color = {255, 120, 40},
-		brightness = 5,
+		color = {255, 130, 45},
+		brightness = 6,
 		range = 60,
-		time = 4.5,
+		time = 1.4,
 	},
 }
 
--- Explosión GIGANTE DE LAVA: el suelo se abre en grietas de magma, brota un charco de lava, una fuente de magma llueve gotas que se enfrían y salpican, vuelan rocas fundidas (CrackedLava) que gotean lava, sube humo volcánico y la lava queda viva en el suelo 5 s. Cierra limpio a los 5.8 s.
+-- Explosión GIGANTE DE LAVA: el suelo se abre en grietas de magma, brota un charco de lava, una fuente de magma llueve gotas que se enfrían y salpican, vuelan rocas fundidas (CrackedLava) que gotean lava, sube humo volcánico y la lava queda viva en el suelo 5 s. Cierra limpio: lo último se apaga a los 6.9 s.
 function KaijuFireVFX.GiantExplosion(cf: CFrame, scale: number?, shake: number?): Part
 	return play(SPEC_GiantExplosion, cf, scale, nil, shake)
 end
@@ -5541,36 +5465,122 @@ local SPEC_GiantExplosionIgnition = {
 	cleanup = 7.2,
 	layers = {
 		{
-			name = "VentGlow",
+			name = "FlashGlow",
 			texture = "fx_glow",
 			emit = {
 				{0, 1},
 			},
-			offset = {0, 2, 0},
-			lifetime = {0.6, 0.6},
+			offset = {0, 6, 0},
+			lifetime = {0.3, 0.3},
 			size = {
-				{0, 8, 0},
-				{0.25, 30, 0},
-				{1, 34, 0},
+				{0, 16, 0},
+				{0.25, 50, 0},
+				{1, 56, 0},
 			},
 			transparency = {
-				{0, 0.35, 0},
-				{0.5, 0.6, 0},
+				{0, 0.25, 0},
+				{0.5, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 73, 87},
+				},
+				{
+					0.4,
+					{255, 34, 52},
 				},
 				{
 					1,
-					{183, 11, 30},
+					{195, 12, 31},
 				},
 			},
-			light_emission = 0.5,
+			light_emission = 1,
 			brightness = 0.9,
-			zoffset = -2,
+			zoffset = 10,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "FlashBurst",
+			texture = "fx_burst_fan",
+			emit = {
+				{0, 2},
+			},
+			offset = {0, 5, 0},
+			lifetime = {0.12, 0.15},
+			size = {
+				{0, 14, 0},
+				{0.4, 38, 0},
+				{1, 42, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.5, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 73, 87},
+				},
+				{
+					1,
+					{221, 17, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			rotation = {0, 360},
+			zoffset = 11,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "Glow",
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 10, 0},
+			lifetime = {1.4, 1.4},
+			size = {
+				{0, 30, 0},
+				{0.1, 80, 0},
+				{1, 90, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.4, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 47, 63},
+				},
+				{
+					1,
+					{183, 12, 31},
+				},
+			},
+			light_emission = 0.24,
+			brightness = 0.9,
+			zoffset = -12,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -5633,7 +5643,7 @@ local SPEC_GiantExplosionIgnition = {
 			lifetime = {5.4, 5.4},
 			size = {
 				{0, 20, 0},
-				{0.04, 92, 0},
+				{0.05, 92, 0},
 				{1, 98, 0},
 			},
 			transparency = {
@@ -5644,22 +5654,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
 					0.1,
-					{217, 14, 26},
+					{217, 27, 38},
 				},
 				{
 					0.6,
-					{182, 8, 19},
+					{188, 8, 20},
 				},
 				{
 					1,
 					{89, 4, 15},
 				},
 			},
-			light_emission = 0.8,
+			light_emission = 0.6,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -5677,13 +5687,13 @@ local SPEC_GiantExplosionIgnition = {
 			name = "LavaPool",
 			texture = "kz_lava_pool",
 			emit = {
-				{0.03, 1},
+				{0.02, 1},
 			},
 			offset = {0, 0.2, 0},
 			lifetime = {5.5, 5.5},
 			size = {
 				{0, 10, 0},
-				{0.05, 52, 0},
+				{0.03, 52, 0},
 				{1, 56, 0},
 			},
 			transparency = {
@@ -5694,26 +5704,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.6,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -5728,45 +5738,87 @@ local SPEC_GiantExplosionIgnition = {
 			line_u = 0,
 		},
 		{
-			name = "AshSurge",
-			texture = "kk_smoke_07",
+			name = "HeatRing",
+			texture = "kk_circle_03",
 			emit = {
-				{0.04, 30},
+				{0, 1},
 			},
-			offset = {0, 2.5, 0},
-			direction = "Front",
-			spread = {180, 3},
-			speed = {35, 60},
-			drag = 2.2,
-			accel = {0, 5, 0},
-			lifetime = {1.3, 1.8},
+			offset = {0, 0.3, 0},
+			lifetime = {0.45, 0.45},
 			size = {
-				{0, 8, 2},
-				{0.3, 16, 3},
-				{1, 24, 4},
+				{0, 20, 0},
+				{0.3, 70, 0},
+				{1, 120, 0},
 			},
 			transparency = {
-				{0, 0.5, 0},
-				{0.2, 0.32, 0},
-				{0.6, 0.5, 0},
+				{0, 0.65, 0},
+				{0.4, 0.88, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{90, 63, 55},
-				},
-				{
-					0.5,
-					{76, 58, 55},
+					{217, 27, 38},
 				},
 				{
 					1,
-					{70, 58, 57},
+					{177, 8, 19},
+				},
+			},
+			light_emission = 0.24,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "DustWave",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.02, 48},
+			},
+			offset = {0, 2.5, 0},
+			direction = "Front",
+			spread = {180, 3},
+			speed = {95, 150},
+			drag = 3.6,
+			accel = {0, 6, 0},
+			lifetime = {1.1, 1.5},
+			size = {
+				{0, 9, 2},
+				{0.3, 22, 4},
+				{1, 30, 5},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.15, 0.25, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{96, 68, 59},
+				},
+				{
+					0.5,
+					{80, 63, 59},
+				},
+				{
+					1,
+					{73, 61, 60},
 				},
 			},
 			rotation = {0, 360},
-			rot_speed = {-30, 30},
+			rot_speed = {-40, 40},
 			zoffset = -3,
 			light_emission = 0,
 			brightness = 1,
@@ -5774,68 +5826,118 @@ local SPEC_GiantExplosionIgnition = {
 			line_u = 0,
 		},
 		{
-			name = "MagmaDome",
-			texture = "kz_lava_glob_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
+			name = "MagmaCore",
+			texture = "kk_fire_02",
 			emit = {
-				{0, 6},
-				{0.08, 4},
+				{0, 4},
+				{0.06, 3},
 			},
-			offset = {0, 1.5, 0},
-			shape = {
-				type = "Box",
-				size = {5, 0.5, 5},
-				style = "Volume",
-			},
+			offset = {0, 6, 0},
+			speed = {0, 5},
 			direction = "Top",
-			spread = {25, 25},
-			speed = {8, 18},
-			drag = 1.5,
-			accel = {0, -20, 0},
-			lifetime = {0.45, 0.6},
+			spread = {180, 180},
+			lifetime = {0.4, 0.5},
 			size = {
-				{0, 6, 1.5},
-				{0.4, 14, 2},
-				{1, 11, 2},
+				{0, 10, 3},
+				{0.3, 24, 4},
+				{1, 26, 4},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 54, 69},
+					{255, 112, 124},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.3,
+					{255, 47, 63},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{214, 15, 34},
 				},
 			},
-			transparency = {
-				{0, 0, 0},
-				{0.7, 0.1, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.5,
+			light_emission = 0.16,
+			brightness = 1.2,
 			rotation = {0, 360},
-			rot_speed = {-40, 40},
-			zoffset = 2,
+			rot_speed = {-80, 80},
+			zoffset = 3,
+			accel = {0, 0, 0},
+			drag = 0,
 			orientation = "FacingCamera",
 			line_u = 0,
 		},
 		{
-			name = "LavaGeyser",
+			name = "MagmaBurst",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0, 9},
+				{0.05, 6},
+			},
+			offset = {0, 6, 0},
+			shape = {
+				type = "Sphere",
+				radius = 6,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {18, 36},
+			drag = 3,
+			accel = {0, 8, 0},
+			lifetime = {0.5, 0.75},
+			size = {
+				{0, 8, 2},
+				{0.3, 18, 3},
+				{1, 20, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.12, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 143, 152},
+				},
+				{
+					0.15,
+					{255, 73, 87},
+				},
+				{
+					0.4,
+					{248, 34, 52},
+				},
+				{
+					0.75,
+					{214, 15, 34},
+				},
+				{
+					1,
+					{171, 11, 30},
+				},
+			},
+			light_emission = 0.1,
+			brightness = 1.35,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "LavaFountain",
 			texture = "kz_lava_glob_2x2",
 			flipbook = {
 				layout = "Grid2x2",
@@ -5844,36 +5946,39 @@ local SPEC_GiantExplosionIgnition = {
 				startRandom = true,
 			},
 			emit = {
-				{0, 45},
+				{0, 66},
+				{0.05, 48},
+				{0.12, 30},
+				{0.2, 18},
 			},
-			offset = {0, 2, 0},
+			offset = {0, 4, 0},
 			direction = "Top",
-			spread = {9, 9},
-			speed = {60, 140},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.2, 2},
+			spread = {18, 18},
+			speed = {90, 150},
+			drag = 0.5,
+			accel = {0, -140, 0},
+			lifetime = {1, 1.4},
 			size = {
-				{0, 2, 0.7},
-				{0.2, 3.8, 1.14},
-				{1, 2.8, 0.84},
+				{0, 3, 1.05},
+				{0.2, 6, 1.8},
+				{1, 4, 1.2},
 			},
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
 			transparency = {
@@ -5881,133 +5986,10 @@ local SPEC_GiantExplosionIgnition = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.15,
-			brightness = 1.5,
+			light_emission = 0.22,
+			brightness = 1.45,
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
-			stream = {
-				{0, 0.4, 300, 210},
-				{0.4, 1.3, 210, 15},
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "LavaJet",
-			texture = "kz_lava_drop",
-			orientation = "VelocityParallel",
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {4, 0.5, 4},
-				style = "Volume",
-			},
-			direction = "Top",
-			spread = {3, 3},
-			speed = {115, 150},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {0.3, 0.45},
-			size = {
-				{0, 5, 1},
-				{0.3, 9, 1.5},
-				{1, 7, 1},
-			},
-			color = {
-				{
-					0,
-					{255, 54, 69},
-				},
-				{
-					0.5,
-					{255, 34, 52},
-				},
-				{
-					1,
-					{221, 17, 36},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.6, 0.1, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.3,
-			brightness = 1.8,
-			stream = {
-				{0, 0.35, 105, 82.5},
-				{0.35, 1.2, 82.5, 0},
-			},
-			emit = {},
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			line_u = 0,
-		},
-		{
-			name = "LavaBlobs",
-			texture = "kz_lava_glob_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			emit = {
-				{0.02, 12},
-				{0.1, 9},
-				{0.2, 6},
-			},
-			offset = {0, 2, 0},
-			direction = "Top",
-			spread = {28, 28},
-			speed = {70, 110},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.3, 1.7},
-			size = {
-				{0, 5, 1.75},
-				{0.2, 8, 2.4},
-				{1, 6.5, 1.95},
-			},
-			color = {
-				{
-					0,
-					{255, 54, 69},
-				},
-				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
-				},
-				{
-					1,
-					{100, 8, 27},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.75, 0.05, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.9,
-			rotation = {0, 360},
-			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
 			zoffset = 0,
 			orientation = "FacingCamera",
 			line_u = 0,
@@ -6022,252 +6004,50 @@ local SPEC_GiantExplosionIgnition = {
 				startRandom = true,
 			},
 			emit = {
-				{0, 54},
-				{0.05, 24},
+				{0, 90},
+				{0.04, 42},
 			},
-			offset = {0, 1.5, 0},
+			offset = {0, 2, 0},
 			direction = "Top",
-			spread = {72, 72},
-			speed = {32, 68},
+			spread = {75, 75},
+			speed = {40, 85},
 			drag = 0.5,
 			accel = {0, -150, 0},
-			lifetime = {0.6, 0.9},
+			lifetime = {0.7, 1},
 			size = {
-				{0, 1.6, 0.56},
-				{0.2, 3, 0.9},
-				{1, 2.2, 0.66},
+				{0, 2, 0.7},
+				{0.2, 3.6, 1.08},
+				{1, 2.6, 0.78},
 			},
 			color = {
 				{
 					0,
-					{255, 54, 69},
-				},
-				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
-				},
-				{
-					1,
-					{100, 8, 27},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.75, 0.05, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.5,
-			rotation = {0, 360},
-			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "CrackBursts",
-			texture = "kz_lava_glob_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			emit = {},
-			offset = {0, 0, 0},
-			direction = "Top",
-			spread = {22, 22},
-			speed = {30, 65},
-			drag = 0.5,
-			accel = {0, -140, 0},
-			lifetime = {0.6, 0.9},
-			size = {
-				{0, 1.6, 0.56},
-				{0.2, 3.2, 0.96},
-				{1, 2.4, 0.72},
-			},
-			color = {
-				{
-					0,
-					{255, 54, 69},
-				},
-				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
-				},
-				{
-					1,
-					{100, 8, 27},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.75, 0.05, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.15,
-			brightness = 1.5,
-			rotation = {0, 360},
-			rot_speed = {-220, 220},
-			shape = {
-				type = "Box",
-				size = {3, 0.5, 3},
-				style = "Volume",
-			},
-			points = {
-				{0.033, 10, 4.8, 0.6, -11.42},
-				{0.037, 10, -10.84, 0.6, -7.33},
-				{0.04, 10, 11.8, 0.6, -6.65},
-				{0.082, 10, -15.56, 0.6, 12.39},
-				{0.109, 10, 18.76, 0.6, 15.14},
-				{0.117, 10, 2.92, 0.6, 25.14},
-				{0.125, 10, 26.55, 0.6, -0.46},
-				{0.13, 10, 13.57, 0.6, 23.66},
-				{0.135, 10, 1.58, 0.6, -27.96},
-				{0.165, 10, -17.63, 0.6, 27.44},
-				{0.168, 10, -32.68, 0.6, 4.94},
-				{0.194, 10, -12.61, 0.6, -34.88},
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "CrackJets",
-			texture = "kz_lava_drop",
-			orientation = "VelocityParallel",
-			points = {
-				{0.033, 6, 4.8, 0.6, -11.42},
-				{0.037, 6, -10.84, 0.6, -7.33},
-				{0.04, 6, 11.8, 0.6, -6.65},
-				{0.082, 6, -15.56, 0.6, 12.39},
-				{0.109, 6, 18.76, 0.6, 15.14},
-				{0.117, 6, 2.92, 0.6, 25.14},
-				{0.125, 6, 26.55, 0.6, -0.46},
-				{0.13, 6, 13.57, 0.6, 23.66},
-				{0.135, 6, 1.58, 0.6, -27.96},
-				{0.165, 6, -17.63, 0.6, 27.44},
-				{0.168, 6, -32.68, 0.6, 4.94},
-				{0.194, 6, -12.61, 0.6, -34.88},
-			},
-			direction = "Top",
-			spread = {10, 10},
-			speed = {50, 80},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {0.3, 0.45},
-			size = {
-				{0, 2.5, 0.5},
-				{0.3, 4.5, 0.8},
-				{1, 3.5, 0.6},
-			},
-			color = {
-				{
-					0,
-					{255, 54, 69},
-				},
-				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
-				},
-				{
-					1,
-					{100, 8, 27},
-				},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.6, 0.1, 0},
-				{1, 1, 0},
-			},
-			light_emission = 0.2,
-			brightness = 1.6,
-			emit = {},
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "CrackPuffs",
-			texture = "kk_smoke_04",
-			points = {
-				{0.033, 3, 4.8, 0.6, -11.42},
-				{0.037, 3, -10.84, 0.6, -7.33},
-				{0.04, 3, 11.8, 0.6, -6.65},
-				{0.082, 3, -15.56, 0.6, 12.39},
-				{0.109, 3, 18.76, 0.6, 15.14},
-				{0.117, 3, 2.92, 0.6, 25.14},
-				{0.125, 3, 26.55, 0.6, -0.46},
-				{0.13, 3, 13.57, 0.6, 23.66},
-				{0.135, 3, 1.58, 0.6, -27.96},
-				{0.165, 3, -17.63, 0.6, 27.44},
-				{0.168, 3, -32.68, 0.6, 4.94},
-				{0.194, 3, -12.61, 0.6, -34.88},
-			},
-			direction = "Top",
-			spread = {20, 20},
-			speed = {8, 16},
-			drag = 1.2,
-			accel = {0, 6, 0},
-			lifetime = {1, 1.4},
-			size = {
-				{0, 4, 1},
-				{1, 14, 3},
-			},
-			transparency = {
-				{0, 0.5, 0},
-				{0.3, 0.45, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 34, 52},
-				},
-				{
-					0.07,
-					{105, 15, 34},
+					{255, 131, 141},
 				},
 				{
 					0.2,
-					{53, 12, 31},
+					{255, 54, 69},
 				},
 				{
-					0.6,
-					{65, 17, 36},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{83, 23, 42},
+					{165, 10, 29},
 				},
 			},
+			transparency = {
+				{0, 0, 0},
+				{0.75, 0.05, 0},
+				{1, 1, 0},
+			},
+			light_emission = 0.22,
+			brightness = 1.45,
 			rotation = {0, 360},
-			rot_speed = {-30, 30},
-			zoffset = -4,
-			emit = {},
-			light_emission = 0,
-			brightness = 1,
+			rot_speed = {-220, 220},
+			zoffset = 0,
 			orientation = "FacingCamera",
-			offset = {0, 0, 0},
 			line_u = 0,
 		},
 		{
@@ -6275,43 +6055,41 @@ local SPEC_GiantExplosionIgnition = {
 			texture = "kz_lava_drop",
 			orientation = "VelocityParallel",
 			emit = {
-				{0, 54},
-				{0.06, 27},
-				{0.15, 15},
+				{0, 90},
+				{0.06, 45},
 			},
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
+			offset = {0, 4, 0},
 			direction = "Top",
-			spread = {45, 45},
-			speed = {70, 120},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {0.8, 1.3},
+			spread = {70, 70},
+			speed = {80, 140},
+			drag = 0.5,
+			accel = {0, -150, 0},
+			lifetime = {0.5, 0.8},
 			size = {
-				{0, 1.5, 0.4},
-				{0.3, 3, 0.6},
-				{1, 2.2, 0.5},
+				{0, 2.5, 0.6},
+				{0.3, 4.5, 1},
+				{1, 3, 0.6},
 			},
 			color = {
 				{
 					0,
-					{255, 54, 69},
+					{255, 143, 152},
 				},
 				{
-					0.25,
-					{248, 33, 50},
+					0.15,
+					{255, 73, 87},
 				},
 				{
-					0.6,
-					{202, 15, 34},
+					0.4,
+					{248, 34, 52},
+				},
+				{
+					0.75,
+					{214, 15, 34},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{171, 11, 30},
 				},
 			},
 			transparency = {
@@ -6319,16 +6097,16 @@ local SPEC_GiantExplosionIgnition = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.2,
-			brightness = 2,
+			light_emission = 0.24,
+			brightness = 1.5,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
 			line_u = 0,
 		},
 		{
-			name = "LavaRocks",
-			texture = "kz_lava_rock_2x2",
+			name = "LavaChunks",
+			texture = "kz_debris_2x2",
 			flipbook = {
 				layout = "Grid2x2",
 				mode = "Loop",
@@ -6336,218 +6114,209 @@ local SPEC_GiantExplosionIgnition = {
 				startRandom = true,
 			},
 			emit = {
-				{0, 39},
+				{0, 54},
 				{0.05, 21},
-				{0.12, 9},
 			},
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
+			offset = {0, 4, 0},
 			direction = "Top",
-			spread = {55, 55},
+			spread = {65, 65},
 			speed = {60, 120},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.1, 1.7},
+			drag = 0.4,
+			accel = {0, -140, 0},
+			lifetime = {0.8, 1.3},
 			size = {
-				{0, 2.4, 1.2},
-				{1, 2.2, 1.1},
+				{0, 1.6, 0.6},
+				{1, 1.4, 0.5},
 			},
 			color = {
 				{
 					0,
-					{255, 54, 69},
+					{125, 15, 34},
 				},
 				{
-					0.4,
-					{241, 27, 44},
+					0.3,
+					{68, 10, 29},
 				},
 				{
 					1,
-					{165, 11, 30},
+					{42, 8, 28},
 				},
 			},
-			light_emission = 0.1,
-			brightness = 1.6,
+			light_emission = 0.04,
 			rotation = {0, 360},
-			rot_speed = {-300, 300},
+			rot_speed = {-400, 400},
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
 			},
+			brightness = 1,
 			zoffset = 0,
 			orientation = "FacingCamera",
 			line_u = 0,
 		},
 		{
-			name = "LavaRocksBig",
-			texture = "kz_lava_rock_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
+			name = "MagmaJets",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
 			emit = {
-				{0.02, 9},
-				{0.1, 6},
+				{0.01, 18},
+				{0.07, 9},
 			},
-			offset = {0, 2, 0},
-			shape = {
-				type = "Box",
-				size = {7, 1, 7},
-				style = "Volume",
-			},
+			offset = {0, 6, 0},
 			direction = "Top",
-			spread = {35, 35},
-			speed = {60, 95},
-			drag = 0.3,
-			accel = {0, -130, 0},
-			lifetime = {1.2, 1.6},
+			spread = {100, 100},
+			speed = {60, 100},
+			drag = 6,
+			accel = {0, -10, 0},
+			lifetime = {0.4, 0.6},
 			size = {
-				{0, 5, 1.5},
-				{1, 4.6, 1.4},
+				{0, 8, 2},
+				{0.3, 22, 4},
+				{1, 18, 3},
 			},
-			color = {
-				{
-					0,
-					{255, 54, 69},
-				},
-				{
-					0.4,
-					{241, 27, 44},
-				},
-				{
-					1,
-					{165, 11, 30},
-				},
-			},
-			light_emission = 0.1,
-			brightness = 1.6,
-			rotation = {0, 360},
-			rot_speed = {-160, 160},
 			transparency = {
 				{0, 0, 0},
-				{1, 0, 0},
-			},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "AshColumn",
-			texture = "kk_smoke_07",
-			offset = {0, 7, 0},
-			shape = {
-				type = "Box",
-				size = {10, 6, 10},
-				style = "Volume",
-			},
-			direction = "Top",
-			spread = {12, 12},
-			speed = {18, 30},
-			drag = 0.8,
-			accel = {0, 6, 0},
-			lifetime = {1.6, 2.2},
-			size = {
-				{0, 12, 3},
-				{0.5, 30, 5},
-				{1, 42, 6},
-			},
-			transparency = {
-				{0, 0.55, 0},
-				{0.12, 0.32, 0},
-				{0.6, 0.45, 0},
+				{0.6, 0.15, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 200, 205},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.3,
+					{255, 68, 83},
 				},
 				{
-					0.2,
-					{57, 41, 38},
-				},
-				{
-					0.6,
-					{67, 54, 53},
+					0.7,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{136, 9, 28},
 				},
 			},
-			rotation = {0, 360},
-			rot_speed = {-20, 20},
-			zoffset = -12,
-			stream = {
-				{0.15, 0.6, 15, 18},
-				{0.6, 2.4, 18, 3},
-			},
-			emit = {},
-			light_emission = 0,
-			brightness = 1,
-			orientation = "FacingCamera",
+			light_emission = 0.12,
+			brightness = 1.6,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
 			line_u = 0,
 		},
 		{
 			name = "AshPlume",
-			texture = "kk_smoke_08",
+			texture = "kk_smoke_07",
 			emit = {
-				{0.35, 6},
-				{0.6, 6},
+				{0.15, 9},
+				{0.3, 9},
+				{0.5, 8},
+				{0.75, 6},
 			},
-			offset = {0, 32, 0},
+			offset = {0, 22, 0},
 			shape = {
-				type = "Sphere",
-				radius = 10,
+				type = "Box",
+				size = {14, 26, 14},
 				style = "Volume",
 			},
 			direction = "Top",
-			spread = {50, 50},
-			speed = {10, 18},
+			spread = {35, 35},
+			speed = {12, 24},
 			drag = 1.2,
-			accel = {0, 8, 0},
-			lifetime = {1.9, 2.4},
+			accel = {0, 9, 0},
+			lifetime = {2, 2.6},
 			size = {
-				{0, 22, 4},
+				{0, 20, 4},
 				{0.4, 40, 6},
-				{1, 52, 6},
+				{1, 54, 6},
 			},
 			transparency = {
-				{0, 0.6, 0},
-				{0.15, 0.38, 0},
+				{0, 0.55, 0},
+				{0.12, 0.36, 0},
 				{0.6, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -12,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "AshPlume2",
+			texture = "kk_smoke_08",
+			emit = {
+				{0.2, 8},
+				{0.45, 6},
+				{0.7, 4},
+			},
+			offset = {0, 34, 0},
+			shape = {
+				type = "Sphere",
+				radius = 12,
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {10, 20},
+			drag = 1.2,
+			accel = {0, 8, 0},
+			lifetime = {1.9, 2.4},
+			size = {
+				{0, 22, 4},
+				{0.4, 42, 6},
+				{1, 56, 6},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.12, 0.34, 0},
+				{0.6, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 41, 58},
+				},
+				{
+					0.06,
+					{105, 16, 35},
+				},
+				{
+					0.2,
+					{60, 44, 41},
+				},
+				{
+					0.6,
+					{70, 57, 56},
+				},
+				{
+					1,
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -6565,10 +6334,10 @@ local SPEC_GiantExplosionIgnition = {
 				{0.1, 9},
 				{0.3, 8},
 			},
-			offset = {0, 6, 0},
+			offset = {0, 8, 0},
 			shape = {
 				type = "Box",
-				size = {16, 8, 16},
+				size = {16, 10, 16},
 				style = "Volume",
 			},
 			direction = "Top",
@@ -6591,23 +6360,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -6622,10 +6391,9 @@ local SPEC_GiantExplosionIgnition = {
 			name = "MoltenRocks",
 			type = "meteor",
 			emit = {
-				{0.02, 18},
-				{0.1, 12},
+				{0.02, 24},
 			},
-			offset = {0, 3, 0},
+			offset = {0, 4, 0},
 			direction = "Top",
 			spread = {58, 58},
 			speed = {70, 118},
@@ -6633,6 +6401,45 @@ local SPEC_GiantExplosionIgnition = {
 			drag = 0.2,
 			lifetime = {1.4, 1.8},
 			trails = {
+				{
+					name = "RockGlow",
+					rate = 60,
+					locked = true,
+					texture = "fx_glow",
+					speed = {0, 0},
+					direction = "Top",
+					lifetime = {0.075, 0.075},
+					size = {
+						{0, 6.5, 0.8},
+						{1, 6.5, 0.8},
+					},
+					color = {
+						{
+							0,
+							{255, 17, 36},
+						},
+						{
+							1,
+							{255, 17, 36},
+						},
+					},
+					transparency = {
+						{0, 0.92, 0},
+						{1, 0.92, 0},
+					},
+					light_emission = 1,
+					brightness = 1,
+					emit = {},
+					spread = {0, 0},
+					accel = {0, 0, 0},
+					drag = 0,
+					rotation = {0, 0},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
 				{
 					name = "RockDrip",
 					rate = 26,
@@ -6655,22 +6462,22 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
+							{255, 131, 141},
+						},
+						{
+							0.2,
 							{255, 54, 69},
 						},
 						{
-							0.25,
-							{248, 33, 50},
-						},
-						{
-							0.6,
-							{202, 15, 34},
+							0.55,
+							{234, 20, 39},
 						},
 						{
 							1,
-							{100, 8, 27},
+							{165, 10, 29},
 						},
 					},
-					light_emission = 0.15,
+					light_emission = 0.16,
 					brightness = 1.5,
 					rotation = {0, 360},
 					emit = {},
@@ -6687,7 +6494,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 				{
 					name = "RockEmbers",
-					rate = 30,
+					rate = 34,
 					texture = "kk_flare_01",
 					speed = {0, 3},
 					direction = "Top",
@@ -6695,17 +6502,17 @@ local SPEC_GiantExplosionIgnition = {
 					lifetime = {0.25, 0.45},
 					size = {
 						{0, 0, 0},
-						{0.15, 2.2, 0.6},
+						{0.15, 2.4, 0.6},
 						{1, 0, 0},
 					},
 					color = {
 						{
 							0,
-							{255, 73, 87},
+							{255, 161, 168},
 						},
 						{
 							0.5,
-							{255, 34, 52},
+							{255, 47, 63},
 						},
 						{
 							1,
@@ -6713,7 +6520,7 @@ local SPEC_GiantExplosionIgnition = {
 						},
 					},
 					light_emission = 1,
-					brightness = 1.5,
+					brightness = 1.7,
 					emit = {},
 					accel = {0, 0, 0},
 					drag = 0,
@@ -6750,23 +6557,23 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 34, 52},
+							{255, 41, 58},
 						},
 						{
-							0.07,
-							{105, 15, 34},
+							0.06,
+							{105, 16, 35},
 						},
 						{
 							0.2,
-							{57, 41, 38},
+							{60, 44, 41},
 						},
 						{
 							0.6,
-							{67, 54, 53},
+							{70, 57, 56},
 						},
 						{
 							1,
-							{82, 69, 69},
+							{85, 72, 71},
 						},
 					},
 					rotation = {0, 360},
@@ -6801,22 +6608,22 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{217, 20, 32},
+							{217, 50, 62},
 						},
 						{
 							0.3,
-							{199, 11, 23},
+							{205, 17, 29},
 						},
 						{
 							0.75,
-							{121, 5, 16},
+							{125, 5, 16},
 						},
 						{
 							1,
 							{49, 3, 14},
 						},
 					},
-					light_emission = 0.7,
+					light_emission = 0.6,
 					rotation = {0, 360},
 					decal = true,
 					orientation = "VelocityPerpendicular",
@@ -6857,22 +6664,22 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
+							{255, 131, 141},
+						},
+						{
+							0.2,
 							{255, 54, 69},
 						},
 						{
-							0.25,
-							{248, 33, 50},
-						},
-						{
-							0.6,
-							{202, 15, 34},
+							0.55,
+							{234, 20, 39},
 						},
 						{
 							1,
-							{100, 8, 27},
+							{165, 10, 29},
 						},
 					},
-					light_emission = 0.15,
+					light_emission = 0.16,
 					brightness = 1.5,
 					rotation = {0, 360},
 					transparency = {
@@ -6896,34 +6703,34 @@ local SPEC_GiantExplosionIgnition = {
 					lifetime = {0.3, 0.5},
 					size = {
 						{0, 1.2, 0.4},
-						{0.3, 3.5, 0.8},
-						{1, 2.2, 0.6},
+						{0.3, 4, 0.8},
+						{1, 2.5, 0.6},
 					},
 					transparency = {
-						{0, 0.05, 0},
-						{0.6, 0.2, 0},
+						{0, 0, 0},
+						{0.6, 0.15, 0},
 						{1, 1, 0},
 					},
 					color = {
 						{
 							0,
-							{255, 99, 112},
+							{255, 200, 205},
 						},
 						{
 							0.3,
-							{255, 47, 63},
+							{255, 68, 83},
 						},
 						{
 							0.7,
-							{228, 19, 37},
+							{234, 20, 39},
 						},
 						{
 							1,
 							{136, 9, 28},
 						},
 					},
-					light_emission = 0.3,
-					brightness = 1.4,
+					light_emission = 0.16,
+					brightness = 1.5,
 					stream = {
 						{0, 2.5, 12, 0},
 					},
@@ -6956,23 +6763,23 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 34, 52},
+							{255, 41, 58},
 						},
 						{
-							0.07,
-							{105, 15, 34},
+							0.06,
+							{105, 16, 35},
 						},
 						{
 							0.2,
-							{57, 41, 38},
+							{60, 44, 41},
 						},
 						{
 							0.6,
-							{67, 54, 53},
+							{70, 57, 56},
 						},
 						{
 							1,
-							{82, 69, 69},
+							{85, 72, 71},
 						},
 					},
 					rotation = {0, 360},
@@ -6993,29 +6800,27 @@ local SPEC_GiantExplosionIgnition = {
 				size = {2.8, 4.4},
 				spin = {-480, 480},
 				material = "CrackedLava",
-				color = {255, 54, 69},
+				color = {125, 13, 32},
 			},
 		},
 		{
 			name = "RainSplats",
 			texture = "kz_lava_splat",
 			points = {
-				{0.602, 1, -9.65, 0.24, -8.77},
-				{0.696, 1, -18.75, 0.24, -25.46},
-				{0.718, 1, 15.67, 0.24, 24.56},
-				{0.724, 1, -8.99, 0.24, 10.71},
-				{0.783, 1, 10.38, 0.24, -10.86},
-				{0.784, 1, -9.22, 0.24, -4.62},
-				{0.846, 1, 30.75, 0.24, -3.41},
-				{0.854, 1, 30.76, 0.24, -6.56},
-				{1.062, 1, -15.62, 0.24, 3.07},
-				{1.113, 1, 15.81, 0.24, 6.86},
-				{1.176, 1, 22.27, 0.24, -5.5},
-				{1.187, 1, 9.13, 0.24, 31.28},
-				{1.251, 1, -5.89, 0.24, 31.44},
-				{1.276, 1, -19.92, 0.24, -19.4},
-				{1.384, 1, 25.96, 0.24, -9.82},
-				{1.402, 1, 20.82, 0.24, 3.84},
+				{0.751, 1, -12.98, 0.24, -11.81},
+				{0.818, 1, -23.26, 0.24, -31.58},
+				{0.833, 1, 19.54, 0.24, 30.62},
+				{0.879, 1, 13.73, 0.24, -14.36},
+				{0.88, 1, -12.84, 0.24, -6.44},
+				{0.924, 1, 38.19, 0.24, -4.24},
+				{0.929, 1, 38.17, 0.24, -8.14},
+				{1.076, 1, -20.51, 0.24, 4.04},
+				{1.157, 1, 28.25, 0.24, -6.97},
+				{1.164, 1, 11.31, 0.24, 38.73},
+				{1.209, 1, -7.3, 0.24, 38.98},
+				{1.227, 1, -24.91, 0.24, -24.26},
+				{1.303, 1, 32.47, 0.24, -12.28},
+				{1.316, 1, 26.59, 0.24, 4.9},
 			},
 			lifetime = {3.4, 3.4},
 			size = {
@@ -7031,22 +6836,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 20, 32},
+					{217, 50, 62},
 				},
 				{
 					0.3,
-					{199, 11, 23},
+					{205, 17, 29},
 				},
 				{
 					0.75,
-					{121, 5, 16},
+					{125, 5, 16},
 				},
 				{
 					1,
 					{49, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.6,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7066,34 +6871,36 @@ local SPEC_GiantExplosionIgnition = {
 			name = "Embers",
 			texture = "kk_flare_01",
 			emit = {
-				{0.1, 36},
-				{0.4, 27},
+				{0.05, 60},
+				{0.3, 45},
+				{0.6, 33},
+				{1, 21},
 			},
-			offset = {0, 8, 0},
+			offset = {0, 10, 0},
 			shape = {
 				type = "Sphere",
-				radius = 12,
+				radius = 14,
 				style = "Volume",
 			},
 			direction = "Top",
-			spread = {60, 60},
-			speed = {10, 30},
+			spread = {120, 120},
+			speed = {10, 35},
 			drag = 1.5,
 			accel = {0, 14, 0},
 			lifetime = {0.9, 1.5},
 			size = {
 				{0, 0, 0},
-				{0.1, 2.2, 0.7},
+				{0.1, 2.6, 0.8},
 				{1, 0, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -7101,10 +6908,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.2,
-			stream = {
-				{0.2, 2, 45, 9},
-			},
+			brightness = 1.7,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -7113,6 +6917,50 @@ local SPEC_GiantExplosionIgnition = {
 			rot_speed = {0, 0},
 			zoffset = 0,
 			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "Sparks",
+			texture = "fx_line",
+			orientation = "VelocityParallel",
+			offset = {0, 6, 0},
+			emit = {
+				{0, 33},
+				{0.06, 15},
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {110, 200},
+			drag = 4,
+			accel = {0, -60, 0},
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 16, 4},
+				{1, 5, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 143, 152},
+				},
+				{
+					0.5,
+					{255, 60, 75},
+				},
+				{
+					1,
+					{234, 20, 39},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
 			line_u = 0,
 		},
 		{
@@ -7136,26 +6984,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7198,22 +7046,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -7257,22 +7105,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -7307,11 +7155,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -7356,23 +7204,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -7420,19 +7268,19 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
 			transparency = {
@@ -7440,8 +7288,8 @@ local SPEC_GiantExplosionIgnition = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.15,
-			brightness = 1.5,
+			light_emission = 0.22,
+			brightness = 1.45,
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
 			shape = {
@@ -7474,26 +7322,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7536,22 +7384,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -7595,22 +7443,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -7645,11 +7493,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -7694,23 +7542,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -7746,26 +7594,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7808,22 +7656,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -7867,22 +7715,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -7917,11 +7765,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -7966,23 +7814,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -8018,26 +7866,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -8080,22 +7928,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -8139,22 +7987,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -8189,11 +8037,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -8238,23 +8086,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -8290,26 +8138,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -8352,22 +8200,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -8411,22 +8259,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -8461,11 +8309,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -8510,23 +8358,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -8562,26 +8410,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -8624,22 +8472,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -8683,22 +8531,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -8733,11 +8581,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -8782,23 +8630,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -8834,26 +8682,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -8896,22 +8744,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -8955,22 +8803,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -9005,11 +8853,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -9054,23 +8902,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -9106,26 +8954,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -9168,22 +9016,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -9227,22 +9075,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -9277,11 +9125,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -9326,23 +9174,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -9378,26 +9226,26 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 24, 35},
+					{217, 63, 75},
 				},
 				{
-					0.1,
-					{217, 16, 27},
+					0.08,
+					{217, 30, 41},
 				},
 				{
 					0.55,
-					{190, 9, 20},
+					{194, 11, 22},
 				},
 				{
 					0.85,
-					{123, 5, 16},
+					{125, 6, 16},
 				},
 				{
 					1,
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.54,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -9440,22 +9288,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
+					{255, 131, 141},
+				},
+				{
+					0.2,
 					{255, 54, 69},
 				},
 				{
-					0.25,
-					{248, 33, 50},
-				},
-				{
-					0.6,
-					{202, 15, 34},
+					0.55,
+					{234, 20, 39},
 				},
 				{
 					1,
-					{100, 8, 27},
+					{165, 10, 29},
 				},
 			},
-			light_emission = 0.15,
+			light_emission = 0.16,
 			brightness = 1.5,
 			rotation = {0, 360},
 			stream = {
@@ -9499,22 +9347,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 99, 112},
+					{255, 200, 205},
 				},
 				{
 					0.3,
-					{255, 47, 63},
+					{255, 68, 83},
 				},
 				{
 					0.7,
-					{228, 19, 37},
+					{234, 20, 39},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.4,
+			light_emission = 0.16,
 			brightness = 1.5,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
@@ -9549,11 +9397,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 161, 168},
 				},
 				{
 					0.5,
-					{255, 34, 52},
+					{255, 47, 63},
 				},
 				{
 					1,
@@ -9598,23 +9446,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 34, 52},
+					{255, 41, 58},
 				},
 				{
-					0.07,
-					{105, 15, 34},
+					0.06,
+					{105, 16, 35},
 				},
 				{
 					0.2,
-					{57, 41, 38},
+					{60, 44, 41},
 				},
 				{
 					0.6,
-					{67, 54, 53},
+					{70, 57, 56},
 				},
 				{
 					1,
-					{82, 69, 69},
+					{85, 72, 71},
 				},
 			},
 			rotation = {0, 360},
@@ -9636,9 +9484,9 @@ local SPEC_GiantExplosionIgnition = {
 	scale_mult = 1.5,
 	light = {
 		color = {255, 60, 90},
-		brightness = 7.5,
+		brightness = 9,
 		range = 60,
-		time = 4.5,
+		time = 1.4,
 	},
 }
 

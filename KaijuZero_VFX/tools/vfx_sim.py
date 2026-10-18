@@ -147,7 +147,8 @@ def rand_unit(rng):
 
 
 class P:
-    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "r_size", "r_tr", "frame0", "L", "seed", "ks", "spin")
+    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "r_size", "r_tr", "frame0", "L", "seed", "ks", "spin",
+                 "lock", "lofs")
 
 
 def spawn(L, origin, rng, scale, Rf=None, length=0.0, zone=None):
@@ -158,6 +159,7 @@ def spawn(L, origin, rng, scale, Rf=None, length=0.0, zone=None):
     p = P()
     p.ks = scale
     p.spin = 0.0
+    p.lock = None                      # roca a la que va pegada (estela con LockedToPart)
     sh = L.get("shape")
     off = np.zeros(3)
     normal = None
@@ -375,7 +377,10 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                     m.acc[k] += TL["rate"] * dt
                     while m.acc[k] >= 1.0:
                         m.acc[k] -= 1.0
-                        parts.append(spawn(TL, m.pos, rng, scale, Rf))
+                        p = spawn(TL, m.pos, rng, scale, Rf)
+                        if TL.get("locked"):      # LockedToPart: la partícula sigue a la roca
+                            p.lock, p.lofs = m, p.pos - m.pos
+                        parts.append(p)
                 if (m.pos[1] <= ground_y + 0.3 and m.vel[1] < 0) or m.age >= m.life:
                     m.landed = True
                     if m.pos[1] <= ground_y + 0.6:
@@ -468,7 +473,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             drag = L.get("drag", 0.0)
             acc = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
             p.vel = p.vel * (2.0 ** (-drag * dt)) + acc * dt
-            p.pos = p.pos + p.vel * dt
+            if p.lock is not None:
+                p.lofs = p.lofs + p.vel * dt
+                p.pos = p.lock.pos + p.lofs
+            else:
+                p.pos = p.pos + p.vel * dt
             p.rot += p.rots * dt
             p.age += dt
     return stats

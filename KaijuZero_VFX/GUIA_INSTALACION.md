@@ -1,4 +1,4 @@
-# VFX de fuego de KAIJU ZERO: guía de instalación
+# VFX de fuego y lava de KAIJU ZERO: guía de instalación
 
 ## Qué hay aquí
 
@@ -6,7 +6,7 @@
 |---|---|
 | `roblox/KaijuFireVFX.rbxmx` | El ModuleScript listo para insertar en Studio. |
 | `roblox/KaijuFireVFX.lua` | El mismo código en texto, si prefieres copiar y pegar. |
-| `roblox/texturas_necesarias.txt` | Las 36 imágenes que usa el módulo. |
+| `roblox/texturas_necesarias.txt` | Las 41 imágenes que usa el módulo. |
 | `textures/` | Las imágenes que hay que subir a Roblox. |
 | `preview/` | Videos simulados de cada efecto. |
 | `tools/` | Generadores (texturas, simulador, módulo). No hace falta tocarlos. |
@@ -17,8 +17,8 @@
 
 | Función | Qué es | Duración |
 |---|---|---|
-| `GiantExplosion(cf, escala, sacudida)` | **H1**: la explosión gigante. Destello, onda de choque, ola de polvo, bola de fuego, rocas en llamas con estela, hongo de humo y **fuego en el suelo durante 5 s**. | 5.8 s |
-| `GiantExplosionIgnition(cf, escala, sacudida)` | **H1 Ignition**: la misma explosión en **rojo carmesí**, **1.5 veces más grande** y **1.5 veces más intensa**: más partículas y más rocas, luz y sacudida más fuertes. El fuego carmesí queda en el suelo 5 s. | 5.8 s |
+| `GiantExplosion(cf, escala, sacudida)` | **H1**: la explosión gigante **de lava**, una detonación de magma. Hay destello, ola de polvo y un núcleo de magma. El suelo se abre en **grietas de lava** y brota un **charco de lava fundida**. Una **fuente de magma** lanza gotas espesas que se enfrían en el aire (amarillo, naranja, rojo) y llueven dejando **salpicaduras encendidas**. Vuelan **rocas fundidas**: rocas de material CrackedLava, con resplandor, que gotean lava y al caer salpican y quedan ardiendo. Sube **humo volcánico** y la lava **sigue viva en el suelo 5 s**: burbujea, escupe chorritos y suelta brasas. | 5.8 s (las últimas partículas se apagan a los 6.9 s) |
+| `GiantExplosionIgnition(cf, escala, sacudida)` | **H1 Ignition**: la misma explosión de lava en **rojo carmesí**, **1.5 veces más grande** y **1.5 veces más intensa**. Tiene más magma y más rocas fundidas, y la luz y la sacudida son más fuertes. La lava carmesí queda viva en el suelo 5 s. | 5.8 s |
 | `H3_Detonation(rocas, escala, sacudida)` | **H3**: las rocas que dejó el rayo **detonan todas a la vez**. Cada una levanta su racimo de pilares de fuego y entre todas forman una pared de llamas. Los pilares brotan de golpe, se sostienen sin rebotar y se hunden. En la roca más lejana sale un **pilar gigante** de remate. | 2.8 s |
 | `H3_DetonationIgnition(rocas, escala, sacudida)` | **H3 Ignition**: lo mismo en carmesí, con pilares más altos, y deja una **marca de fuego** en cada roca unos 3 s. | 4.6 s |
 
@@ -26,6 +26,7 @@
 
 | Función | Qué es | Duración |
 |---|---|---|
+| `GiantExplosionClassic(cf, escala, sacudida)` | La explosión gigante anterior, de **fuego**: destello, onda de choque, bola de fuego, rocas en llamas, hongo de humo y fuego en el suelo 5 s. Se conserva por si la quieres usar. | 5.8 s |
 | `Explosion(cf, escala, sacudida)` | Explosión de fuego "realista", la de texturas Kenney. | 1.3 s |
 | `ExplosionAnime(cf, escala, sacudida)` | Versión con medias lunas y remolinos (texturas Effekseer). Luce mejor con fondos oscuros. | 1.3 s |
 | `FireLine(cf, largo, escala)` | La línea de fuego anterior de la H3. Se conserva por si la quieres usar. | 2.5 s |
@@ -43,9 +44,9 @@ Todos los efectos **cierran limpio**: el contenedor se destruye solo cuando ya m
    kk_fire_01 = "rbxassetid://123456789",
    ```
 
-   Usa el ID de la **imagen**, no el de un Decal. Si solo vas a usar la H1 y la H3 (con sus versiones Ignition), basta con estas 20 texturas:
+   Usa el ID de la **imagen**, no el de un Decal. Si solo vas a usar la H1 y la H3 (con sus versiones Ignition), basta con estas 25 texturas:
 
-   `fx_burst_a, fx_burst_fan, fx_fire_2x2, fx_glow, fx_line, fx_shock_spiky, fx_spark4, fx_star, kk_circle_03, kk_fire_01, kk_fire_02, kk_flare_01, kk_muzzle_01, kk_muzzle_04, kk_muzzle_05, kk_smoke_04, kk_smoke_07, kk_smoke_08, kk_trace_01, kz_scorch`
+   `fx_burst_a, fx_burst_fan, fx_fire_2x2, fx_glow, fx_line, fx_shock_spiky, fx_star, kk_circle_03, kk_fire_01, kk_fire_02, kk_flare_01, kk_muzzle_01, kk_muzzle_04, kk_muzzle_05, kk_smoke_04, kk_smoke_07, kk_smoke_08, kk_trace_01, kz_debris_2x2, kz_lava_cracks, kz_lava_drop, kz_lava_glob_2x2, kz_lava_pool, kz_lava_splat, kz_scorch`
 
 ## Cómo llamarlo
 
@@ -79,6 +80,15 @@ evento.OnClientEvent:Connect(function(habilidad: string, datos: any, ignition: b
 	end
 end)
 ```
+
+### H1: tiempos (para coordinarla con la animación y con el daño)
+
+| Momento | Qué pasa |
+|---|---|
+| 0 s | Impacto: destello, el suelo se agrieta y brota la lava. **Llama la función en este instante.** |
+| 0 – 0.3 s | Revienta el núcleo de magma, sube la fuente de lava y salen volando las rocas fundidas. |
+| 0.75 – 1.8 s | Llueve el magma y caen las rocas: dejan salpicaduras encendidas alrededor del cráter. Algunas rocas caen bastante lejos. |
+| hasta 5.2 s | La lava sigue viva en el suelo y se enfría poco a poco. |
 
 ### H3 (las rocas del rayo): cómo coordinarla con tus rocas
 
@@ -115,25 +125,28 @@ Si las rocas ya existen en el cliente, también puedes pasar las Parts tal cual,
 
 ### Rendimiento
 
-En el pico, la H1 llega a unas 800 partículas, la H1 Ignition a unas 1200, y la H3 y la H3 Ignition a unas 1600 (con 7 rocas). `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
+En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a unas 1900 partículas y 24 rocas. La H3 y la H3 Ignition llegan a unas 1600 partículas (con 7 rocas). `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
 
 ## Para que se vea como en el video
 
 - La vista previa usa **Bloom**. En `Lighting` agrega un `BloomEffect` con *Intensity* 0.6–1, *Size* 24 y *Threshold* 1.5–2. Si se ve demasiado blanco, sube el *Threshold*.
-- Los anillos de choque, la quemadura y el brillo del suelo son **Decals**, para que no les afecte ningún límite de tamaño de partícula. Para que brillen se les pone un Color3 mayor que 1 (sin brillo extra si Roblox lo limitara). Están pensados para suelo plano.
+- Los anillos de choque, la quemadura, el brillo del suelo y, en la H1, el charco, las grietas y las salpicaduras de lava son **Decals**, para que no les afecte ningún límite de tamaño de partícula. Para que brillen se les pone un Color3 mayor que 1 (sin brillo extra si Roblox lo limitara). Están pensados para suelo plano.
 - Los pilares de fuego usan la orientación `FacingCameraWorldUp`: siempre quedan verticales aunque la cámara se incline.
-- Las rocas en llamas son Parts reales (Slate oscuro) que se mueven por código y dejan estela. Al caer levantan polvo y dejan fuego unos segundos.
+- Las **rocas fundidas** de la H1 son Parts reales con el material **CrackedLava** de Roblox (roca oscura con grietas de lava). Cada una lleva pegado un resplandor naranja (un ParticleEmitter con `LockedToPart`) y una estela de gotas de lava, brasas y humo. Al caer dejan una salpicadura encendida y arden unos segundos.
+- Las rocas en llamas de la H1 clásica y de la H3 son Parts de Slate oscuro que dejan estela. Al caer levantan polvo y dejan fuego unos segundos.
+- Todas las rocas se mueven por código: no chocan con nada, no empujan a los jugadores y no detectan toques.
 
 ## Licencias de las texturas (todas libres para uso comercial)
 
 - **Kenney Particle Pack** (`kk_*`): CC0, de kenney.nl. El crédito es opcional. Ver `textures/KENNEY_LICENSE.txt`.
 - **Muestras oficiales de Effekseer** (`fx_*`): CC0. Agradecen el crédito a "Effekseer" y a los autores de las muestras. Ver `textures/EFFEKSEER_SAMPLES_LICENSE_CC0.txt`.
-- **`kz_*`**: generadas aquí, son tuyas.
+- **`kz_*`**: generadas aquí, son tuyas. Las de lava (`kz_lava_*`) se hicieron en parte a partir de las muestras CC0 de Effekseer.
 
 ## Si quieres cambiar algo
 
 - **H3** (pilares, tiempos, colores, separación de rocas): `tools/vfx_pillars.py`.
-- **H1**: la explosión gigante está en `tools/vfx_specs.py`. La Ignition se genera desde ella con `ignitionize`, que permite cambiar el tamaño y la intensidad.
+- **H1** (explosión de lava): `tools/vfx_lava.py`. Sus texturas propias (`kz_lava_*`) salen de `tools/gen_lava_textures.py`. La Ignition se genera desde ella con `ignitionize`, en `tools/vfx_specs.py`. Ahí puedes cambiar el tamaño, la intensidad y cuánto brilla el carmesí (`le_k`, `decal_le_k`).
+- **H1 clásica** (la de fuego): `GIANT` en `tools/vfx_specs.py`.
 
 Después de editarlos se regenera el módulo con:
 
