@@ -984,3 +984,8 @@ SPECS = {"GiantExplosion": _VL.LAVA_EXPLOSION, "GiantExplosionIgnition": GIANT_I
          "GiantExplosionClassic": GIANT_CLASSIC,
          "H3_Detonation": _VP.H3_N, "H3_DetonationIgnition": _VP.H3_I,
          "Explosion": EXPLOSION, "ExplosionAnime": EXPLOSION_ANIME, "FireLine": FIRELINE}
+
+# la ULTIMATE: el rayo carmesí (vfx_beam.py)
+import vfx_beam as _VB
+
+SPECS["UltimateBeam"] = _VB.ULTIMATE_BEAM

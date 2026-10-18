@@ -64,6 +64,55 @@ run("Giant Classic", function() return VFX.GiantExplosionClassic(R.CFrame.new(0,
 run("Explosion", function() return VFX.Explosion(R.CFrame.new(0, 2.5, 0), 1) end, 2)
 run("ExplosionAnime", function() return VFX.ExplosionAnime(R.CFrame.new(0, 2.5, 0), 1) end, 2)
 run("FireLine", function() return VFX.FireLine(R.CFrame.new(0, 0, 0), 120, 1) end, 3.6, 120)
+-- ULTIMATE: el rayo llega hasta donde pega (el rival o la primera superficie) y el impacto sale ahí; el suelo
+-- debajo se quema; al final los Beams se apagan y todo se limpia
+local function runBeam(name, call, seconds, hit, gy)
+	run(name, call, seconds)
+	local st = R.stats
+	local e = st.beamEnd
+	assert(e ~= nil, name .. ": el rayo no tiene punta")
+	-- ráfagas (Emit) y emisores continuos (Rate) en el impacto y en el suelo debajo
+	local nearHit, streamHit, nearGround = 0, 0, 0
+	local function onGround(p)
+		return gy and math.abs(p.Y - gy) < 2.5 and (R.Vector3.new(p.X, 0, p.Z) - R.Vector3.new(hit.X, 0, hit.Z)).Magnitude < 6
+	end
+	for _, p in st.emitPos do
+		if (p - hit).Magnitude < 8 then nearHit += 1 end
+		if onGround(p) then nearGround += 1 end
+	end
+	for _, p in st.streamPos do
+		if (p - hit).Magnitude < 8 then streamHit += 1 end
+		if onGround(p) then nearGround += 1 end
+	end
+	print(("%-17s   rayo: largo %.1f | ancho máx %.1f | Beams apagados %d | impacto: %d ráfagas, %d continuos | suelo: %d | decals %d"):format(
+		"", e.Magnitude, st.beamMaxW, st.beamsOff, nearHit, streamHit, nearGround, st.decals))
+	assert(st.beamMaxW > 10, name .. ": el rayo casi no tiene ancho")
+	assert(st.beamsOff >= 4, name .. ": los Beams no se apagaron al final")
+	assert(nearHit >= 6 and streamHit >= 8, name .. ": casi no hubo impacto donde pega el rayo")
+	if gy then
+		assert(nearGround >= 3, name .. ": el suelo bajo el impacto no recibió nada")
+		assert(st.decals >= 2, name .. ": faltan las marcas del suelo")
+	end
+end
+-- de lado, sin nada en el camino: pega en el punto del rival (a 120 studs); el suelo está 20 studs abajo
+runBeam("UltimateBeam", function()
+	return VFX.UltimateBeam(R.Vector3.new(0, 20, 0), R.Vector3.new(0, 20, -120), 1, 1)
+end, 6, R.Vector3.new(0, 20, -117), 0)
+assert(math.abs(R.stats.beamEnd.Magnitude - 120) < 0.5, "UltimateBeam: el rayo no llegó al rival")
+-- hacia abajo: el rival está bajo tierra, así que pega en el suelo (a 45 studs de la boca, en horizontal)
+runBeam("Beam al suelo x1.5", function()
+	return VFX.UltimateBeam(R.CFrame.new(0, 30, 0), R.Vector3.new(0, -10, -60), 1.5, 0)
+end, 6, R.Vector3.new(0, 0, -45), 0)
+assert(math.abs(R.stats.beamEnd.Magnitude - math.sqrt(45 ^ 2 + 30 ^ 2)) < 0.5, "Beam al suelo: no se cortó en el suelo")
+-- contra un Model (el pivote del rival), ignorando a quien lo lanza
+local rival = R.Instance.new("Model")
+rival.GetPivot = function() return R.CFrame.new(80, 15, 0) end
+local caster = R.Instance.new("Model")
+runBeam("Beam Model", function()
+	return VFX.UltimateBeam(R.Vector3.new(0, 25, 0), rival, 1, 2, { caster })
+end, 6, R.Vector3.new(80, 15, 0) + (R.Vector3.new(0, 25, 0) - R.Vector3.new(80, 15, 0)).Unit * 3, 0)
+assert(VFX.UltimateBeamStart > 0.3 and VFX.UltimateBeamStop >= VFX.UltimateBeamStart + 2.85, "tiempos del rayo")
+
 -- rocas en línea recta (desordenadas a propósito: el módulo las ordena)
 local line = {}
 for i = 0, 6 do table.insert(line, R.Vector3.new(8 + 14 * i, 0, 0.5 * i)) end

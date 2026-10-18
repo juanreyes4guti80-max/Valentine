@@ -171,8 +171,9 @@ def spawn(L, origin, rng, scale, Rf=None, length=0.0, zone=None):
         normal = u
     elif sh and sh["type"] == "Box":
         bx, by, bz = sh["size"]
-        off = Rf @ (np.array([rng.uniform(-0.5, 0.5) * bx, rng.uniform(-0.5, 0.5) * by,
-                              rng.uniform(-0.5, 0.5) * bz]) * scale)
+        lz = length * sh["len_k"] if sh.get("len_k") else bz * scale      # a lo largo de toda la línea
+        off = Rf @ np.array([rng.uniform(-0.5, 0.5) * bx * scale, rng.uniform(-0.5, 0.5) * by * scale,
+                             rng.uniform(-0.5, 0.5) * lz])
     p.pos = np.asarray(origin, float) + off + Rf @ (np.asarray(L.get("offset", (0, 0, 0)), float) * scale)
     inout = (L.get("shape") or {}).get("inout", "Outward")
     if normal is not None and inout in ("Outward", "Inward"):
@@ -398,6 +399,90 @@ def apply_lens(buf, cam, center, radius, strength=0.5):
     dst[:] = dst * (1 - w) + src * w
 
 
+def smooth_noise(seed, x):
+    """Ruido suave en -1..1 (para el pulso del rayo; en Roblox es math.noise)."""
+    return 0.5 * math.sin(x * 1.7 + seed) + 0.3 * math.sin(x * 3.1 + seed * 2.3) + 0.2 * math.sin(x * 5.3 + seed * 0.7)
+
+
+def draw_beam(buf, tb, cam, Bm, A, Bp, w, fade, t, scale):
+    """Beam de Roblox (FaceCamera): cinta recta de A a Bp que en cada punto se gira hacia la cámara, con la
+    textura a lo largo (Wrap: se repite cada tex_len studs y corre hacia Bp a 'speed' repeticiones por segundo;
+    Stretch: una vez). Cada píxel busca el punto del eje más cercano a su rayo: la distancia es el ancho."""
+    d = Bp - A
+    Ln = float(np.linalg.norm(d))
+    if Ln < 1e-3:
+        return
+    d = d / Ln
+    w0, w1 = w * Bm["w0"], w * Bm["w1"]
+    # recuadro en pantalla: los extremos (recortados delante de la cámara) más el medio ancho en píxeles
+    zA, zB = cam.to_cam(A)[2], cam.to_cam(Bp)[2]
+    near = 0.6
+    if zA < near and zB < near:
+        return
+    A_, B_ = A, Bp
+    if zA < near:
+        A_ = A + (Bp - A) * (near - zA) / (zB - zA)
+    elif zB < near:
+        B_ = Bp + (A - Bp) * (near - zB) / (zA - zB)
+    H, W = buf.shape[:2]
+    xs, ys = [], []
+    for P_, ww in ((A_, max(w0, w1)), (B_, max(w0, w1))):
+        q = cam.project(P_)
+        if q is None:
+            continue
+        hw = cam.f * ww / 2 / q[2] + 2
+        xs += [q[0] - hw, q[0] + hw]
+        ys += [q[1] - hw, q[1] + hw]
+    if not xs:
+        return
+    xa, xb = max(0, int(min(xs))), min(W, int(max(xs)) + 1)
+    ya, yb = max(0, int(min(ys))), min(H, int(max(ys)) + 1)
+    if xa >= xb or ya >= yb:
+        return
+    us, vs = np.meshgrid(np.arange(xa, xb) + 0.5, np.arange(ya, yb) + 0.5)
+    r = cam.ray(us.ravel(), vs.ravel())                      # 3 x N, unitarios
+    w0v = cam.C - A
+    bb = d @ r
+    dd = r.T @ w0v
+    ee = float(d @ w0v)
+    den = np.maximum(1 - bb * bb, 1e-9)
+    tt = (bb * ee - dd) / den                                 # a lo largo del rayo del píxel
+    sl = (ee - bb * dd) / den                                 # a lo largo del eje del Beam
+    X = cam.C[:, None] + r * tt
+    Pa = A[:, None] + d[:, None] * sl
+    diff = X - Pa
+    side = np.cross(d, (cam.C[:, None] - Pa).T).T             # dirección del ancho (mirando a la cámara)
+    side /= np.maximum(np.linalg.norm(side, axis=0), 1e-9)
+    q = np.sum(diff * side, axis=0)
+    fr = np.clip(sl / Ln, 0, 1)
+    wl = w0 + (w1 - w0) * fr
+    ok = (sl >= 0) & (sl <= Ln) & (np.abs(q) <= wl / 2) & (tt > 0)
+    if not ok.any():
+        return
+    T = np.asarray(tb.get(Bm["texture"], "None")[0], dtype=np.float32) / 255.0
+    th, tw = T.shape[:2]
+    v = q / np.maximum(wl, 1e-6) + 0.5
+    if Bm["mode"] == "Wrap":
+        u = (sl / (Bm["tex_len"] * scale) - Bm["speed"] * t) % 1.0
+    else:
+        u = fr
+    ix = np.clip((u * tw).astype(int), 0, tw - 1)
+    iy = np.clip((v * th).astype(int), 0, th - 1)
+    smp = T[iy, ix]
+    smp[~ok] = 0
+    keys = [k[0] for k in Bm["color"]]
+    col = np.stack([np.interp(fr, keys, [k[1][c] / 255 for k in Bm["color"]]) for c in range(3)], -1)
+    tr = np.interp(fr, [k[0] for k in Bm["transparency"]], [k[1] for k in Bm["transparency"]])
+    tr = tr + (1 - tr) * fade
+    smp = smp.reshape(yb - ya, xb - xa, 4)
+    rgb = smp[..., :3] * col.reshape(yb - ya, xb - xa, 3) * Bm["brightness"]
+    a = smp[..., 3:4] * (1 - tr).reshape(yb - ya, xb - xa, 1)
+    le = Bm["light_emission"]
+    dst = buf[ya:yb, xa:xb]
+    dst *= (1 - a * (1 - le))
+    dst += rgb * a
+
+
 def draw_box(buf, cam, pr_):
     """Caja sombreada de referencia (p. ej. un enemigo) apoyada en pos (centro de la base)."""
     from PIL import ImageDraw
@@ -464,16 +549,21 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
     for L in spec["layers"]:
         if L.get("orb"):
             continue           # van pegadas al proyectil (OrbSim)
-        oL = o0 + Rf @ np.array([0.0, 0.0, -L.get("line_u", 0.0) * length])
+        RvL = None
+        if L.get("at_ground"):            # en el suelo bajo el final de la línea (el impacto del rayo)
+            P = o0 + Rf @ np.array([0.0, 0.0, -length])
+            oL, RvL = np.array([P[0], ground_y, P[2]]), np.eye(3)
+        else:
+            oL = o0 + Rf @ np.array([0.0, 0.0, -L.get("line_u", 0.0) * length])
         if L.get("stream"):
-            streams.append([L, oL, 0.0, 0.0])
+            streams.append([L, oL, 0.0, 0.0, RvL])
         for ev in L.get("emit", []):
             t, n = ev[0], ev[1]
             pos = oL.copy()
             if len(ev) > 2:
                 u, side, up = ev[2], ev[3], ev[4]
                 pos = o0 + Rf @ np.array([side * scale, up * scale, -u * length])
-            events.append((t, n, L, pos, None, None))
+            events.append((t, n, L, pos, RvL, None))
         for ev in L.get("points", []):   # (t, n, x, y, z): posición local absoluta
             t, n, x, y, z = ev
             events.append((t, n, L, o0 + Rf @ (np.array([x, y, z], float) * scale), None, None))
@@ -513,7 +603,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             ei += 1
         # emisión continua
         for st_ in streams:
-            L, o, tb0, acc = st_
+            L, o, tb0, acc = st_[:4]
+            Rs = st_[4] if len(st_) > 4 and st_[4] is not None else Rf
             rate = 0.0
             for (a0, a1, r0, r1) in L["stream"]:
                 ta = t - tb0
@@ -522,7 +613,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             acc += rate * dt
             while acc >= 1.0:
                 acc -= 1.0
-                parts.append(spawn(L, o, rng, scale, Rf))
+                parts.append(spawn(L, o, rng, scale, Rs, length))
             st_[3] = acc
         # proyectil que crece: se mueve y emite sus capas
         if orbst is not None:
@@ -609,6 +700,17 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             d = cam.to_cam(np.asarray(pr_["pos"], float))
             if d[2] > 0.5:
                 items.append((d[2], 3, pr_, d, None))
+        if draw and spec.get("beams"):
+            Bq = spec["beam"]          # el rayo sale a los `start` s y en `grow` s llega al impacto
+            kg = min(max((t - Bq["start"]) / max(Bq["grow"], 1e-3), 0.0), 1.0)
+            bA, bB = o0, o0 + Rf @ np.array([0.0, 0.0, -length * kg])
+            for bi, Bm in enumerate(spec["beams"]):
+                w = Bm["width"] * scale * eval_seq(Bm["width_t"], t) * \
+                    (1 + Bm["pulse"] * smooth_noise(bi * 7.1, t * Bm["pulse_hz"]))
+                bfade = eval_seq(Bm["alpha_t"], t)
+                if w > 0.02 and bfade < 0.999 and kg > 0:
+                    dz = cam.to_cam((bA + bB) * 0.5)[2] - Bm.get("zoffset", 0.0) * scale
+                    items.append((dz, 4, (Bm, bA, bB, w, bfade), None, None))
         items.sort(key=lambda x: -x[0])
         for _, kind, obj, d, wp in items:
             if kind == 1:
@@ -619,6 +721,9 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 continue
             if kind == 3:
                 draw_box(buf, cam, obj)
+                continue
+            if kind == 4:
+                draw_beam(buf, tb, cam, *obj, t, scale)
                 continue
             am = fade.get(id(obj.L), 1.0)
             if obj.spin:

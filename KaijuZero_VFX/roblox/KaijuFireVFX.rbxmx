@@ -11,6 +11,8 @@
 		local KaijuFireVFX = require(ReplicatedStorage.KaijuFireVFX)
 		-- cf = punto del SUELO bajo la explosión; 1 = escala; 1 = intensidad de la sacudida de cámara
 		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
+		-- ULTIMATE: rayo de la boca al rival (pega a los KaijuFireVFX.UltimateBeamStart s); se ignora al propio kaiju
+		KaijuFireVFX.UltimateBeam(bocaDeKaijuZero, rival, 1, 1, { modeloDeKaijuZero })
 
 	ANTES DE USARLO:
 	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
@@ -64,11 +66,16 @@ KaijuFireVFX.TEXTURES = {
 	kk_trace_01 = "rbxassetid://0",
 	kk_twirl_01 = "rbxassetid://0",
 	kk_twirl_02 = "rbxassetid://0",
+	kz_beam_core = "rbxassetid://0",
+	kz_beam_flow = "rbxassetid://0",
+	kz_beam_glow = "rbxassetid://0",
+	kz_beam_ring = "rbxassetid://0",
 	kz_debris_2x2 = "rbxassetid://0",
 	kz_lava_cracks = "rbxassetid://0",
 	kz_lava_drop = "rbxassetid://0",
 	kz_lava_glob_2x2 = "rbxassetid://0",
 	kz_lava_pool = "rbxassetid://0",
+	kz_lava_rock_2x2 = "rbxassetid://0",
 	kz_lava_splat = "rbxassetid://0",
 	kz_scorch = "rbxassetid://0",
 }
@@ -189,7 +196,7 @@ local function configureEmitter(L: Layer, scale: number): ParticleEmitter
 	if L.shape then
 		e.Shape = (Enum.ParticleEmitterShape :: any)[L.shape.type]
 		e.ShapeStyle = (Enum.ParticleEmitterShapeStyle :: any)[L.shape.style]
-		e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+		e.ShapeInOut = (Enum.ParticleEmitterShapeInOut :: any)[L.shape.inout or "Outward"]
 	end
 	return e
 end
@@ -231,6 +238,9 @@ local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos:
 		local size
 		if L.shape.type == "Box" then
 			size = Vector3.new(L.shape.size[1], L.shape.size[2], L.shape.size[3]) * scale
+			if L.shape.len_k and len then -- a lo largo de toda la línea (p. ej. el rayo)
+				size = Vector3.new(size.X, size.Y, len * L.shape.len_k)
+			end
 		else
 			local d = L.shape.radius * 2 * scale
 			size = Vector3.new(d, d, d)
@@ -298,6 +308,15 @@ local function placeCarrier(carrier: Instance, holder: BasePart, pos: Vector3)
 	end
 end
 
+-- el portador de una capa del suelo va derecho (el suelo es horizontal; el rayo puede venir inclinado)
+local function levelCarrier(carrier: Instance, pos: Vector3)
+	if carrier:IsA("Attachment") then
+		(carrier :: Attachment).WorldCFrame = CFrame.new(pos)
+	else
+		(carrier :: BasePart).CFrame = CFrame.new(pos)
+	end
+end
+
 -- elemento plano del suelo hecho con Decal (sin límite de tamaño); baseCF = dónde va (horizontal)
 local function playDecalAt(L: Layer, holder: BasePart, scale: number, n: number, baseCF: CFrame)
 	for _ = 1, n do
@@ -361,10 +380,11 @@ local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
 	local localPos = holder.CFrame:PointToObjectSpace(worldPos)
 	for _, LL in L.land do
 		if LL.decal then
-			playDecalAt(LL, holder, s, LL.emit[1][2], holder.CFrame.Rotation + worldPos)
+			playDecalAt(LL, holder, s, LL.emit[1][2], CFrame.new(worldPos))
 			continue
 		end
-		local e = buildEmitter(LL, holder, s, localPos)
+		local e, carrier = buildEmitter(LL, holder, s, localPos)
+		levelCarrier(carrier, worldPos)
 		if LL.stream then
 			runStream(LL, e)
 		else
@@ -382,8 +402,11 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 	} :: any)[L.direction]
 	local list = {}
 	for i = 1, n do
-		local spread = CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
-			math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
+		local spread = if L.direction == "Front" or L.direction == "Back"
+			then CFrame.Angles(math.rad(rng:NextNumber(-L.spread[2], L.spread[2])),
+				math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0)
+			else CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
+				math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
 		local dir = (frame or holder.CFrame):VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
 		local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
 		local rock = Instance.new("Part")
@@ -452,17 +475,19 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 	end)
 end
 
-local function playMeteors(L: Layer, holder: BasePart, s: number, len: number)
-	local groundY = holder.Position.Y
+local function playMeteors(L: Layer, holder: BasePart, s: number, len: number, groundY: number?)
+	local gy = groundY or holder.Position.Y
 	for _, ev in L.emit do
 		local n = quality(ev[2])
 		local startOff = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
 		if ev[3] ~= nil then
 			startOff += linePos(ev[3], ev[4], ev[5], s, len)
+		else
+			startOff += linePos(L.line_u or 0, 0, 0, s, len)
 		end
 		task.delay(ev[1], function()
 			if holder.Parent then
-				launchMeteors(L, holder, s, n, holder.CFrame:PointToWorldSpace(startOff), groundY)
+				launchMeteors(L, holder, s, n, holder.CFrame:PointToWorldSpace(startOff), gy)
 			end
 		end)
 	end
@@ -712,13 +737,16 @@ local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, 
 	Debris:AddItem(holder, spec.cleanup)
 end
 
-local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?): Part
+local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?,
+	groundY: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
 	local len = length or 0
 	local tanH = math.tan(math.rad(math.clamp(angle or 60, 5, 170) / 2))
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, KaijuFireVFX.Parent)
 	for _, L in spec.layers do
-		if L.cone_emit and L.type == "meteor" then
+		if L.at_ground then
+			continue -- en el suelo bajo el impacto del rayo (las pone el rayo al pegar)
+		elseif L.cone_emit and L.type == "meteor" then
 			for _, ev in L.cone_emit do
 				local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
 				local n = quality(ev[2])
@@ -752,7 +780,7 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 				end
 			end
 		elseif L.type == "meteor" then
-			playMeteors(L, holder, s, len)
+			playMeteors(L, holder, s, len, groundY)
 		elseif L.decal then
 			for _, ev in L.emit do
 				local off = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
@@ -875,14 +903,14 @@ type Zone = {
 
 local GROUND_FALLBACK = Color3.fromRGB(112, 106, 112)
 
--- color y material del suelo en el centro de la zona (los cubos de destrucción salen de ahí)
-local function groundLook(pos: Vector3, holder: Instance): (Color3, Enum.Material, number?)
+-- color, material y altura del suelo bajo pos (los cubos de destrucción salen de ahí); exclude = lo que se ignora
+local function groundLook(pos: Vector3, exclude: { Instance }, depth: number?): (Color3, Enum.Material, number?)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	local ignore: { Instance } = { holder }
+	local ignore: { Instance } = table.clone(exclude)
 	for _ = 1, 4 do
 		params.FilterDescendantsInstances = ignore
-		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), params)
+		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -(depth or 40), 0), params)
 		if not hit then
 			break
 		end
@@ -905,6 +933,177 @@ local function groundLook(pos: Vector3, holder: Instance): (Color3, Enum.Materia
 		return inst.Color, mat, hit.Position.Y
 	end
 	return GROUND_FALLBACK, Enum.Material.Slate, nil
+end
+
+-- ---------------------------------------------------------------- rayo (beam)
+-- capas de Beam entre el origen y el impacto. El rayo sale de la boca a los `start` s y en `grow` s llega al
+-- impacto; el ancho se anima en el tiempo (width_t, con un pulso) y la textura corre hacia el impacto;
+-- alpha_t desvanece todo el rayo (0 = se ve, 1 = no se ve)
+local function runBeams(spec: Layer, holder: BasePart, s: number, len: number)
+	local Bm = spec.beam
+	local a0 = Instance.new("Attachment")
+	a0.Name = "BeamStart"
+	a0.Parent = holder
+	local a1 = Instance.new("Attachment")
+	a1.Name = "BeamEnd"
+	a1.Parent = holder
+	local list: { { B: Layer, b: Beam, seed: number } } = {}
+	for _, B in spec.beams do
+		local b = Instance.new("Beam")
+		b.Name = B.name
+		b.Attachment0 = a0
+		b.Attachment1 = a1
+		b.Texture = KaijuFireVFX.TEXTURES[B.texture] or ""
+		b.TextureMode = (Enum.TextureMode :: any)[B.mode]
+		b.TextureLength = B.tex_len * s
+		b.TextureSpeed = B.speed
+		b.LightEmission = B.light_emission
+		b.LightInfluence = 0
+		b.Brightness = B.brightness
+		b.Color = colorSeq(B.color)
+		b.FaceCamera = true
+		b.Segments = 10 -- la cinta se gira hacia la cámara a lo largo de todo el rayo
+		b.ZOffset = B.zoffset * s
+		b.Width0 = 0
+		b.Width1 = 0
+		b.Transparency = NumberSequence.new(1)
+		b.Parent = holder
+		table.insert(list, { B = B, b = b, seed = rng:NextNumber(0, 100) })
+	end
+	local tEnd = Bm.stop + Bm.fade
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = time() - t0
+		local k = math.clamp((t - Bm.start) / math.max(Bm.grow, 1e-3), 0, 1)
+		a1.Position = Vector3.new(0, 0, -len * k) -- la punta avanza rapidísimo hasta el impacto
+		for _, it in list do
+			local B = it.B
+			local pulse = math.clamp(2 * math.noise(it.seed, t * B.pulse_hz), -1, 1)
+			local w = B.width * s * evalNum(B.width_t, t) * (1 + B.pulse * pulse)
+			it.b.Width0 = w * B.w0
+			it.b.Width1 = w * B.w1
+			local fade = evalNum(B.alpha_t, t)
+			local kps = table.create(#B.transparency)
+			for i, kp in B.transparency do
+				kps[i] = NumberSequenceKeypoint.new(kp[1], math.clamp(kp[2] + (1 - kp[2]) * fade, 0, 1))
+			end
+			it.b.Transparency = NumberSequence.new(kps)
+		end
+		if t > tEnd then
+			conn:Disconnect()
+			for _, it in list do
+				it.b.Enabled = false
+			end
+		end
+	end)
+end
+
+-- luces del rayo: una en la boca y otra en el impacto (cuando el rayo llega), que parpadean mientras dura
+local function beamLights(spec: Layer, holder: BasePart, s: number, len: number)
+	if not KaijuFireVFX.UseLight then
+		return
+	end
+	local Bm = spec.beam
+	local lights: { { li: PointLight, t0: number } } = {}
+	for i, z in { 0, -math.max(len - 4 * s, 0) } do
+		local a = Instance.new("Attachment")
+		a.Name = "Light"
+		a.Position = Vector3.new(0, 0, z)
+		a.Parent = holder
+		local li = Instance.new("PointLight")
+		li.Color = Color3.fromRGB(Bm.light_color[1], Bm.light_color[2], Bm.light_color[3])
+		li.Brightness = 0
+		li.Range = math.min(Bm.light_range * s, 60)
+		li.Shadows = false
+		li.Parent = a
+		table.insert(lights, { li = li, t0 = if i == 1 then Bm.start else Bm.start + Bm.grow })
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > Bm.stop + Bm.fade then
+			conn:Disconnect()
+			return
+		end
+		for i, L in lights do
+			local on = math.clamp((t - L.t0) / 0.05, 0, 1) * math.clamp(1 - (t - Bm.stop) / Bm.fade, 0, 1)
+			L.li.Brightness = Bm.light_brightness * on * (1 + 0.25 * math.noise(i * 7.3, t * 12))
+		end
+	end)
+end
+
+-- el rayo sale de origin hacia el rival y pega en la primera superficie que encuentra (o en el rival)
+local function playBeam(spec: Layer, origin: any, target: any, scale: number?, shake: number?, ignore: { Instance }?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local A: Vector3 = if typeof(origin) == "CFrame" then origin.Position else origin
+	local T: Vector3
+	if typeof(target) == "Vector3" then
+		T = target
+	elseif typeof(target) == "CFrame" then
+		T = target.Position
+	elseif typeof(target) == "Instance" and target:IsA("Model") then
+		T = (target :: Model):GetPivot().Position
+	else
+		T = (target :: BasePart).Position
+	end
+	local dir = T - A
+	if dir.Magnitude < 1e-3 then
+		dir = Vector3.new(0, 0, -1)
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = ignore or {}
+	local hit = workspace:Raycast(A, dir.Unit * (dir.Magnitude + spec.beam.extra * s), params)
+	local P = if hit then hit.Position else T
+	local len = math.max((P - A).Magnitude, 1)
+	-- el suelo bajo el impacto (atravesando a quien lo lanza y al rival): ahí caen las rocas y quedan las marcas
+	local exclude: { Instance } = table.clone(ignore or {})
+	if typeof(target) == "Instance" then
+		table.insert(exclude, target)
+	end
+	local _, _, gy = groundLook(P - dir.Unit * 2 * s, exclude, 200)
+	local holder = play(spec, CFrame.lookAt(A, A + dir.Unit), scale, len, shake, nil, gy or -math.huge)
+	runBeams(spec, holder, s, len)
+	beamLights(spec, holder, s, len)
+	if gy then
+		local ground = Vector3.new(P.X, gy, P.Z)
+		for _, L in spec.layers do
+			if not L.at_ground then
+				continue
+			end
+			local at = ground + Vector3.new(0, L.offset[2] * s, 0)
+			if L.decal then
+				for _, ev in L.emit do
+					task.delay(ev[1], function()
+						if holder.Parent then
+							playDecalAt(L, holder, s, ev[2], CFrame.new(at))
+						end
+					end)
+				end
+			else
+				local e, carrier = buildEmitter(L, holder, s, Vector3.zero, len)
+				levelCarrier(carrier, at)
+				for _, ev in L.emit do
+					local n = quality(ev[2])
+					task.delay(ev[1], function()
+						if e.Parent then
+							e:Emit(n)
+						end
+					end)
+				end
+				if L.stream then
+					runStream(L, e)
+				end
+			end
+		end
+	end
+	return holder
 end
 
 -- escala de tamaños de una capa: con el radio ("r"), con la altura del pilar ("h") o con la escala
@@ -1368,7 +1567,7 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 	local look = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
 	local flat = if look.Magnitude > 1e-3 then CFrame.lookAt(pos, pos + look) else CFrame.new(pos)
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), flat, KaijuFireVFX.Parent)
-	local gColor, gMaterial, gy = groundLook(pos, holder)
+	local gColor, gMaterial, gy = groundLook(pos, { holder })
 	if gy and math.abs(gy - pos.Y) < snap then
 		holder.CFrame = flat + Vector3.new(0, gy - pos.Y, 0)
 	end
@@ -2077,6 +2276,7 @@ local SPEC_GiantExplosion = {
 				type = "Sphere",
 				radius = 6,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -2406,6 +2606,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {14, 26, 14},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {35, 35},
@@ -2467,6 +2668,7 @@ local SPEC_GiantExplosion = {
 				type = "Sphere",
 				radius = 12,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {60, 60},
@@ -2527,6 +2729,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {16, 10, 16},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -3069,6 +3272,7 @@ local SPEC_GiantExplosion = {
 				type = "Sphere",
 				radius = 14,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {120, 120},
@@ -3219,6 +3423,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {10, 0.2, 10},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -3274,6 +3479,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {10, 0.2, 10},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -3328,6 +3534,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {10, 1, 10},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -3484,6 +3691,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {8, 0.5, 8},
 				style = "Volume",
+				inout = "Outward",
 			},
 			zoffset = 0,
 			orientation = "FacingCamera",
@@ -3557,6 +3765,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0811, 0.2, 5.0811},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -3612,6 +3821,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0811, 0.2, 5.0811},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -3666,6 +3876,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0811, 1, 5.0811},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -3829,6 +4040,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {6.9155, 0.2, 6.9155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -3884,6 +4096,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {6.9155, 0.2, 6.9155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -3938,6 +4151,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {6.9155, 1, 6.9155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -4101,6 +4315,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {7.0607, 0.2, 7.0607},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -4156,6 +4371,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {7.0607, 0.2, 7.0607},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -4210,6 +4426,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {7.0607, 1, 7.0607},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -4373,6 +4590,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {6.8155, 0.2, 6.8155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -4428,6 +4646,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {6.8155, 0.2, 6.8155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -4482,6 +4701,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {6.8155, 1, 6.8155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -4645,6 +4865,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0427, 0.2, 5.0427},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -4700,6 +4921,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0427, 0.2, 5.0427},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -4754,6 +4976,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0427, 1, 5.0427},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -4917,6 +5140,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0863, 0.2, 5.0863},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -4972,6 +5196,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0863, 0.2, 5.0863},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -5026,6 +5251,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {5.0863, 1, 5.0863},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -5189,6 +5415,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {4.7082, 0.2, 4.7082},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -5244,6 +5471,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {4.7082, 0.2, 4.7082},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -5298,6 +5526,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {4.7082, 1, 4.7082},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -5461,6 +5690,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {7.5341, 0.2, 7.5341},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -5516,6 +5746,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {7.5341, 0.2, 7.5341},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -5570,6 +5801,7 @@ local SPEC_GiantExplosion = {
 				type = "Box",
 				size = {7.5341, 1, 7.5341},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -6109,6 +6341,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Sphere",
 				radius = 6,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -6438,6 +6671,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {14, 26, 14},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {35, 35},
@@ -6499,6 +6733,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Sphere",
 				radius = 12,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {60, 60},
@@ -6559,6 +6794,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {16, 10, 16},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -7101,6 +7337,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Sphere",
 				radius = 14,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {120, 120},
@@ -7251,6 +7488,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {10, 0.2, 10},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -7306,6 +7544,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {10, 0.2, 10},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -7360,6 +7599,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {10, 1, 10},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -7516,6 +7756,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {8, 0.5, 8},
 				style = "Volume",
+				inout = "Outward",
 			},
 			zoffset = 0,
 			orientation = "FacingCamera",
@@ -7589,6 +7830,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0811, 0.2, 5.0811},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -7644,6 +7886,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0811, 0.2, 5.0811},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -7698,6 +7941,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0811, 1, 5.0811},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -7861,6 +8105,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {6.9155, 0.2, 6.9155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -7916,6 +8161,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {6.9155, 0.2, 6.9155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -7970,6 +8216,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {6.9155, 1, 6.9155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -8133,6 +8380,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {7.0607, 0.2, 7.0607},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -8188,6 +8436,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {7.0607, 0.2, 7.0607},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -8242,6 +8491,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {7.0607, 1, 7.0607},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -8405,6 +8655,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {6.8155, 0.2, 6.8155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -8460,6 +8711,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {6.8155, 0.2, 6.8155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -8514,6 +8766,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {6.8155, 1, 6.8155},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -8677,6 +8930,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0427, 0.2, 5.0427},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -8732,6 +8986,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0427, 0.2, 5.0427},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -8786,6 +9041,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0427, 1, 5.0427},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -8949,6 +9205,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0863, 0.2, 5.0863},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -9004,6 +9261,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0863, 0.2, 5.0863},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -9058,6 +9316,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {5.0863, 1, 5.0863},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -9221,6 +9480,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {4.7082, 0.2, 4.7082},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -9276,6 +9536,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {4.7082, 0.2, 4.7082},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -9330,6 +9591,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {4.7082, 1, 4.7082},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -9493,6 +9755,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {7.5341, 0.2, 7.5341},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {25, 25},
@@ -9548,6 +9811,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {7.5341, 0.2, 7.5341},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -9602,6 +9866,7 @@ local SPEC_GiantExplosionIgnition = {
 				type = "Box",
 				size = {7.5341, 1, 7.5341},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -10168,6 +10433,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 5,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -10234,6 +10500,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 5,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -10300,6 +10567,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 10,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -10521,6 +10789,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 6,
 				style = "Surface",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -10585,6 +10854,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 17,
 				style = "Surface",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -10651,6 +10921,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 13,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -10711,6 +10982,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 13,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -10826,6 +11098,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {10, 24, 10},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -11188,6 +11461,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 14,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {120, 120},
@@ -11233,6 +11507,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Sphere",
 				radius = 18,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -11367,6 +11642,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {13.2, 0.2, 13.2},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -11421,6 +11697,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {13.2, 0.2, 13.2},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -11485,6 +11762,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {13.2, 0.2, 13.2},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -11580,6 +11858,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {13.2, 2, 13.2},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -11676,6 +11955,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.4856, 0.2, 8.4856},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -11730,6 +12010,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.4856, 0.2, 8.4856},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -11794,6 +12075,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.4856, 0.2, 8.4856},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -11889,6 +12171,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.4856, 2, 8.4856},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -11985,6 +12268,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.1397, 0.2, 7.1397},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -12039,6 +12323,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.1397, 0.2, 7.1397},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -12103,6 +12388,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.1397, 0.2, 7.1397},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -12198,6 +12484,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.1397, 2, 7.1397},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -12294,6 +12581,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.3075, 0.2, 7.3075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -12348,6 +12636,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.3075, 0.2, 7.3075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -12412,6 +12701,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.3075, 0.2, 7.3075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -12507,6 +12797,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.3075, 2, 7.3075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -12603,6 +12894,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.2556, 0.2, 7.2556},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -12657,6 +12949,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.2556, 0.2, 7.2556},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -12721,6 +13014,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.2556, 0.2, 7.2556},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -12816,6 +13110,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.2556, 2, 7.2556},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -12912,6 +13207,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.5803, 0.2, 8.5803},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -12966,6 +13262,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.5803, 0.2, 8.5803},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -13030,6 +13327,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.5803, 0.2, 8.5803},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -13125,6 +13423,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {8.5803, 2, 8.5803},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -13221,6 +13520,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {6.6978, 0.2, 6.6978},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -13275,6 +13575,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {6.6978, 0.2, 6.6978},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -13339,6 +13640,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {6.6978, 0.2, 6.6978},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -13434,6 +13736,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {6.6978, 2, 6.6978},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -13530,6 +13833,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.5528, 0.2, 7.5528},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -13584,6 +13888,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.5528, 0.2, 7.5528},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -13648,6 +13953,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.5528, 0.2, 7.5528},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -13743,6 +14049,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {7.5528, 2, 7.5528},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -13839,6 +14146,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {11.1845, 0.2, 11.1845},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -13893,6 +14201,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {11.1845, 0.2, 11.1845},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -13957,6 +14266,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {11.1845, 0.2, 11.1845},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -14052,6 +14362,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {11.1845, 2, 11.1845},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -14148,6 +14459,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {9.4075, 0.2, 9.4075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -14202,6 +14514,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {9.4075, 0.2, 9.4075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -14266,6 +14579,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {9.4075, 0.2, 9.4075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -14361,6 +14675,7 @@ local SPEC_GiantExplosionClassic = {
 				type = "Box",
 				size = {9.4075, 2, 9.4075},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {30, 30},
@@ -14563,6 +14878,7 @@ local SPEC_H3_Detonation = {
 				type = "Sphere",
 				radius = 1.92,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -14626,6 +14942,7 @@ local SPEC_H3_Detonation = {
 				type = "Sphere",
 				radius = 1.92,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -15228,6 +15545,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {8.4, 0.5, 8.4},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -15405,6 +15723,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {6.3, 29.4, 6.3},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -15754,6 +16073,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {6, 0.5, 6},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -15939,6 +16259,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {4.5, 21, 4.5},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -16263,6 +16584,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {4.44, 0.5, 4.44},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -16437,6 +16759,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {3.33, 15.54, 3.33},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -16746,6 +17069,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {3.12, 0.5, 3.12},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -16913,6 +17237,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {2.34, 10.92, 2.34},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -17414,6 +17739,7 @@ local SPEC_H3_Detonation = {
 				type = "Sphere",
 				radius = 3.52,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -17475,6 +17801,7 @@ local SPEC_H3_Detonation = {
 				type = "Sphere",
 				radius = 3.52,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -18016,6 +18343,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {12.6, 0.5, 12.6},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -18164,6 +18492,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {9.45, 44.1, 9.45},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -18211,6 +18540,7 @@ local SPEC_H3_Detonation = {
 				type = "Sphere",
 				radius = 3.78,
 				style = "Surface",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -18464,6 +18794,7 @@ local SPEC_H3_Detonation = {
 				type = "Box",
 				size = {5.5, 0.2, 5.5},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -18695,6 +19026,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Sphere",
 				radius = 1.92,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -18758,6 +19090,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Sphere",
 				radius = 1.92,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -19360,6 +19693,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {9.52, 0.5, 9.52},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -19537,6 +19871,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {7.14, 33.32, 7.14},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -19886,6 +20221,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {6.8, 0.5, 6.8},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -20071,6 +20407,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {5.1, 23.8, 5.1},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -20395,6 +20732,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {5.04, 0.5, 5.04},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -20569,6 +20907,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {3.78, 17.64, 3.78},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -20878,6 +21217,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {3.54, 0.5, 3.54},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -21045,6 +21385,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {2.655, 12.39, 2.655},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -21546,6 +21887,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Sphere",
 				radius = 3.52,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -21607,6 +21949,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Sphere",
 				radius = 3.52,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {70, 70},
@@ -22148,6 +22491,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {14.28, 0.5, 14.28},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {12, 12},
@@ -22296,6 +22640,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {10.71, 49.98, 10.71},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {40, 40},
@@ -22343,6 +22688,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Sphere",
 				radius = 4.284,
 				style = "Surface",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -22651,6 +22997,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {6, 0.2, 6},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {8, 8},
@@ -22720,6 +23067,7 @@ local SPEC_H3_DetonationIgnition = {
 				type = "Box",
 				size = {6, 0.2, 6},
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {20, 20},
@@ -23174,6 +23522,7 @@ local SPEC_Explosion = {
 				type = "Sphere",
 				radius = 2.5,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -23235,6 +23584,7 @@ local SPEC_Explosion = {
 				type = "Sphere",
 				radius = 2.5,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -23489,6 +23839,7 @@ local SPEC_Explosion = {
 				type = "Sphere",
 				radius = 7,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -23681,6 +24032,7 @@ local SPEC_Explosion = {
 				type = "Sphere",
 				radius = 4,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {60, 60},
@@ -23732,6 +24084,7 @@ local SPEC_Explosion = {
 				type = "Sphere",
 				radius = 4,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {60, 60},
@@ -23783,6 +24136,7 @@ local SPEC_Explosion = {
 				type = "Sphere",
 				radius = 4,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {120, 120},
@@ -24203,6 +24557,7 @@ local SPEC_ExplosionAnime = {
 				type = "Sphere",
 				radius = 4,
 				style = "Surface",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -24310,6 +24665,7 @@ local SPEC_ExplosionAnime = {
 				type = "Sphere",
 				radius = 3,
 				style = "Surface",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -24363,6 +24719,7 @@ local SPEC_ExplosionAnime = {
 				type = "Sphere",
 				radius = 2,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -24457,6 +24814,7 @@ local SPEC_ExplosionAnime = {
 				type = "Sphere",
 				radius = 6,
 				style = "Surface",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -24506,6 +24864,7 @@ local SPEC_ExplosionAnime = {
 				type = "Sphere",
 				radius = 9,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -24604,6 +24963,7 @@ local SPEC_ExplosionAnime = {
 				type = "Sphere",
 				radius = 5,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {60, 60},
@@ -25189,6 +25549,7 @@ local SPEC_FireLine = {
 				type = "Sphere",
 				radius = 1.5,
 				style = "Volume",
+				inout = "Outward",
 			},
 			direction = "Top",
 			spread = {180, 180},
@@ -25747,6 +26108,2480 @@ local SPEC_FireLine = {
 function KaijuFireVFX.FireLine(cf: CFrame, length: number?, scale: number?, shake: number?): Part
 	return play(SPEC_FireLine, cf, scale, length or 90 * (scale or 1), shake)
 end
+
+local SPEC_UltimateBeam = {
+	name = "UltimateBeam",
+	duration = 3.6,
+	cleanup = 5.3,
+	layers = {
+		{
+			name = "ChargeGlow",
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			offset = {0, 0, -1},
+			lifetime = {0.34, 0.34},
+			size = {
+				{0, 4, 0},
+				{0.85, 24, 0},
+				{1, 32, 0},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.8, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 70, 86},
+				},
+				{
+					0.7,
+					{255, 150, 150},
+				},
+				{
+					1,
+					{255, 236, 232},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			zoffset = 2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ChargeIn",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			offset = {0, 0, -1},
+			shape = {
+				type = "Sphere",
+				radius = 18,
+				style = "Surface",
+				inout = "Inward",
+			},
+			speed = {62, 82},
+			lifetime = {0.2, 0.26},
+			size = {
+				{0, 0, 0},
+				{0.3, 11, 2},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 232},
+				},
+				{
+					0.4,
+					{255, 96, 104},
+				},
+				{
+					1,
+					{210, 22, 46},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			stream = {
+				{0, 0.27, 110, 150},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ChargeSparks",
+			texture = "fx_spark4",
+			offset = {0, 0, -1},
+			shape = {
+				type = "Sphere",
+				radius = 14,
+				style = "Surface",
+				inout = "Inward",
+			},
+			speed = {45, 60},
+			lifetime = {0.2, 0.26},
+			size = {
+				{0, 0, 0},
+				{0.3, 3.2, 0.8},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 232},
+				},
+				{
+					0.4,
+					{255, 96, 104},
+				},
+				{
+					1,
+					{210, 22, 46},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			rotation = {0, 360},
+			stream = {
+				{0, 0.27, 50, 70},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ChargeRings",
+			texture = "kz_beam_ring",
+			orientation = "VelocityPerpendicular",
+			direction = "Front",
+			offset = {0, 0, -1},
+			speed = {0.5, 0.5},
+			lifetime = {0.22, 0.22},
+			size = {
+				{0, 26, 0},
+				{1, 3, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.35, 0.3, 0},
+				{1, 0.15, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 24, 50},
+				},
+				{
+					1,
+					{255, 200, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			stream = {
+				{0, 0.24, 14, 18},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "MouthFlash",
+			texture = "fx_glow",
+			emit = {
+				{0.3, 1},
+			},
+			offset = {0, 0, -2},
+			lifetime = {0.3, 0.3},
+			size = {
+				{0, 18, 0},
+				{0.25, 44, 0},
+				{1, 48, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.5, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 4,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "MouthBurst",
+			texture = "fx_star",
+			emit = {
+				{0.3, 3},
+			},
+			offset = {0, 0, -2},
+			lifetime = {0.18, 0.24},
+			size = {
+				{0, 24, 0},
+				{0.3, 52, 0},
+				{1, 36, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.7,
+			rotation = {0, 360},
+			zoffset = 5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "MouthStar",
+			texture = "fx_star",
+			offset = {0, 0, -2},
+			lifetime = {0.1, 0.16},
+			size = {
+				{0, 28, 6},
+				{0.5, 38, 7},
+				{1, 28, 6},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rotation = {0, 360},
+			zoffset = 5,
+			stream = {
+				{0.3, 3.28, 16, 16},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "MouthStarCore",
+			texture = "kk_star_06",
+			offset = {0, 0, -2},
+			lifetime = {0.08, 0.12},
+			size = {
+				{0, 14, 3},
+				{0.5, 18, 3},
+				{1, 14, 3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 248, 244},
+				},
+				{
+					0.5,
+					{255, 140, 140},
+				},
+				{
+					1,
+					{230, 40, 60},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			zoffset = 6,
+			stream = {
+				{0.3, 3.28, 12, 12},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "MouthGlow",
+			texture = "fx_glow",
+			offset = {0, 0, -2},
+			lifetime = {0.15, 0.2},
+			size = {
+				{0, 26, 3},
+				{1, 32, 3},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{1, 0.8, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 30, 55},
+				},
+				{
+					1,
+					{170, 10, 32},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 3,
+			stream = {
+				{0.3, 3.28, 12, 12},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "MouthRings",
+			texture = "kz_beam_ring",
+			orientation = "VelocityPerpendicular",
+			direction = "Front",
+			offset = {0, 0, -2},
+			speed = {14, 26},
+			drag = 2,
+			lifetime = {0.32, 0.46},
+			size = {
+				{0, 8, 0},
+				{0.4, 26, 0},
+				{1, 38, 0},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			stream = {
+				{0.32, 3.28, 8, 8},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "MouthSwirl",
+			texture = "kk_twirl_01",
+			orientation = "VelocityPerpendicular",
+			direction = "Front",
+			offset = {0, 0, -3},
+			speed = {3, 5},
+			lifetime = {0.25, 0.35},
+			size = {
+				{0, 16, 0},
+				{1, 30, 0},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.4, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 92, 104},
+				},
+				{
+					0.5,
+					{225, 28, 52},
+				},
+				{
+					1,
+					{160, 10, 32},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {380, 560},
+			stream = {
+				{0.32, 3.28, 9, 9},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "MouthSparks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			offset = {0, 0, -2},
+			spread = {55, 55},
+			speed = {70, 130},
+			drag = 3,
+			lifetime = {0.2, 0.35},
+			size = {
+				{0, 10, 2},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 232},
+				},
+				{
+					0.4,
+					{255, 96, 104},
+				},
+				{
+					1,
+					{210, 22, 46},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			stream = {
+				{0.32, 3.28, 50, 50},
+			},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "MouthSmoke",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			offset = {0, 2, -3},
+			direction = "Top",
+			spread = {40, 40},
+			speed = {6, 12},
+			drag = 1.5,
+			accel = {0, 10, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 6, 2},
+				{1, 20, 4},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.15, 0.62, 0},
+				{0.5, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 52, 62},
+				},
+				{
+					0.3,
+					{175, 40, 52},
+				},
+				{
+					0.7,
+					{135, 40, 50},
+				},
+				{
+					1,
+					{112, 58, 64},
+				},
+			},
+			light_emission = 0.1,
+			brightness = 1.2,
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -3,
+			stream = {
+				{0.4, 3.28, 7, 7},
+			},
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BeamHead",
+			texture = "fx_glow",
+			emit = {
+				{0.3, 1},
+			},
+			offset = {0, 0, -2},
+			direction = "Front",
+			speed_len = {10, 10},
+			lifetime = {0.1, 0.1},
+			size = {
+				{0, 18, 0},
+				{1, 26, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{1, 0.2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 232},
+				},
+				{
+					1,
+					{255, 120, 120},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			zoffset = 4,
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "BeamHeadStar",
+			texture = "kk_star_06",
+			emit = {
+				{0.3, 1},
+			},
+			offset = {0, 0, -2},
+			direction = "Front",
+			speed_len = {10, 10},
+			lifetime = {0.1, 0.1},
+			size = {
+				{0, 22, 0},
+				{1, 30, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0.1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			zoffset = 5,
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "TravelRings",
+			texture = "kz_beam_ring",
+			orientation = "VelocityPerpendicular",
+			direction = "Front",
+			offset = {0, 0, -3},
+			speed_len = {1.7, 2.1},
+			lifetime = {0.4, 0.45},
+			size = {
+				{0, 26, 0},
+				{0.5, 30, 0},
+				{1, 27, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.12, 0.3, 0},
+				{0.75, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 170, 170},
+				},
+				{
+					0.3,
+					{250, 64, 80},
+				},
+				{
+					1,
+					{215, 24, 48},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			stream = {
+				{0.42, 3.25, 9, 9},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "TravelRingsBig",
+			texture = "kz_beam_ring",
+			orientation = "VelocityPerpendicular",
+			direction = "Front",
+			offset = {0, 0, -3},
+			speed_len = {0.8, 1},
+			lifetime = {0.85, 0.95},
+			size = {
+				{0, 34, 0},
+				{0.5, 38, 0},
+				{1, 35, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.12, 0.45, 0},
+				{0.75, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 92, 104},
+				},
+				{
+					0.5,
+					{225, 28, 52},
+				},
+				{
+					1,
+					{160, 10, 32},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			stream = {
+				{0.42, 2.7, 3.5, 3.5},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BeamEmbers",
+			texture = "kk_flare_01",
+			shape = {
+				type = "Box",
+				size = {7, 7, 1},
+				style = "Volume",
+				inout = "Outward",
+				len_k = 0.92,
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {6, 22},
+			drag = 1,
+			accel = {0, 12, 0},
+			lifetime = {0.4, 0.8},
+			size = {
+				{0, 0, 0},
+				{0.15, 2.4, 0.6},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 200, 196},
+				},
+				{
+					0.4,
+					{255, 70, 84},
+				},
+				{
+					1,
+					{190, 14, 38},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			stream = {
+				{0.4, 3.28, 70, 70},
+			},
+			line_u = 0.5,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			emit = {},
+		},
+		{
+			name = "BeamStreaks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {8, 8, 1},
+				style = "Volume",
+				inout = "Outward",
+				len_k = 0.76,
+			},
+			line_u = 0.42,
+			direction = "Front",
+			spread = {4, 4},
+			speed_len = {1.6, 2.2},
+			lifetime = {0.07, 0.1},
+			size = {
+				{0, 12, 3},
+				{1, 7, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 232},
+				},
+				{
+					0.4,
+					{255, 96, 104},
+				},
+				{
+					1,
+					{210, 22, 46},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			stream = {
+				{0.4, 3.28, 45, 45},
+			},
+			speed = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			emit = {},
+		},
+		{
+			name = "BeamLava",
+			texture = "kz_lava_glob_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			shape = {
+				type = "Box",
+				size = {6, 6, 1},
+				style = "Volume",
+				inout = "Outward",
+				len_k = 0.9,
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {4, 14},
+			drag = 0.4,
+			accel = {0, -90, 0},
+			lifetime = {0.5, 0.8},
+			size = {
+				{0, 1, 0.3},
+				{0.3, 2.1, 0.5},
+				{1, 1.2, 0.3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.75, 0.05, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 170, 160},
+				},
+				{
+					0.25,
+					{255, 70, 80},
+				},
+				{
+					0.6,
+					{205, 20, 44},
+				},
+				{
+					1,
+					{120, 12, 28},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-200, 200},
+			stream = {
+				{0.45, 3.28, 22, 22},
+			},
+			line_u = 0.5,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			emit = {},
+		},
+		{
+			name = "BeamSmoke",
+			texture = "kk_smoke_08",
+			shape = {
+				type = "Box",
+				size = {12, 12, 1},
+				style = "Volume",
+				inout = "Outward",
+				len_k = 0.9,
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {3, 8},
+			drag = 1,
+			accel = {0, 6, 0},
+			lifetime = {0.8, 1.1},
+			size = {
+				{0, 8, 2},
+				{1, 22, 4},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.15, 0.5, 0},
+				{0.6, 0.62, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{190, 42, 52},
+				},
+				{
+					0.4,
+					{125, 34, 42},
+				},
+				{
+					1,
+					{86, 46, 50},
+				},
+			},
+			light_emission = 0.1,
+			brightness = 1.2,
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -6,
+			stream = {
+				{0.45, 3.28, 14, 14},
+			},
+			line_u = 0.5,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			emit = {},
+		},
+		{
+			name = "ImpactFlash",
+			texture = "fx_glow",
+			emit = {
+				{0.4, 1},
+			},
+			lifetime = {0.3, 0.3},
+			size = {
+				{0, 20, 0},
+				{0.25, 60, 0},
+				{1, 66, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.5, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.1,
+			zoffset = 4,
+			line_u = 1,
+			offset = {0, 0, 3},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "ImpactBurst",
+			texture = "fx_burst_a",
+			emit = {
+				{0.4, 2},
+			},
+			lifetime = {0.2, 0.24},
+			size = {
+				{0, 16, 0},
+				{0.4, 50, 0},
+				{1, 56, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 230},
+				},
+				{
+					0.2,
+					{255, 116, 116},
+				},
+				{
+					0.55,
+					{228, 32, 56},
+				},
+				{
+					1,
+					{120, 10, 26},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1.6,
+			rotation = {0, 360},
+			zoffset = 3,
+			line_u = 1,
+			offset = {0, 0, 3},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "ImpactShock",
+			texture = "kz_beam_ring",
+			orientation = "VelocityPerpendicular",
+			direction = "Back",
+			emit = {
+				{0.4, 2},
+			},
+			speed = {0.5, 0.5},
+			lifetime = {0.32, 0.4},
+			size = {
+				{0, 12, 0},
+				{1, 80, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.7,
+			rotation = {0, 360},
+			line_u = 1,
+			offset = {0, 0, 3},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "ImpactRings",
+			texture = "kz_beam_ring",
+			orientation = "VelocityPerpendicular",
+			direction = "Back",
+			speed = {6, 14},
+			lifetime = {0.3, 0.4},
+			size = {
+				{0, 10, 0},
+				{1, 46, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.5, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			stream = {
+				{0.42, 3.28, 7, 7},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "ImpactStar",
+			texture = "fx_star",
+			lifetime = {0.08, 0.14},
+			size = {
+				{0, 32, 6},
+				{0.5, 42, 8},
+				{1, 30, 6},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 236},
+				},
+				{
+					0.25,
+					{255, 120, 120},
+				},
+				{
+					0.6,
+					{235, 40, 62},
+				},
+				{
+					1,
+					{170, 14, 36},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			zoffset = 4,
+			stream = {
+				{0.4, 3.28, 15, 15},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "ImpactGlow",
+			texture = "fx_glow",
+			lifetime = {0.15, 0.22},
+			size = {
+				{0, 36, 4},
+				{1, 42, 4},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{1, 0.8, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 30, 55},
+				},
+				{
+					1,
+					{170, 10, 32},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 2,
+			stream = {
+				{0.4, 3.28, 10, 10},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "ImpactFire",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Back",
+			spread = {75, 75},
+			speed = {12, 30},
+			drag = 2.5,
+			accel = {0, 14, 0},
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 8, 2},
+				{0.4, 18, 3},
+				{1, 22, 3},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.25, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 230},
+				},
+				{
+					0.2,
+					{255, 116, 116},
+				},
+				{
+					0.55,
+					{228, 32, 56},
+				},
+				{
+					1,
+					{120, 10, 26},
+				},
+			},
+			light_emission = 0.35,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-90, 90},
+			stream = {
+				{0.4, 3.28, 26, 26},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "ImpactSpray",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Back",
+			spread = {80, 80},
+			speed = {90, 170},
+			drag = 3.5,
+			accel = {0, -70, 0},
+			lifetime = {0.25, 0.45},
+			size = {
+				{0, 12, 3},
+				{1, 4, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 232},
+				},
+				{
+					0.4,
+					{255, 96, 104},
+				},
+				{
+					1,
+					{210, 22, 46},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			emit = {
+				{0.4, 40},
+			},
+			stream = {
+				{0.4, 3.28, 75, 75},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+		},
+		{
+			name = "ImpactLava",
+			texture = "kz_lava_glob_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Back",
+			spread = {70, 70},
+			speed = {35, 75},
+			drag = 0.5,
+			accel = {0, -130, 0},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 1.6, 0.4},
+				{0.3, 3, 0.6},
+				{1, 2, 0.4},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.75, 0.05, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 170, 160},
+				},
+				{
+					0.25,
+					{255, 70, 80},
+				},
+				{
+					0.6,
+					{205, 20, 44},
+				},
+				{
+					1,
+					{120, 12, 28},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.6,
+			rotation = {0, 360},
+			rot_speed = {-220, 220},
+			emit = {
+				{0.4, 20},
+			},
+			stream = {
+				{0.4, 3.28, 30, 30},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "ImpactDebris",
+			texture = "kz_lava_rock_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Back",
+			spread = {70, 70},
+			speed = {40, 90},
+			drag = 0.3,
+			accel = {0, -130, 0},
+			lifetime = {0.7, 1.1},
+			size = {
+				{0, 2.2, 0.8},
+				{1, 1.9, 0.7},
+			},
+			color = {
+				{
+					0,
+					{255, 140, 130},
+				},
+				{
+					1,
+					{240, 100, 96},
+				},
+			},
+			light_emission = 0.1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-360, 360},
+			emit = {
+				{0.4, 16},
+			},
+			stream = {
+				{0.4, 3.28, 18, 18},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "ImpactSmoke",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {35, 35},
+			speed = {10, 20},
+			drag = 1.2,
+			accel = {0, 10, 0},
+			lifetime = {1, 1.5},
+			size = {
+				{0, 10, 3},
+				{1, 30, 5},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.15, 0.32, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 52, 62},
+				},
+				{
+					0.3,
+					{175, 40, 52},
+				},
+				{
+					0.7,
+					{135, 40, 50},
+				},
+				{
+					1,
+					{112, 58, 64},
+				},
+			},
+			light_emission = 0.1,
+			brightness = 1.2,
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -5,
+			stream = {
+				{0.45, 3.28, 9, 9},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "ImpactSplash",
+			texture = "kk_muzzle_01",
+			orientation = "VelocityParallel",
+			direction = "Back",
+			spread = {85, 85},
+			speed = {40, 70},
+			drag = 4,
+			lifetime = {0.16, 0.26},
+			size = {
+				{0, 6, 2},
+				{0.3, 18, 4},
+				{1, 14, 3},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.25, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 230},
+				},
+				{
+					0.2,
+					{255, 116, 116},
+				},
+				{
+					0.55,
+					{228, 32, 56},
+				},
+				{
+					1,
+					{120, 10, 26},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.6,
+			stream = {
+				{0.4, 3.28, 34, 34},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			emit = {},
+		},
+		{
+			name = "ImpactRocks",
+			type = "meteor",
+			emit = {
+				{0.42, 4},
+				{1.3, 2},
+				{2, 2},
+			},
+			direction = "Back",
+			spread = {55, 55},
+			speed = {55, 95},
+			accel = {0, -130, 0},
+			drag = 0.2,
+			lifetime = {1, 1.3},
+			trails = {
+				{
+					name = "RockGlow",
+					rate = 60,
+					locked = true,
+					texture = "fx_glow",
+					speed = {0, 0},
+					direction = "Top",
+					lifetime = {0.075, 0.075},
+					size = {
+						{0, 6.5, 0.8},
+						{1, 6.5, 0.8},
+					},
+					color = {
+						{
+							0,
+							{255, 30, 50},
+						},
+						{
+							1,
+							{255, 30, 50},
+						},
+					},
+					transparency = {
+						{0, 0.9, 0},
+						{1, 0.9, 0},
+					},
+					light_emission = 1,
+					brightness = 1,
+					spread = {0, 0},
+					accel = {0, 0, 0},
+					drag = 0,
+					rotation = {0, 0},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+				{
+					name = "RockEmbers",
+					rate = 30,
+					texture = "kk_flare_01",
+					speed = {0, 3},
+					direction = "Top",
+					spread = {180, 180},
+					lifetime = {0.25, 0.45},
+					size = {
+						{0, 0, 0},
+						{0.15, 2.4, 0.6},
+						{1, 0, 0},
+					},
+					color = {
+						{
+							0,
+							{255, 200, 196},
+						},
+						{
+							0.4,
+							{255, 70, 84},
+						},
+						{
+							1,
+							{190, 14, 38},
+						},
+					},
+					light_emission = 1,
+					brightness = 1.7,
+					accel = {0, 0, 0},
+					drag = 0,
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					rotation = {0, 0},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+				{
+					name = "RockSmoke",
+					rate = 22,
+					texture = "kk_smoke_04",
+					speed = {1, 4},
+					direction = "Top",
+					spread = {180, 180},
+					drag = 2,
+					accel = {0, 6, 0},
+					lifetime = {0.5, 0.8},
+					size = {
+						{0, 3, 0.8},
+						{1, 9, 2},
+					},
+					transparency = {
+						{0, 0.4, 0},
+						{0.6, 0.6, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 52, 62},
+						},
+						{
+							0.3,
+							{175, 40, 52},
+						},
+						{
+							0.7,
+							{135, 40, 50},
+						},
+						{
+							1,
+							{112, 58, 64},
+						},
+					},
+					rotation = {0, 360},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+			},
+			land = {
+				{
+					name = "RockSplat",
+					texture = "kz_lava_splat",
+					emit = {
+						{0, 1},
+					},
+					lifetime = {1.4, 1.4},
+					size = {
+						{0, 2, 0},
+						{0.05, 7, 0},
+						{1, 7.5, 0},
+					},
+					transparency = {
+						{0, 0.1, 0},
+						{0.75, 0.3, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{230, 60, 70},
+						},
+						{
+							0.3,
+							{170, 20, 40},
+						},
+						{
+							1,
+							{70, 12, 20},
+						},
+					},
+					light_emission = 0.5,
+					rotation = {0, 360},
+					decal = true,
+					orientation = "VelocityPerpendicular",
+					direction = "Top",
+					speed = {0.01, 0.01},
+					spread = {0, 0},
+					accel = {0, 0, 0},
+					drag = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+				{
+					name = "RockWisp",
+					texture = "kk_smoke_04",
+					direction = "Top",
+					spread = {15, 15},
+					speed = {4, 9},
+					drag = 1.2,
+					accel = {0, 5, 0},
+					lifetime = {0.7, 1},
+					size = {
+						{0, 2, 0.6},
+						{1, 7, 2},
+					},
+					transparency = {
+						{0, 0.6, 0},
+						{0.3, 0.5, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 52, 62},
+						},
+						{
+							0.3,
+							{175, 40, 52},
+						},
+						{
+							0.7,
+							{135, 40, 50},
+						},
+						{
+							1,
+							{112, 58, 64},
+						},
+					},
+					rotation = {0, 360},
+					stream = {
+						{0.05, 0.7, 3, 0.5},
+					},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+			},
+			line_u = 1,
+			offset = {0, 0, 3},
+			rock = {
+				size = {2.6, 4.2},
+				spin = {-480, 480},
+				material = "CrackedLava",
+				color = {140, 34, 38},
+			},
+		},
+		{
+			name = "CutPuff",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{3.32, 8},
+			},
+			direction = "Back",
+			spread = {70, 70},
+			speed = {14, 30},
+			drag = 2,
+			accel = {0, 10, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 8, 2},
+				{1, 26, 5},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 52, 62},
+				},
+				{
+					0.3,
+					{175, 40, 52},
+				},
+				{
+					0.7,
+					{135, 40, 50},
+				},
+				{
+					1,
+					{112, 58, 64},
+				},
+			},
+			light_emission = 0.1,
+			brightness = 1.2,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -4,
+			line_u = 1,
+			offset = {0, 0, 3},
+			orientation = "FacingCamera",
+		},
+		{
+			name = "CutEmbers",
+			texture = "kk_flare_01",
+			emit = {
+				{3.32, 40},
+			},
+			direction = "Back",
+			spread = {90, 90},
+			speed = {20, 60},
+			drag = 2,
+			accel = {0, 10, 0},
+			lifetime = {0.5, 1},
+			size = {
+				{0, 0, 0},
+				{0.15, 2.6, 0.6},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 200, 196},
+				},
+				{
+					0.4,
+					{255, 70, 84},
+				},
+				{
+					1,
+					{190, 14, 38},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			line_u = 1,
+			offset = {0, 0, 3},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "GroundScorch",
+			texture = "kz_scorch",
+			emit = {
+				{0.42, 1},
+			},
+			at_ground = true,
+			offset = {0, 0.14, 0},
+			lifetime = {4, 4},
+			size = {
+				{0, 8, 0},
+				{0.05, 40, 0},
+				{1, 44, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.8, 0.25, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "GroundCracks",
+			texture = "kz_lava_cracks",
+			emit = {
+				{0.45, 1},
+			},
+			at_ground = true,
+			offset = {0, 0.18, 0},
+			lifetime = {3.9, 3.9},
+			size = {
+				{0, 10, 0},
+				{0.06, 46, 0},
+				{1, 50, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.7, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 120, 120},
+				},
+				{
+					0.1,
+					{240, 40, 62},
+				},
+				{
+					0.6,
+					{190, 18, 40},
+				},
+				{
+					1,
+					{90, 10, 22},
+				},
+			},
+			light_emission = 1,
+			rotation = {0, 360},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "GroundDust",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.42, 22},
+			},
+			at_ground = true,
+			offset = {0, 2, 0},
+			direction = "Front",
+			spread = {180, 3},
+			speed = {60, 100},
+			drag = 3.5,
+			accel = {0, 4, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 8, 2},
+				{0.3, 18, 3},
+				{1, 24, 4},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.2, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 50, 50},
+				},
+				{
+					0.4,
+					{122, 60, 60},
+				},
+				{
+					1,
+					{105, 80, 80},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -3,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "GroundFire",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			at_ground = true,
+			offset = {0, 0.5, 0},
+			shape = {
+				type = "Box",
+				size = {16, 0.5, 16},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {10, 10},
+			speed = {4, 9},
+			drag = 2,
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 2, 0.5},
+				{0.3, 6, 1},
+				{1, 4, 0.8},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 230},
+				},
+				{
+					0.2,
+					{255, 116, 116},
+				},
+				{
+					0.55,
+					{228, 32, 56},
+				},
+				{
+					1,
+					{120, 10, 26},
+				},
+			},
+			light_emission = 0.4,
+			brightness = 1.6,
+			stream = {
+				{0.5, 3.28, 12, 12},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundEmbers",
+			texture = "kk_flare_01",
+			at_ground = true,
+			offset = {0, 1, 0},
+			shape = {
+				type = "Box",
+				size = {18, 1, 18},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {6, 16},
+			accel = {0, 10, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.15, 2.2, 0.6},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 200, 196},
+				},
+				{
+					0.4,
+					{255, 70, 84},
+				},
+				{
+					1,
+					{190, 14, 38},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			stream = {
+				{0.5, 3.28, 16, 16},
+			},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+	},
+	shakes = {
+		{0.4, 1, 0.6},
+		{3.3, 0.5, 0.4},
+	},
+	shake_ramp = {0.3, 3.3, 0.3, 0.55, 1},
+	beam = {
+		start = 0.3,
+		grow = 0.1,
+		stop = 3.3,
+		fade = 0.3,
+		extra = 40,
+		light_color = {255, 40, 62},
+		light_brightness = 5,
+		light_range = 50,
+	},
+	beams = {
+		{
+			name = "Glow",
+			texture = "kz_beam_glow",
+			mode = "Wrap",
+			tex_len = 60,
+			speed = 0.4,
+			light_emission = 1,
+			brightness = 0.8,
+			color = {
+				{
+					0,
+					{200, 10, 34},
+				},
+				{
+					1,
+					{180, 8, 30},
+				},
+			},
+			transparency = {
+				{0, 0.84},
+				{0.03, 0.76},
+				{1, 0.78},
+			},
+			width = 42,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.3, 0},
+				{0.33, 1.35},
+				{0.45, 1},
+				{3.25, 1},
+				{3.3, 0.85},
+				{3.6, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.3, 0},
+				{3.6, 1},
+			},
+			pulse = 0.1,
+			pulse_hz = 5,
+			zoffset = 0,
+		},
+		{
+			name = "Wisps",
+			texture = "kz_beam_flow",
+			mode = "Wrap",
+			tex_len = 48,
+			speed = 2.4,
+			light_emission = 0.15,
+			brightness = 1.4,
+			color = {
+				{
+					0,
+					{205, 14, 36},
+				},
+				{
+					1,
+					{190, 10, 32},
+				},
+			},
+			transparency = {
+				{0, 0.8},
+				{0.05, 0.52},
+				{1, 0.56},
+			},
+			width = 30,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.3, 0},
+				{0.33, 1.35},
+				{0.45, 1},
+				{3.25, 1},
+				{3.3, 0.85},
+				{3.6, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.3, 0},
+				{3.6, 1},
+			},
+			pulse = 0.1,
+			pulse_hz = 6,
+			zoffset = 0.05,
+		},
+		{
+			name = "Sheath",
+			texture = "kz_beam_flow",
+			mode = "Wrap",
+			tex_len = 36,
+			speed = 1.6,
+			light_emission = 0.06,
+			brightness = 1.5,
+			color = {
+				{
+					0,
+					{190, 8, 28},
+				},
+				{
+					1,
+					{175, 6, 26},
+				},
+			},
+			transparency = {
+				{0, 0.4},
+				{0.04, 0.04},
+				{1, 0.06},
+			},
+			width = 22,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.3, 0},
+				{0.33, 1.35},
+				{0.45, 1},
+				{3.25, 1},
+				{3.3, 0.85},
+				{3.6, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.3, 0},
+				{3.6, 1},
+			},
+			pulse = 0.07,
+			pulse_hz = 7,
+			zoffset = 0.1,
+		},
+		{
+			name = "Inner",
+			texture = "kz_beam_flow",
+			mode = "Wrap",
+			tex_len = 24,
+			speed = 2.6,
+			light_emission = 0.45,
+			brightness = 1.8,
+			color = {
+				{
+					0,
+					{255, 52, 70},
+				},
+				{
+					1,
+					{245, 40, 60},
+				},
+			},
+			transparency = {
+				{0, 0.35},
+				{0.04, 0},
+				{1, 0.05},
+			},
+			width = 12,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.3, 0},
+				{0.33, 1.35},
+				{0.45, 1},
+				{3.25, 1},
+				{3.3, 0.85},
+				{3.6, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.3, 0},
+				{3.6, 1},
+			},
+			pulse = 0.09,
+			pulse_hz = 11,
+			zoffset = 0.2,
+		},
+		{
+			name = "Core",
+			texture = "kz_beam_core",
+			mode = "Wrap",
+			tex_len = 18,
+			speed = 3.5,
+			light_emission = 1,
+			brightness = 2.4,
+			color = {
+				{
+					0,
+					{255, 248, 244},
+				},
+				{
+					1,
+					{255, 236, 232},
+				},
+			},
+			transparency = {
+				{0, 0.2},
+				{0.03, 0},
+				{1, 0},
+			},
+			width = 6.5,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.3, 0},
+				{0.33, 1.35},
+				{0.45, 1},
+				{3.25, 1},
+				{3.3, 0.85},
+				{3.6, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.3, 0},
+				{3.6, 1},
+			},
+			pulse = 0.12,
+			pulse_hz = 17,
+			zoffset = 0.3,
+		},
+	},
+}
+
+-- ULTIMATE de Kaiju Zero: la boca junta energía 0.3 s y suelta un RAYO CARMESÍ de 3 s con el núcleo al rojo blanco y vetas de lava, con aros, brasas y humo rojo, que pega en el rival (o en la primera superficie) con un impacto de destellos, chispas, lava y rocas fundidas; el suelo debajo se quema y se agrieta. Cierra limpio.
+-- origin = de dónde sale (la boca: Vector3 o CFrame). target = el rival (Vector3, BasePart o Model).
+-- ignore = lo que el rayo atraviesa (p. ej. el modelo de quien lo lanza). Pega en la primera superficie
+-- camino al rival (normalmente el rival) y ahí sale el impacto. Pega a los 0.4 s y se corta a los 3.3 s.
+function KaijuFireVFX.UltimateBeam(origin: Vector3 | CFrame, target: any, scale: number?, shake: number?, ignore: { Instance }?): Part
+	return playBeam(SPEC_UltimateBeam, origin, target, scale, shake, ignore)
+end
+-- segundos (desde la llamada) en que el rayo empieza a pegar y en que se corta: para sincronizar el daño
+KaijuFireVFX.UltimateBeamStart = 0.4
+KaijuFireVFX.UltimateBeamStop = 3.3
 
 return KaijuFireVFX
 ]]></ProtectedString>

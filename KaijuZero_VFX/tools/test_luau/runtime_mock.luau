@@ -104,7 +104,12 @@ local function checkSeq(k, name)
 	assert(k[1].Time == 0 and k[#k].Time == 1, name .. ": debe ir de 0 a 1")
 	for i = 2, #k do assert(k[i].Time > k[i - 1].Time, name .. ": tiempos no crecientes") end
 end
-M.NumberSequence = { new = function(k) checkSeq(k, "NumberSequence"); return { Keypoints = k } end }
+M.NumberSequence = { new = function(k)
+	if type(k) == "number" then
+		return { Keypoints = { { Time = 0, Value = k, Envelope = 0 }, { Time = 1, Value = k, Envelope = 0 } } }
+	end
+	checkSeq(k, "NumberSequence"); return { Keypoints = k }
+end }
 M.ColorSequence = { new = function(k) checkSeq(k, "ColorSequence"); return { Keypoints = k } end }
 M.TweenInfo = { new = function(...) return { ... } end }
 M.Random = { new = function() return {
@@ -138,7 +143,7 @@ M.task = {
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
 	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0,
-	lensMax = 0 }
+	lensMax = 0, beamMaxW = 0, beamsOff = 0 }
 M.orbPath = {}
 local live = {}
 -- lo que devuelve el rayo al tocar el suelo: una Part de pasto verde (no cuenta como instancia viva)
@@ -154,6 +159,18 @@ local function isDestroyed(o)
 	return false
 end
 M.isDestroyed = isDestroyed
+-- posición en el mundo del portador de un emisor (Attachment dentro del contenedor, o Part con forma)
+local function worldPosOf(c)
+	if c == nil then return nil end
+	if c.ClassName == "Attachment" then
+		if c.WorldCFrame then return c.WorldCFrame.p end
+		if c.WorldPosition then return c.WorldPosition end
+		local par = c.Parent
+		if par and par.CFrame and c.Position then return par.CFrame * c.Position end
+		return c.Position
+	end
+	return c.CFrame and c.CFrame.p
+end
 local Inst = {}
 function Inst.new(class)
 	local props = { ClassName = class }
@@ -166,9 +183,7 @@ function Inst.new(class)
 				assert(props.Parent ~= nil, "Emit sin Parent")
 				M.stats.emits += 1; M.stats.emitted += n
 				-- dónde se emitió (el contenedor de prueba está en el origen y sin rotar)
-				local c = props.Parent
-				local pos = c.ClassName == "Attachment" and ((c.WorldCFrame and c.WorldCFrame.p) or c.WorldPosition or c.Position)
-					or (c.CFrame and c.CFrame.p)
+				local pos = worldPosOf(props.Parent)
 				M.stats.emitPos = M.stats.emitPos or {}
 				if pos then table.insert(M.stats.emitPos, pos); table.insert(M.stats.emitNames, rawget(self, "__props").Name or "") end
 				if pos then
@@ -189,10 +204,12 @@ function Inst.new(class)
 			end end
 			if k == "Raycast" then return function(_, origin, dirv, params)
 				M.stats.raycasts += 1
-				-- suelo plano en y = 0 (si el rayo lo cruza)
+				-- suelo plano en y = 0 (si el rayo lo cruza): el punto donde lo cruza
 				if origin.Y >= 0 and origin.Y + dirv.Y <= 0 then
 					groundFake.Color = groundFake.Color or M.Color3.fromRGB(90, 140, 70)
-					return { Position = v3(origin.X, 0, origin.Z), Instance = groundFake, Material = M.Enum.Material.Grass }
+					local u = if dirv.Y < 0 then origin.Y / -dirv.Y else 0
+					return { Position = v3(origin.X + dirv.X * u, 0, origin.Z + dirv.Z * u), Instance = groundFake,
+						Material = M.Enum.Material.Grass }
 				end
 				return nil
 			end end
@@ -206,12 +223,22 @@ function Inst.new(class)
 		end,
 		__newindex = function(self, k, v)
 			if k == "Rate" then M.stats.maxRate = math.max(M.stats.maxRate, v) end
+			-- emisión continua: dónde está el emisor (una vez por emisor)
+			if k == "Rate" and v > 0 and not rawget(self, "__streamed") then
+				rawset(self, "__streamed", true)
+				local pos = worldPosOf(props.Parent)
+				if pos then table.insert(M.stats.streamPos, pos) end
+			end
 			if k == "Name" and v == "Rock" then M.stats.rocks += 1 end
 			if k == "Name" and v == "Cube" then M.stats.cubes += 1 end
 			if props.Name == "Cube" and k == "Color" and v.G > v.R and v.G > v.B then M.stats.cubeGreen += 1 end
 			-- recorrido del agujero negro y tamaño de su lente
 			if props.Name == "Orb" and k == "CFrame" then table.insert(M.orbPath, v.p) end
 			if props.Name == "Lens" and k == "Size" then M.stats.lensMax = math.max(M.stats.lensMax, v.X) end
+			-- el rayo: ancho máximo de sus Beams y hasta dónde llega su punta
+			if class == "Beam" and k == "Width0" then M.stats.beamMaxW = math.max(M.stats.beamMaxW, v) end
+			if class == "Beam" and k == "Enabled" and v == false then M.stats.beamsOff += 1 end
+			if props.Name == "BeamEnd" and k == "Position" then M.stats.beamEnd = v end
 			if props.Name == "Cube" and k == "CFrame" then
 				M.stats.cubeMaxR = math.max(M.stats.cubeMaxR, math.sqrt(v.p.X ^ 2 + v.p.Z ^ 2))
 			end
@@ -293,6 +320,8 @@ function M.reset()
 	for k in M.stats do M.stats[k] = 0 end
 	M.stats.emitPos = {}
 	M.stats.emitNames = {}
+	M.stats.streamPos = {}
+	M.stats.beamEnd = nil
 	M.orbPath = {}
 end
 function M.liveCount()

@@ -88,9 +88,13 @@ def norm_layer(L):
     sh = o.get("shape")
     if sh:
         if sh["type"] == "Box":
-            o["shape"] = {"type": "Box", "size": list(sh["size"]), "style": sh.get("style", "Volume")}
+            o["shape"] = {"type": "Box", "size": list(sh["size"]), "style": sh.get("style", "Volume"),
+                          "inout": sh.get("inout", "Outward")}
+            if sh.get("len_k"):         # la caja se estira a lo largo de la línea: largo × len_k
+                o["shape"]["len_k"] = sh["len_k"]
         else:
-            o["shape"] = {"type": sh["type"], "radius": sh["radius"], "style": sh.get("style", "Volume")}
+            o["shape"] = {"type": sh["type"], "radius": sh["radius"], "style": sh.get("style", "Volume"),
+                          "inout": sh.get("inout", "Outward")}
     return o
 
 
@@ -149,6 +153,8 @@ def spec_end(spec):
     end = max(layer_end(L, jit) for L in spec["layers"])
     if spec.get("cubes"):
         end = max(end, cubes_end(spec["cubes"]))
+    if spec.get("beam"):
+        end = max(end, spec["beam"]["stop"] + spec["beam"]["fade"])
     return end
 
 
@@ -168,7 +174,9 @@ DOC_KAIJU = """	KaijuFireVFX — VFX de fuego y lava para KAIJU ZERO
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local KaijuFireVFX = require(ReplicatedStorage.KaijuFireVFX)
 		-- cf = punto del SUELO bajo la explosión; 1 = escala; 1 = intensidad de la sacudida de cámara
-		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)"""
+		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
+		-- ULTIMATE: rayo de la boca al rival (pega a los KaijuFireVFX.UltimateBeamStart s); se ignora al propio kaiju
+		KaijuFireVFX.UltimateBeam(bocaDeKaijuZero, rival, 1, 1, { modeloDeKaijuZero })"""
 
 DOC_OMNIVORA = """	OmnivoraVFX — VFX cósmicos (azul muy oscuro, celeste y blanco, con el púrpura de su boca) para OMNÍVORA
 	(generado automáticamente desde vfx_omnivora.py y vfx_blackhole.py; edita allí y regenera)
@@ -330,7 +338,7 @@ local function configureEmitter(L: Layer, scale: number): ParticleEmitter
 	if L.shape then
 		e.Shape = (Enum.ParticleEmitterShape :: any)[L.shape.type]
 		e.ShapeStyle = (Enum.ParticleEmitterShapeStyle :: any)[L.shape.style]
-		e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+		e.ShapeInOut = (Enum.ParticleEmitterShapeInOut :: any)[L.shape.inout or "Outward"]
 	end
 	return e
 end
@@ -372,6 +380,9 @@ local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos:
 		local size
 		if L.shape.type == "Box" then
 			size = Vector3.new(L.shape.size[1], L.shape.size[2], L.shape.size[3]) * scale
+			if L.shape.len_k and len then -- a lo largo de toda la línea (p. ej. el rayo)
+				size = Vector3.new(size.X, size.Y, len * L.shape.len_k)
+			end
 		else
 			local d = L.shape.radius * 2 * scale
 			size = Vector3.new(d, d, d)
@@ -439,6 +450,15 @@ local function placeCarrier(carrier: Instance, holder: BasePart, pos: Vector3)
 	end
 end
 
+-- el portador de una capa del suelo va derecho (el suelo es horizontal; el rayo puede venir inclinado)
+local function levelCarrier(carrier: Instance, pos: Vector3)
+	if carrier:IsA("Attachment") then
+		(carrier :: Attachment).WorldCFrame = CFrame.new(pos)
+	else
+		(carrier :: BasePart).CFrame = CFrame.new(pos)
+	end
+end
+
 -- elemento plano del suelo hecho con Decal (sin límite de tamaño); baseCF = dónde va (horizontal)
 local function playDecalAt(L: Layer, holder: BasePart, scale: number, n: number, baseCF: CFrame)
 	for _ = 1, n do
@@ -502,10 +522,11 @@ local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
 	local localPos = holder.CFrame:PointToObjectSpace(worldPos)
 	for _, LL in L.land do
 		if LL.decal then
-			playDecalAt(LL, holder, s, LL.emit[1][2], holder.CFrame.Rotation + worldPos)
+			playDecalAt(LL, holder, s, LL.emit[1][2], CFrame.new(worldPos))
 			continue
 		end
-		local e = buildEmitter(LL, holder, s, localPos)
+		local e, carrier = buildEmitter(LL, holder, s, localPos)
+		levelCarrier(carrier, worldPos)
 		if LL.stream then
 			runStream(LL, e)
 		else
@@ -523,8 +544,11 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 	} :: any)[L.direction]
 	local list = {}
 	for i = 1, n do
-		local spread = CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
-			math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
+		local spread = if L.direction == "Front" or L.direction == "Back"
+			then CFrame.Angles(math.rad(rng:NextNumber(-L.spread[2], L.spread[2])),
+				math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0)
+			else CFrame.Angles(math.rad(rng:NextNumber(-L.spread[1], L.spread[1])), 0,
+				math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
 		local dir = (frame or holder.CFrame):VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
 		local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
 		local rock = Instance.new("Part")
@@ -593,17 +617,19 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 	end)
 end
 
-local function playMeteors(L: Layer, holder: BasePart, s: number, len: number)
-	local groundY = holder.Position.Y
+local function playMeteors(L: Layer, holder: BasePart, s: number, len: number, groundY: number?)
+	local gy = groundY or holder.Position.Y
 	for _, ev in L.emit do
 		local n = quality(ev[2])
 		local startOff = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
 		if ev[3] ~= nil then
 			startOff += linePos(ev[3], ev[4], ev[5], s, len)
+		else
+			startOff += linePos(L.line_u or 0, 0, 0, s, len)
 		end
 		task.delay(ev[1], function()
 			if holder.Parent then
-				launchMeteors(L, holder, s, n, holder.CFrame:PointToWorldSpace(startOff), groundY)
+				launchMeteors(L, holder, s, n, holder.CFrame:PointToWorldSpace(startOff), gy)
 			end
 		end)
 	end
@@ -853,13 +879,16 @@ local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, 
 	Debris:AddItem(holder, spec.cleanup)
 end
 
-local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?): Part
+local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?,
+	groundY: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
 	local len = length or 0
 	local tanH = math.tan(math.rad(math.clamp(angle or 60, 5, 170) / 2))
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, KaijuFireVFX.Parent)
 	for _, L in spec.layers do
-		if L.cone_emit and L.type == "meteor" then
+		if L.at_ground then
+			continue -- en el suelo bajo el impacto del rayo (las pone el rayo al pegar)
+		elseif L.cone_emit and L.type == "meteor" then
 			for _, ev in L.cone_emit do
 				local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
 				local n = quality(ev[2])
@@ -893,7 +922,7 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 				end
 			end
 		elseif L.type == "meteor" then
-			playMeteors(L, holder, s, len)
+			playMeteors(L, holder, s, len, groundY)
 		elseif L.decal then
 			for _, ev in L.emit do
 				local off = Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s
@@ -1016,14 +1045,14 @@ type Zone = {
 
 local GROUND_FALLBACK = Color3.fromRGB(112, 106, 112)
 
--- color y material del suelo en el centro de la zona (los cubos de destrucción salen de ahí)
-local function groundLook(pos: Vector3, holder: Instance): (Color3, Enum.Material, number?)
+-- color, material y altura del suelo bajo pos (los cubos de destrucción salen de ahí); exclude = lo que se ignora
+local function groundLook(pos: Vector3, exclude: { Instance }, depth: number?): (Color3, Enum.Material, number?)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	local ignore: { Instance } = { holder }
+	local ignore: { Instance } = table.clone(exclude)
 	for _ = 1, 4 do
 		params.FilterDescendantsInstances = ignore
-		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), params)
+		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -(depth or 40), 0), params)
 		if not hit then
 			break
 		end
@@ -1046,6 +1075,177 @@ local function groundLook(pos: Vector3, holder: Instance): (Color3, Enum.Materia
 		return inst.Color, mat, hit.Position.Y
 	end
 	return GROUND_FALLBACK, Enum.Material.Slate, nil
+end
+
+-- ---------------------------------------------------------------- rayo (beam)
+-- capas de Beam entre el origen y el impacto. El rayo sale de la boca a los `start` s y en `grow` s llega al
+-- impacto; el ancho se anima en el tiempo (width_t, con un pulso) y la textura corre hacia el impacto;
+-- alpha_t desvanece todo el rayo (0 = se ve, 1 = no se ve)
+local function runBeams(spec: Layer, holder: BasePart, s: number, len: number)
+	local Bm = spec.beam
+	local a0 = Instance.new("Attachment")
+	a0.Name = "BeamStart"
+	a0.Parent = holder
+	local a1 = Instance.new("Attachment")
+	a1.Name = "BeamEnd"
+	a1.Parent = holder
+	local list: { { B: Layer, b: Beam, seed: number } } = {}
+	for _, B in spec.beams do
+		local b = Instance.new("Beam")
+		b.Name = B.name
+		b.Attachment0 = a0
+		b.Attachment1 = a1
+		b.Texture = KaijuFireVFX.TEXTURES[B.texture] or ""
+		b.TextureMode = (Enum.TextureMode :: any)[B.mode]
+		b.TextureLength = B.tex_len * s
+		b.TextureSpeed = B.speed
+		b.LightEmission = B.light_emission
+		b.LightInfluence = 0
+		b.Brightness = B.brightness
+		b.Color = colorSeq(B.color)
+		b.FaceCamera = true
+		b.Segments = 10 -- la cinta se gira hacia la cámara a lo largo de todo el rayo
+		b.ZOffset = B.zoffset * s
+		b.Width0 = 0
+		b.Width1 = 0
+		b.Transparency = NumberSequence.new(1)
+		b.Parent = holder
+		table.insert(list, { B = B, b = b, seed = rng:NextNumber(0, 100) })
+	end
+	local tEnd = Bm.stop + Bm.fade
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = time() - t0
+		local k = math.clamp((t - Bm.start) / math.max(Bm.grow, 1e-3), 0, 1)
+		a1.Position = Vector3.new(0, 0, -len * k) -- la punta avanza rapidísimo hasta el impacto
+		for _, it in list do
+			local B = it.B
+			local pulse = math.clamp(2 * math.noise(it.seed, t * B.pulse_hz), -1, 1)
+			local w = B.width * s * evalNum(B.width_t, t) * (1 + B.pulse * pulse)
+			it.b.Width0 = w * B.w0
+			it.b.Width1 = w * B.w1
+			local fade = evalNum(B.alpha_t, t)
+			local kps = table.create(#B.transparency)
+			for i, kp in B.transparency do
+				kps[i] = NumberSequenceKeypoint.new(kp[1], math.clamp(kp[2] + (1 - kp[2]) * fade, 0, 1))
+			end
+			it.b.Transparency = NumberSequence.new(kps)
+		end
+		if t > tEnd then
+			conn:Disconnect()
+			for _, it in list do
+				it.b.Enabled = false
+			end
+		end
+	end)
+end
+
+-- luces del rayo: una en la boca y otra en el impacto (cuando el rayo llega), que parpadean mientras dura
+local function beamLights(spec: Layer, holder: BasePart, s: number, len: number)
+	if not KaijuFireVFX.UseLight then
+		return
+	end
+	local Bm = spec.beam
+	local lights: { { li: PointLight, t0: number } } = {}
+	for i, z in { 0, -math.max(len - 4 * s, 0) } do
+		local a = Instance.new("Attachment")
+		a.Name = "Light"
+		a.Position = Vector3.new(0, 0, z)
+		a.Parent = holder
+		local li = Instance.new("PointLight")
+		li.Color = Color3.fromRGB(Bm.light_color[1], Bm.light_color[2], Bm.light_color[3])
+		li.Brightness = 0
+		li.Range = math.min(Bm.light_range * s, 60)
+		li.Shadows = false
+		li.Parent = a
+		table.insert(lights, { li = li, t0 = if i == 1 then Bm.start else Bm.start + Bm.grow })
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > Bm.stop + Bm.fade then
+			conn:Disconnect()
+			return
+		end
+		for i, L in lights do
+			local on = math.clamp((t - L.t0) / 0.05, 0, 1) * math.clamp(1 - (t - Bm.stop) / Bm.fade, 0, 1)
+			L.li.Brightness = Bm.light_brightness * on * (1 + 0.25 * math.noise(i * 7.3, t * 12))
+		end
+	end)
+end
+
+-- el rayo sale de origin hacia el rival y pega en la primera superficie que encuentra (o en el rival)
+local function playBeam(spec: Layer, origin: any, target: any, scale: number?, shake: number?, ignore: { Instance }?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local A: Vector3 = if typeof(origin) == "CFrame" then origin.Position else origin
+	local T: Vector3
+	if typeof(target) == "Vector3" then
+		T = target
+	elseif typeof(target) == "CFrame" then
+		T = target.Position
+	elseif typeof(target) == "Instance" and target:IsA("Model") then
+		T = (target :: Model):GetPivot().Position
+	else
+		T = (target :: BasePart).Position
+	end
+	local dir = T - A
+	if dir.Magnitude < 1e-3 then
+		dir = Vector3.new(0, 0, -1)
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = ignore or {}
+	local hit = workspace:Raycast(A, dir.Unit * (dir.Magnitude + spec.beam.extra * s), params)
+	local P = if hit then hit.Position else T
+	local len = math.max((P - A).Magnitude, 1)
+	-- el suelo bajo el impacto (atravesando a quien lo lanza y al rival): ahí caen las rocas y quedan las marcas
+	local exclude: { Instance } = table.clone(ignore or {})
+	if typeof(target) == "Instance" then
+		table.insert(exclude, target)
+	end
+	local _, _, gy = groundLook(P - dir.Unit * 2 * s, exclude, 200)
+	local holder = play(spec, CFrame.lookAt(A, A + dir.Unit), scale, len, shake, nil, gy or -math.huge)
+	runBeams(spec, holder, s, len)
+	beamLights(spec, holder, s, len)
+	if gy then
+		local ground = Vector3.new(P.X, gy, P.Z)
+		for _, L in spec.layers do
+			if not L.at_ground then
+				continue
+			end
+			local at = ground + Vector3.new(0, L.offset[2] * s, 0)
+			if L.decal then
+				for _, ev in L.emit do
+					task.delay(ev[1], function()
+						if holder.Parent then
+							playDecalAt(L, holder, s, ev[2], CFrame.new(at))
+						end
+					end)
+				end
+			else
+				local e, carrier = buildEmitter(L, holder, s, Vector3.zero, len)
+				levelCarrier(carrier, at)
+				for _, ev in L.emit do
+					local n = quality(ev[2])
+					task.delay(ev[1], function()
+						if e.Parent then
+							e:Emit(n)
+						end
+					end)
+				end
+				if L.stream then
+					runStream(L, e)
+				end
+			end
+		end
+	end
+	return holder
 end
 
 -- escala de tamaños de una capa: con el radio ("r"), con la altura del pilar ("h") o con la escala
@@ -1509,7 +1709,7 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 	local look = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
 	local flat = if look.Magnitude > 1e-3 then CFrame.lookAt(pos, pos + look) else CFrame.new(pos)
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), flat, KaijuFireVFX.Parent)
-	local gColor, gMaterial, gy = groundLook(pos, holder)
+	local gColor, gMaterial, gy = groundLook(pos, { holder })
 	if gy and math.abs(gy - pos.Y) < snap then
 		holder.CFrame = flat + Vector3.new(0, gy - pos.Y, 0)
 	end
@@ -1800,9 +2000,19 @@ def norm_cubes(C):
     return o
 
 
+def norm_beam(B):
+    """Capa de Beam: secuencias como listas (el color a lo largo del rayo, el ancho y el desvanecido en el tiempo)."""
+    o = dict(B)
+    o["color"] = [[k[0], list(k[1])] for k in B["color"]]
+    o["transparency"] = [list(k) for k in B["transparency"]]
+    o["width_t"] = [list(k) for k in B["width_t"]]
+    o["alpha_t"] = [list(k) for k in B["alpha_t"]]
+    return o
+
+
 def spec_textures(spec):
     extra = [spec["cubes"]["fx"]] if spec.get("cubes", {}).get("fx") else []
-    return textures_of(spec["layers"] + extra)
+    return textures_of(spec["layers"] + extra + spec.get("beams", []))
 
 
 def prefix_unused(src):
@@ -1822,11 +2032,13 @@ def build(specs, name, doc):
         data = {"name": spec["name"], "duration": spec["duration"],
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
-        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb"):
+        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb", "beam"):
             if spec.get(k):
                 data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         if spec.get("cubes"):
             data["cubes"] = norm_cubes(spec["cubes"])
+        if spec.get("beams"):
+            data["beams"] = [norm_beam(B) for B in spec["beams"]]
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"
         doc_k = spec.get("doc", "")
         head = f"-- {doc_k}\n" if doc_k else ""
@@ -1843,6 +2055,19 @@ def build(specs, name, doc):
                 f"angle = apertura en grados (por defecto {c['angle']}).\n" + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, angle: number?, scale: number?, shake: number?): Part\n" \
                 f"\treturn play(SPEC_{key}, cf, scale, length or {c['length']} * (scale or 1), shake, angle or {c['angle']})\nend\n\n"
+        elif spec.get("beam"):
+            b = spec["beam"]
+            hit = round(b["start"] + b["grow"], 3)
+            out += head + \
+                "-- origin = de dónde sale (la boca: Vector3 o CFrame). target = el rival (Vector3, BasePart o Model).\n" \
+                "-- ignore = lo que el rayo atraviesa (p. ej. el modelo de quien lo lanza). Pega en la primera superficie\n" \
+                f"-- camino al rival (normalmente el rival) y ahí sale el impacto. Pega a los {hit:g} s y se corta a " \
+                f"los {b['stop']:g} s.\n" + \
+                f"function KaijuFireVFX.{key}(origin: Vector3 | CFrame, target: any, scale: number?, shake: number?, " \
+                f"ignore: {{ Instance }}?): Part\n" \
+                f"\treturn playBeam(SPEC_{key}, origin, target, scale, shake, ignore)\nend\n" \
+                f"-- segundos (desde la llamada) en que el rayo empieza a pegar y en que se corta: para sincronizar el daño\n" \
+                f"KaijuFireVFX.{key}Start = {hit:g}\nKaijuFireVFX.{key}Stop = {b['stop']:g}\n\n"
         elif spec.get("orb"):
             o = spec["orb"]
             out += head + \
