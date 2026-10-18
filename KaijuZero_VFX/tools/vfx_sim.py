@@ -793,7 +793,8 @@ def decal_glow(L):
     return round(1.0 + 1.5 * L.get("light_emission", 0.0), 3)
 
 
-def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0):
+def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0, occ=None):
+    """occ = profundidad por píxel (a lo largo del rayo) de lo que tapa a las partículas (la figura del aura)."""
     L = p.L
     tl = min(p.age / p.life, 1.0)
     size = max(eval_seq(L["size"], tl, p.r_size) * p.ks * p.gm, 0.0)
@@ -827,12 +828,19 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0):
             # en Roblox es un Decal: sin LightEmission (mezcla alfa normal); el módulo sobre-ilumina
             # su Color3 (>1) en proporción a light_emission para que brille con el Bloom
             light, bright = 0.0, decal_glow(L)
-        draw_flat(buf, tb, cam, p, L["texture"], layout, idx, size, col, tr, light, bright)
+        draw_flat(buf, tb, cam, p, L["texture"], layout, idx, size, col, tr, light, bright, occ)
         return
     proj = cam.project(p.pos)
     if proj is None:
         return
     cx, cy, _ = proj
+
+    def occ_mask(xa, ya, xb, yb, us, vs):
+        if occ is None:
+            return 1.0
+        rays = cam.ray(us.ravel(), vs.ravel())
+        cosang = (cam.R[2] @ rays).reshape(us.shape)
+        return (occ[ya:yb, xa:xb] * cosang > z - 0.25 * p.ks).astype(np.float32)
     if ori == "FacingCameraWorldUp":
         a = cam.project(p.pos + np.array([0, 1.0, 0]) * size / 2)
         b = cam.project(p.pos - np.array([0, 1.0, 0]) * size / 2)
@@ -850,7 +858,7 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0):
             x = (us - cam.W / 2) * z / f
             y = -(vs - cam.H / 2) * z / f
             wy = cam.C[1] + cam.R[0, 1] * x + cam.R[1, 1] * y + cam.R[2, 1] * z
-            return (wy > ground_y).astype(np.float32)
+            return (wy > ground_y).astype(np.float32) * occ_mask(xa, ya, xb, yb, us, vs)
         draw_sprite(buf, spr, cx, cy, light, bright, mask_up)
         return
     if ori == "VelocityParallel":
@@ -878,12 +886,12 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0):
         x = (us - cam.W / 2) * z / f
         y = -(vs - cam.H / 2) * z / f
         wy = cam.C[1] + cam.R[0, 1] * x + cam.R[1, 1] * y + cam.R[2, 1] * z
-        return (wy > ground_y).astype(np.float32)
+        return (wy > ground_y).astype(np.float32) * occ_mask(xa, ya, xb, yb, us, vs)
 
     draw_sprite(buf, spr, cx, cy, light, bright, mask)
 
 
-def draw_flat(buf, tb, cam, p, tex, layout, idx, size, col, tr, light, bright):
+def draw_flat(buf, tb, cam, p, tex, layout, idx, size, col, tr, light, bright, occ=None):
     """Quad plano perpendicular a la velocidad (p.ej. anillo en el suelo)."""
     v = p.vel
     n = v / np.linalg.norm(v) if np.linalg.norm(v) > 1e-9 else np.array([0, 1.0, 0])
@@ -914,6 +922,8 @@ def draw_flat(buf, tb, cam, p, tex, layout, idx, size, col, tr, light, bright):
     lu = (a1 @ rel) / size + 0.5
     lv = (a2 @ rel) / size + 0.5
     ok = (lu >= 0) & (lu < 1) & (lv >= 0) & (lv < 1) & (tt > 0)
+    if occ is not None:
+        ok &= occ[ya:yb, xa:xb].ravel() > tt
     ix = np.clip((lu * tw).astype(int), 0, tw - 1)
     iy = np.clip((lv * th).astype(int), 0, th - 1)
     smp = T[iy, ix]
@@ -1597,3 +1607,145 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
             p.rot += p.rots * dt
             p.age += dt
     return stats
+
+
+# --------------------------------------------------------------- aura alrededor de un modelo
+def figure_depth(cam, boxes, off):
+    """Profundidad (a lo largo del rayo) y normal de la caja más cercana en cada píxel: cajas alineadas a los ejes
+    {"pos" (centro de la base), "size", "color"} desplazadas por off. inf donde no hay figura."""
+    W, H = cam.W, cam.H
+    us, vs = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
+    D = cam.ray(us.ravel(), vs.ravel())                         # 3 x N
+    depth = np.full(D.shape[1], np.inf)
+    nrm = np.zeros((3, D.shape[1]))
+    col = np.zeros((3, D.shape[1]))
+    inv = 1.0 / np.where(np.abs(D) < 1e-9, 1e-9, D)
+    for b in boxes:
+        sz = np.asarray(b["size"], float)
+        c = np.asarray(b["pos"], float) + off + np.array([0, sz[1] / 2, 0])
+        lo, hi = c - sz / 2, c + sz / 2
+        t1 = (lo[:, None] - cam.C[:, None]) * inv
+        t2 = (hi[:, None] - cam.C[:, None]) * inv
+        tmin, tmax = np.minimum(t1, t2), np.maximum(t1, t2)
+        tn = tmin.max(0)
+        tf = tmax.min(0)
+        hit = (tn <= tf) & (tf > 0) & (tn < depth)
+        if not hit.any():
+            continue
+        ax = tmin.argmax(0)
+        depth[hit] = tn[hit]
+        n = np.zeros((3, D.shape[1]))
+        n[ax, np.arange(D.shape[1])] = -np.sign(D[ax, np.arange(D.shape[1])])
+        nrm[:, hit] = n[:, hit]
+        col[:, hit] = (np.asarray(b["color"], float) / 255)[:, None]
+    return depth.reshape(H, W), nrm.reshape(3, H, W), col.reshape(3, H, W)
+
+
+def box_surface_point(rng, b, off):
+    sz = np.asarray(b["size"], float)
+    c = np.asarray(b["pos"], float) + off + np.array([0, sz[1] / 2, 0])
+    areas = np.array([sz[1] * sz[2], sz[1] * sz[2], sz[0] * sz[2], sz[0] * sz[2], sz[0] * sz[1], sz[0] * sz[1]])
+    f = rng.choices(range(6), weights=areas)[0]
+    p = np.array([rng.uniform(-0.5, 0.5) for _ in range(3)]) * sz
+    ax = f // 2
+    p[ax] = (0.5 if f % 2 == 0 else -0.5) * sz[ax]
+    return c + p
+
+
+def render_aura(spec, tex_folder, out_dir, cam, boxes, duration, off_fn=None, stop_at=None, scale=1.0, seed=7,
+                ground_y=0.0, background=None, bloom=None, only_frames=None):
+    """El aura como playAura en el módulo: el delineado (Highlight) y las capas surface / body / feet sobre una
+    figura hecha de cajas. off_fn(t) = desplazamiento de la figura (para verla moverse); stop_at = cuándo se apaga."""
+    from scipy.ndimage import binary_dilation
+    rng = random.Random(seed)
+    tb = TexBank(tex_folder)
+    Au = spec["aura"]
+    nframes = int(round(duration * FPS))
+    os.makedirs(out_dir, exist_ok=True)
+    bg = background if background is not None else make_background(cam, ground_y)
+    off_fn = off_fn or (lambda t: np.zeros(3))
+    lo = np.min([np.asarray(b["pos"], float) - np.asarray(b["size"], float) * [0.5, 0, 0.5] for b in boxes], 0)
+    hi = np.max([np.asarray(b["pos"], float) + np.asarray(b["size"], float) * [0.5, 1, 0.5] for b in boxes], 0)
+    size0 = hi - lo
+    k = scale * min(max(size0[1] / Au["ref"], 0.25), 8)
+    areas = [2 * (b["size"][0] * b["size"][1] + b["size"][1] * b["size"][2] + b["size"][2] * b["size"][0]) for b in boxes]
+    parts, acc = [], {}
+    last_surge = 0.0
+    c1, c2 = np.array(Au["outline"][0], float) / 255, np.array(Au["outline"][1], float) / 255
+    fill = np.array(Au["fill"], float) / 255
+    dt = 1.0 / FPS
+    stats = []
+
+    def emit(L, off):
+        if L["aura"] == "surface":
+            b = rng.choices(boxes, weights=areas)[0]
+            pos = box_surface_point(rng, b, off)
+        elif L["aura"] == "body":
+            f = L.get("box", (1, 1, 1))
+            ctr = (lo + hi) / 2 + off
+            pos = ctr + np.array([rng.uniform(-0.5, 0.5) * size0[i] * f[i] for i in range(3)])
+        else:
+            ctr = (lo + hi) / 2 + off
+            r = max(size0[0], size0[2]) * L.get("radius_k", 0.6) / 2 * math.sqrt(rng.random())
+            a = rng.uniform(0, 2 * math.pi)
+            pos = np.array([ctr[0] + r * math.cos(a), ground_y, ctr[2] + r * math.sin(a)])
+        p = spawn(L, pos, rng, k)
+        return p
+
+    for fi in range(nframes):
+        t = fi * dt
+        off = np.asarray(off_fn(t), float)
+        on = min(max(t / Au["fade_in"], 0.0), 1.0)
+        if stop_at is not None:
+            on = min(on, max(0.0, 1 - (t - stop_at) / Au["fade_out"]))
+        surge = False
+        if on > 0.5 and t - last_surge >= Au["surge"]:
+            last_surge, surge = t, True
+        surge_k = math.exp(-(t - last_surge) / 0.25) if last_surge > 0 else 0.0
+        for L in spec["layers"]:
+            key = id(L)
+            acc[key] = acc.get(key, 0.0) + L.get("rate", 0) * on * dt
+            n = int(acc[key])
+            acc[key] -= n
+            if surge:
+                n += int(L.get("surge", 0))
+            for _ in range(n):
+                parts.append(emit(L, off))
+        parts = [p for p in parts if p.age < p.life]
+        if only_frames is None or fi in only_frames:
+            buf = bg.copy()
+            depth, nrm, col = figure_depth(cam, boxes, off)
+            mask = np.isfinite(depth)
+            shade = 0.45 + 0.55 * np.clip(np.einsum("ihw,i->hw", nrm, np.asarray(CubeSim.SUN, float)), 0, None)
+            buf[mask] = (col.transpose(1, 2, 0) * shade[..., None])[mask]
+            # el Highlight: relleno que respira y el delineado
+            w = 0.5 + 0.5 * math.sin(t * math.pi * 2 * Au["pulse_hz"])
+            ft = Au["fill_t"][0] + (Au["fill_t"][1] - Au["fill_t"][0]) * (1 - w)
+            fa = min(1.0, (1 - ft) * on * (1 + surge_k * 0.6))
+            buf[mask] = buf[mask] * (1 - fa) + fill * fa
+            ot = Au["outline_t"][0] + (Au["outline_t"][1] - Au["outline_t"][0]) * (1 - w)
+            oa = (1 - ot * (1 - surge_k)) * on
+            ring = binary_dilation(mask, iterations=max(2, int(round(3 * cam.W / 960)))) & ~mask
+            oc = c1 + (c2 - c1) * min(1.0, w * 0.7 + surge_k * 0.6)
+            buf[ring] = buf[ring] * (1 - oa) + oc * 1.6 * oa
+            items = []
+            for p in parts:
+                dd = cam.to_cam(p.pos)
+                if dd[2] > 0.5:
+                    items.append((dd[2] - p.L.get("zoffset", 0.0) * p.ks, p, dd))
+            items.sort(key=lambda x: -x[0])
+            for _, p, dd in items:
+                draw_particle(buf, tb, cam, p, dd, k, ground_y, 1.0, occ=depth)
+            if bloom:
+                buf = apply_bloom(buf, **bloom)
+            Image.fromarray((np.clip(buf, 0, 1) * 255).astype(np.uint8)).save(os.path.join(out_dir, f"{fi:04d}.png"))
+        stats.append(len(parts))
+        for p in parts:
+            L = p.L
+            accp = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
+            p.vel = p.vel * (2.0 ** (-L.get("drag", 0.0) * dt)) + accp * dt
+            p.pos = p.pos + p.vel * dt
+            p.rot += p.rots * dt
+            p.age += dt
+    return stats
+

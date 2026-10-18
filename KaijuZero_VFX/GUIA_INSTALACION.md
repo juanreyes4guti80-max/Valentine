@@ -6,7 +6,7 @@
 |---|---|
 | `roblox/KaijuFireVFX.rbxmx` | El ModuleScript listo para insertar en Studio. |
 | `roblox/KaijuFireVFX.lua` | El mismo código en texto, si prefieres copiar y pegar. |
-| `roblox/texturas_necesarias.txt` | Las 50 imágenes que usa el módulo. |
+| `roblox/texturas_necesarias.txt` | Las 57 imágenes que usa el módulo. |
 | `textures/` | Las imágenes que hay que subir a Roblox. |
 | `preview/` | Videos simulados de cada efecto. |
 | `tools/` | Generadores (texturas, simulador, módulo). No hace falta tocarlos. |
@@ -25,6 +25,7 @@
 | `BurningSlashHit(rival, escala, sacudida, ángulo)` | **Corte quemado**: el mismo zarpazo al rojo vivo. Las tres marcas quedan **encendidas ardiendo** un momento, con llamas, brasas, gotas de lava y humo. | 1 s |
 | `BiteHit(rival, escala, sacudida)` | **Mordisco**: dos **mandíbulas de colmillos** aparecen sobre el rival y se cierran de golpe. Al chocar hay un destello corto (alumbra poco), chispas y un anillo. | 0.6 s |
 | `UltimateBeam(origen, objetivo, escala, sacudida, ignorar)` | **ULTIMATE**: un **rayo carmesí de 3 s que se puede apuntar** mientras dura. Tiene el núcleo al rojo blanco y lo envuelve energía con **vetas de lava** que corre hacia la punta. La boca junta energía un instante (chispas y aros que se cierran) y dispara. En la boca queda un **estallido de destellos con aros** que se abren, y a lo largo del rayo pasan **aros finos**, brasas, gotas de lava y **humo rojo**. Se corta en la **primera superficie que toca** y, si no toca nada, llega a su **largo máximo de 186 studs** × escala; al moverlo se acorta o se alarga solo. Donde pega revienta un **impacto**: destellos, ondas, chispas, lava, escombros de roca y **rocas fundidas** que salen volando. El suelo debajo se quema y se agrieta en carmesí, y si **barres el suelo** con el rayo deja una estela de quemaduras. Al final el rayo se corta, se adelgaza y se apaga. | 3.6 s (las marcas del suelo se borran unos 4 s después de hechas) |
+| `CrimsonAura(modelo, escala, duración, intensidad)` | **Aura carmesí** que se adapta a cualquier modelo (la misma receta que el aura de Omnívora, con fuego). Delinea todo el cuerpo en carmesí que respira hacia el naranja y de toda su silueta emanan lenguas de energía carmesí y naranja con chispas al rojo blanco, llamitas, brasas y un poco de humo oscuro. | hasta que la apagues |
 
 ### Otros efectos
 
@@ -59,6 +60,10 @@ Todos los efectos **cierran limpio**: el contenedor se destruye solo cuando ya m
    Y los golpes (corte, corte quemado y mordisco) usan además estas 4:
 
    `kz_claw_4x4, kz_claw, kz_claw_glow, kz_bite_4x4`
+
+   El aura carmesí usa además estas 7:
+
+   `fx_aura_tongue_2x2, fx_particle02, fx_spark002, kk_circle_02, kk_spark_05, kk_trace_03, kz_aura_wisp_2x2`
 
 ## Cómo llamarlo
 
@@ -227,6 +232,26 @@ end)
 - **Escala**: con `1`, el rayo mide unos 22 studs de ancho (el núcleo blanco unos 6.5), el resplandor llega a unos 42 y el largo máximo es de 186 studs. Para un kaiju más grande prueba de `1.5` a `2` (el largo máximo crece igual; si lo quieres fijo, cambia `rayo.MaxLength`).
 - **Sacudida**: tiembla sin parar mientras dura el rayo, da un golpe cuando llega (0.4 s) y otro suave al cortarse (también si lo cortas antes). `0` o `nil` la desactiva.
 
+### Aura (CrimsonAura)
+
+Un aura que **se adapta sola a cualquier modelo**: le pasas el Model y el módulo recorre sus partes, mide su alto y la arma encima. No hace falta ajustar nada a mano para Kaiju Zero.
+
+```lua
+-- LocalScript (en todos los clientes, igual que los demás efectos)
+local aura = KaijuFireVFX.CrimsonAura(modeloDeKaijuZero, 1)   -- encendida hasta que la apagues
+aura:SetIntensity(1.5)                 -- más fuerte (0.5 = suave)
+aura:Stop()                            -- se desvanece en 0.7 s y se limpia sola
+
+KaijuFireVFX.CrimsonAura(modeloDeKaijuZero, 1, 5)             -- o con duración: 5 s y se apaga sola
+```
+
+- **`model`**: el Model (o una Part). **`escala`**: multiplica el tamaño (por defecto 1). **`duración`**: segundos, o `nil` para dejarla encendida. **`intensidad`**: 1 normal.
+- **Qué la forma**: un **delineado de todo el cuerpo** (un `Highlight` de Roblox) que respira entre carmesí y naranja, y lenguas de energía que **emanan de toda la silueta** y suben, con estrellas, chispas y estelas; a los pies, anillos que se abren y destellos que suben. Además lleva **detallitos de fuego**: llamitas sobre el cuerpo, brasas que suben y un poco de humo oscuro. Cada 2.2 s hay una **oleada**: el delineado se enciende y sale una ráfaga.
+- **Cómo se adapta**: pone un emisor en cada parte visible del modelo (las 30 más grandes; la tasa se reparte según el tamaño de cada una, así brota de toda la silueta por igual). Se salta la `HumanoidRootPart` y las partes invisibles (hitboxes). El tamaño de todo crece con el alto del modelo (22 studs = tamaño 1): en un kaiju de 200 studs se ve igual de proporcionada.
+- **Sigue las animaciones**: los emisores van dentro de las partes del modelo, así que se mueven con él. Lo que ya salió se queda atrás un momento, por eso al caminar deja estela.
+- **Al apagarla** borra todo lo que puso (también los emisores de dentro de tus partes). Si el modelo se destruye, el aura se limpia sola.
+- **Ten en cuenta**: Roblox muestra como mucho 31 `Highlight` a la vez, y si el modelo ya tiene uno propio solo se ve uno de los dos. En las MeshParts las partículas salen de su caja, no de la malla exacta (en modelos normales no se nota).
+
 ### Golpes en el rival (corte y mordisco)
 
 En el combate por turnos, Kaiju Zero hace su animación de ataque desde su lado (por ejemplo *Vertical Slash* con la mano) y **en el rival aparece el golpe**. Llama la función en el cuadro de la animación en que el golpe conecta, en todos los clientes:
@@ -260,7 +285,7 @@ end)
 
 ### Rendimiento
 
-En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a unas 1900 partículas y 24 rocas. La H3 y la H3 Ignition llegan a unas 1600 partículas (con 7 rocas). La ULTIMATE se mantiene en unas 400 partículas, con 5 Beams y 8 rocas fundidas en total; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. Los golpes son livianos: unas 80 partículas el corte y el mordisco, y unas 110 el corte quemado. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
+En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a unas 1900 partículas y 24 rocas. La H3 y la H3 Ignition llegan a unas 1600 partículas (con 7 rocas). La ULTIMATE se mantiene en unas 400 partículas, con 5 Beams y 8 rocas fundidas en total; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. El aura tiene unas 400 partículas encendidas y un emisor por capa en cada parte (hasta 30 partes). Los golpes son livianos: unas 80 partículas el corte y el mordisco, y unas 110 el corte quemado. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
 
 ## Para que se vea como en el video
 
@@ -279,13 +304,14 @@ En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a u
 
 - **Kenney Particle Pack** (`kk_*`): CC0, de kenney.nl. El crédito es opcional. Ver `textures/KENNEY_LICENSE.txt`.
 - **Muestras oficiales de Effekseer** (`fx_*`): CC0. Agradecen el crédito a "Effekseer" y a los autores de las muestras. Ver `textures/EFFEKSEER_SAMPLES_LICENSE_CC0.txt`.
-- **`kz_*`**: generadas aquí, son tuyas. Las de lava (`kz_lava_*`) se hicieron en parte a partir de las muestras CC0 de Effekseer. Las del rayo (`kz_beam_*`), las rocas de lava (`kz_lava_rock_2x2`), la garra (`kz_claw_*`) y el mordisco (`kz_bite_4x4`) se generan desde cero.
+- **`kz_*`**: generadas aquí, son tuyas. Las de lava (`kz_lava_*`) se hicieron en parte a partir de las muestras CC0 de Effekseer. Las del rayo (`kz_beam_*`), las rocas de lava (`kz_lava_rock_2x2`), la garra (`kz_claw_*`), el mordisco (`kz_bite_4x4`) y las del aura (`kz_aura_wisp_2x2`, `fx_aura_tongue_2x2`) se generan desde cero.
 
 ## Si quieres cambiar algo
 
 - **H3** (pilares, tiempos, colores, separación de rocas): `tools/vfx_pillars.py`.
 - **H1** (explosión de lava): `tools/vfx_lava.py`. Sus texturas propias (`kz_lava_*`) salen de `tools/gen_lava_textures.py`. La Ignition se genera desde ella con `ignitionize`, en `tools/vfx_specs.py`. Ahí puedes cambiar el tamaño, la intensidad y el brillo del carmesí: `bright_k` sube el brillo y `_G_MAP_HOT` decide cuánto se blanquean los tonos más calientes. El núcleo de magma que nace blanco está en `IGNITION_CORE`, en `tools/vfx_lava.py`.
 - **H1 clásica** (la de fuego): `GIANT` en `tools/vfx_specs.py`.
+- **Auras** (la carmesí y la cósmica de Omnívora salen de la misma receta): `tools/vfx_aura.py`. `layers()` es la receta y `CRIMSON` / `COSMIC` las paletas; en `aura_cfg` están los colores del delineado, cada cuánto hay oleada y cuánto tarda en encenderse y apagarse. Sus texturas (`kz_aura_wisp_2x2`, `fx_aura_tongue_2x2`) salen de `tools/gen_aura_textures.py`.
 - **Golpes** (corte en garra, corte quemado y mordisco): `tools/vfx_hits.py`. Ahí están el ángulo por defecto del corte (`"angle"`), los colores y el brillo de cada golpe. Sus texturas (`kz_claw_*` y `kz_bite_4x4`) salen de `tools/gen_hit_textures.py`.
 - **ULTIMATE** (el rayo): `tools/vfx_beam.py`. Arriba están los tiempos (`START`, `GROW`, `STOP`, `FADE`) y los colores, y en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo. Al final, en `"beam"`, están el largo máximo (`max_len`: 186), cada cuánto deja marcas al barrer el suelo (`trail_every`, `trail_move`) y el tiempo mínimo entre impactos (`rehit`). Sus texturas (`kz_beam_*` y `kz_lava_rock_2x2`) salen de `tools/gen_beam_textures.py`.
 
@@ -298,5 +324,5 @@ python tools/gen_luau.py roblox
 El mismo comando regenera también los módulos de Astral Colossus (`AstralColossus_VFX/roblox`) y Omnívora (`Omnivora_VFX/roblox`), que usan el mismo motor.
 
 Las pruebas que validan el módulo son estas:
-- `tools/test_luau/run_runtime.py`: ejecuta cada efecto contra un Roblox simulado. Comprueba que se limpie todo y, en la H3, que cada roca reciba su explosión y que el remate quede en la última. En la ULTIMATE comprueba que sin nada delante llegue a su largo máximo, que se corte en el suelo, que se acorte y deje marcas al barrer el suelo, que vuelva a su máximo al apuntar al cielo, que siga a un objetivo que se mueve y a un origen nuevo, y que `Stop()` lo apague y se limpie todo. En los golpes comprueba que salgan delante del rival y que su tamaño siga el alto del rival.
+- `tools/test_luau/run_runtime.py`: ejecuta cada efecto contra un Roblox simulado. Comprueba que se limpie todo y, en la H3, que cada roca reciba su explosión y que el remate quede en la última. En la ULTIMATE comprueba que sin nada delante llegue a su largo máximo, que se corte en el suelo, que se acorte y deje marcas al barrer el suelo, que vuelva a su máximo al apuntar al cielo, que siga a un objetivo que se mueve y a un origen nuevo, y que `Stop()` lo apague y se limpie todo. En los golpes comprueba que salgan delante del rival y que su tamaño siga el alto del rival. En el aura comprueba que salga de las partes visibles del cuerpo (no de la raíz ni de hitboxes invisibles), que su tamaño siga el alto del modelo, que haya oleadas, que siga al modelo si se mueve y que se limpie al apagarla, al acabar su duración o si el modelo desaparece.
 - `luau-lsp analyze` con las definiciones de Roblox: verifica que todas las propiedades y métodos existan en la API.

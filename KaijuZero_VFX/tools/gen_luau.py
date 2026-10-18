@@ -2278,6 +2278,253 @@ local function playOrb(spec: Layer, mouth: any, targets: any, scale: number?, sh
 	return holder
 end
 
+-- ---------------------------------------------------------------- aura que se adapta al modelo
+-- Envuelve cualquier Model (o una Part): un Highlight delinea todo el cuerpo y respira; capas `aura`:
+-- "surface" = un emisor en cada parte del cuerpo (la tasa se reparte según su área: brota de toda la silueta),
+-- "body" = un emisor en una caja invisible del tamaño del modelo que lo sigue, "feet" = en el suelo bajo sus pies.
+-- Los tamaños de la spec son para un modelo de `ref` studs de alto: crecen con el alto real del modelo. Cada
+-- `surge` s hay una oleada (capas con `surge` = partículas de golpe y el delineado se enciende).
+export type AuraControl = {
+	Holder: Part,
+	Model: Instance,
+	Active: boolean,
+	Intensity: number,
+	SetIntensity: (AuraControl, intensity: number) -> (),
+	Stop: (AuraControl, fade: number?) -> (),
+}
+
+type AuraItem = { L: Layer, e: ParticleEmitter, share: number, carrier: Part? }
+
+local function auraBox(model: Instance): (CFrame, Vector3)
+	if model:IsA("Model") then
+		return (model :: Model):GetBoundingBox()
+	elseif model:IsA("BasePart") then
+		return (model :: BasePart).CFrame, (model :: BasePart).Size
+	end
+	return CFrame.new(), Vector3.one
+end
+
+local function auraParts(model: Instance, maxParts: number): ({ BasePart }, { number })
+	local list: { BasePart } = {}
+	local function consider(p: Instance)
+		if p:IsA("BasePart") and p.Transparency < 0.95 and p.Name ~= "HumanoidRootPart" then
+			table.insert(list, p)
+		end
+	end
+	consider(model)
+	for _, d in model:GetDescendants() do
+		consider(d)
+	end
+	local function area(p: BasePart): number
+		local s = p.Size
+		return 2 * (s.X * s.Y + s.Y * s.Z + s.Z * s.X)
+	end
+	-- solo las más grandes (las piezas diminutas casi no aportan y cuestan un emisor cada una)
+	table.sort(list, function(a, b)
+		return area(a) > area(b)
+	end)
+	while #list > maxParts do
+		table.remove(list)
+	end
+	local total = 0
+	for _, p in list do
+		total += area(p)
+	end
+	local shares: { number } = {}
+	for i, p in list do
+		shares[i] = area(p) / math.max(total, 1e-3)
+	end
+	return list, shares
+end
+
+local function playAura(spec: Layer, model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
+	local Au = spec.aura
+	local cf0, size0 = auraBox(model)
+	local k = (scale or 1) * math.clamp(size0.Y / Au.ref, 0.25, 8)
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf0, KaijuFireVFX.Parent)
+	local t0 = time()
+	local items: { AuraItem } = {}
+	local bodyCarriers: { { c: Part, L: Layer } } = {}
+	local feetCarriers: { { c: Part, L: Layer } } = {}
+	local parts, shares = auraParts(model, Au.max_parts)
+
+	for _, L in spec.layers do
+		if L.aura == "surface" then
+			for i, p in parts do
+				local e = configureEmitter(L, k)
+				e.Shape = Enum.ParticleEmitterShape.Box
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+				e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+				e.Name = "KZAura_" .. L.name
+				e.Parent = p
+				table.insert(items, { L = L, e = e, share = shares[i] })
+			end
+		else
+			local c = invisiblePart(L.name .. "_Shape", Vector3.one, cf0, holder)
+			local e = configureEmitter(L, k)
+			if L.aura == "feet" then
+				e.Shape = Enum.ParticleEmitterShape.Disc
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+				table.insert(feetCarriers, { c = c, L = L })
+			else
+				e.Shape = Enum.ParticleEmitterShape.Box
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+				table.insert(bodyCarriers, { c = c, L = L })
+			end
+			e.Parent = c
+			table.insert(items, { L = L, e = e, share = 1, carrier = c })
+		end
+	end
+
+	-- el delineado: un Highlight sobre todo el modelo
+	local hl = Instance.new("Highlight")
+	hl.Name = "KZAuraOutline"
+	hl.Adornee = model
+	hl.DepthMode = Enum.HighlightDepthMode.Occluded
+	hl.FillColor = Color3.fromRGB(Au.fill[1], Au.fill[2], Au.fill[3])
+	hl.FillTransparency = 1
+	hl.OutlineTransparency = 1
+	hl.Parent = holder
+
+	local light: PointLight? = nil
+	if KaijuFireVFX.UseLight then
+		local li = Instance.new("PointLight")
+		li.Color = Color3.fromRGB(Au.light_color[1], Au.light_color[2], Au.light_color[3])
+		li.Range = math.min(Au.light_range * k, 60)
+		li.Brightness = 0
+		li.Shadows = false
+		li.Parent = holder
+		light = li
+	end
+
+	local c1 = Color3.fromRGB(Au.outline[1][1], Au.outline[1][2], Au.outline[1][3])
+	local c2 = Color3.fromRGB(Au.outline[2][1], Au.outline[2][2], Au.outline[2][3])
+	local stopAt: number? = if duration then duration else nil
+	local fadeOut = Au.fade_out
+	local lastSurge = 0
+	local groundY: number? = nil
+	local nextGround = 0
+	local ctl: AuraControl
+	ctl = {
+		Holder = holder,
+		Model = model,
+		Active = true,
+		Intensity = intensity or 1,
+		SetIntensity = function(self, v: number)
+			self.Intensity = math.max(v, 0)
+		end,
+		Stop = function(_, fade: number?)
+			local t = time() - t0
+			if not stopAt or (stopAt :: number) > t then
+				stopAt = t
+				fadeOut = fade or Au.fade_out
+			end
+		end,
+	}
+
+	local function destroyAll()
+		for _, it in items do
+			if it.e.Parent then
+				it.e:Destroy()
+			end
+		end
+		if holder.Parent then
+			holder:Destroy()
+		end
+		ctl.Active = false
+	end
+
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not model.Parent or not holder.Parent then
+			conn:Disconnect()
+			destroyAll()
+			return
+		end
+		-- cuánto está encendida: sube al empezar y baja al cortarla
+		local on = math.clamp(t / math.max(Au.fade_in, 1e-3), 0, 1)
+		if stopAt then
+			local u = (t - (stopAt :: number)) / math.max(fadeOut, 1e-3)
+			on = math.min(on, math.clamp(1 - u, 0, 1))
+			if u >= 1 then
+				for _, it in items do
+					it.e.Enabled = false
+				end
+				hl.OutlineTransparency, hl.FillTransparency = 1, 1
+				if light then
+					light.Brightness = 0
+				end
+				ctl.Active = false
+				if t > (stopAt :: number) + fadeOut + Au.life_max then
+					conn:Disconnect()
+					destroyAll()
+				end
+				return
+			end
+		end
+		local k2 = on * ctl.Intensity
+		-- seguir al modelo: caja del cuerpo y suelo bajo los pies
+		local cf, size = auraBox(model)
+		holder.CFrame = cf
+		if t >= nextGround then
+			nextGround = t + 0.25
+			local _, _, gy = groundLook(cf.Position, { model, holder }, size.Y * 0.5 + 12)
+			groundY = gy
+		end
+		local bottom = cf.Position.Y - size.Y * 0.5
+		local nearGround = groundY ~= nil and bottom - (groundY :: number) < size.Y * 0.4
+		for _, bc in bodyCarriers do
+			local f = bc.L.box or { 1, 1, 1 }
+			bc.c.Size = Vector3.new(size.X * f[1], size.Y * f[2], size.Z * f[3])
+			bc.c.CFrame = cf
+		end
+		for _, fc in feetCarriers do
+			local w = math.max(size.X, size.Z) * (fc.L.radius_k or 0.6)
+			local y = if groundY then groundY :: number else bottom
+			fc.c.Size = Vector3.new(w, 0.2, w)
+			fc.c.CFrame = CFrame.new(cf.Position.X, y + (fc.L.offset[2] or 0) * k, cf.Position.Z)
+		end
+		-- tasas
+		for _, it in items do
+			local L = it.L
+			local gate = if L.aura == "feet" and not nearGround then 0 else 1
+			local rate = (L.rate or 0) * it.share * k2 * gate * KaijuFireVFX.Quality
+			it.e.Rate = rate
+			it.e.Enabled = rate > 0.01
+		end
+		-- oleadas
+		local surgeK = 0
+		if Au.surge and Au.surge > 0 then
+			if t - lastSurge >= Au.surge and on > 0.5 then
+				lastSurge = t
+				for _, it in items do
+					local n = (it.L.surge or 0) * it.share * ctl.Intensity * KaijuFireVFX.Quality
+					local whole = math.floor(n)
+					if rng:NextNumber() < n - whole then
+						whole += 1
+					end
+					if whole > 0 and (it.L.aura ~= "feet" or nearGround) then
+						it.e:Emit(whole)
+					end
+				end
+			end
+			surgeK = math.exp(-(t - lastSurge) / 0.25)
+		end
+		-- el delineado respira entre sus dos colores y se enciende en cada oleada
+		local w = 0.5 + 0.5 * math.sin(t * math.pi * 2 * Au.pulse_hz)
+		hl.OutlineColor = c1:Lerp(c2, math.clamp(w * 0.7 + surgeK * 0.6, 0, 1))
+		local ot = Au.outline_t[1] + (Au.outline_t[2] - Au.outline_t[1]) * (1 - w)
+		hl.OutlineTransparency = 1 - (1 - ot * (1 - surgeK)) * math.min(k2, 1)
+		local ft = Au.fill_t[1] + (Au.fill_t[2] - Au.fill_t[1]) * (1 - w)
+		hl.FillTransparency = math.clamp(1 - (1 - ft) * math.min(k2, 1) * (1 + surgeK * 0.6), 0, 1)
+		if light then
+			light.Brightness = Au.light_brightness * k2 * (0.75 + 0.25 * w + surgeK * 0.8)
+		end
+	end)
+	return ctl
+end
+
 '''
 
 
@@ -2322,11 +2569,17 @@ def build(specs, name, doc):
         data = {"name": spec["name"], "duration": spec["duration"],
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
-        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb", "beam", "hit"):
+        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb", "beam", "hit",
+                  "aura"):
             if spec.get(k):
                 data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         if spec.get("cubes"):
             data["cubes"] = norm_cubes(spec["cubes"])
+        if spec.get("aura"):
+            a = dict(spec["aura"])
+            a["life_max"] = max(L["lifetime"][1] for L in spec["layers"])
+            data["aura"] = {k: (list(v) if isinstance(v, tuple) else v) for k, v in a.items()}
+            data["aura"]["outline"] = [list(c) for c in a["outline"]]
         if spec.get("beams"):
             data["beams"] = [norm_beam(B) for B in spec["beams"]]
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"
@@ -2365,6 +2618,17 @@ def build(specs, name, doc):
                 f"\treturn playBeam(SPEC_{key}, origin, target, scale, shake, ignore)\nend\n" \
                 "-- segundos (desde la llamada) en que llega a su largo máximo y en que se corta solo\n" \
                 f"KaijuFireVFX.{key}Start = {hit:g}\nKaijuFireVFX.{key}Stop = {b['stop']:g}\n\n"
+        elif spec.get("aura"):
+            a = spec["aura"]
+            out += head + \
+                "-- model = el modelo (Model o Part): el aura se adapta sola a su forma y a su tamaño y lo sigue si se mueve\n" \
+                f"-- ({a['ref']:g} studs de alto = tamaño 1; scale lo multiplica). duration = segundos que dura (nil = hasta que la\n" \
+                "-- apagues); intensity = 1 normal (0.5 suave, 1.5 fuerte). Devuelve un control:\n" \
+                "--   aura:Stop(fade)          la apaga (se desvanece en fade s; nil = el de siempre)\n" \
+                "--   aura:SetIntensity(k)     más fuerte o más suave mientras dura\n" \
+                "--   aura.Active = true mientras se ve; aura.Holder = la Part que la contiene\n" + \
+                f"function KaijuFireVFX.{key}(model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl\n" \
+                f"\treturn playAura(SPEC_{key}, model, scale, duration, intensity)\nend\n\n"
         elif spec.get("hit"):
             h = spec["hit"]
             out += head + \

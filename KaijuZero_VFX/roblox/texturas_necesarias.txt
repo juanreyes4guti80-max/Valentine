@@ -1,3 +1,4 @@
+fx_aura_tongue_2x2.png
 fx_burst_a.png
 fx_burst_fan.png
 fx_feather_4x4.png
@@ -5,14 +6,17 @@ fx_fire_2x2.png
 fx_glow.png
 fx_line.png
 fx_line_curve.png
+fx_particle02.png
 fx_shock_soft.png
 fx_shock_spiky.png
 fx_smoke_2x2.png
 fx_smoke_round.png
+fx_spark002.png
 fx_spark4.png
 fx_star.png
 fx_wind_lines.png
 fx_wind_swirl.png
+kk_circle_02.png
 kk_circle_03.png
 kk_fire_01.png
 kk_fire_02.png
@@ -28,10 +32,13 @@ kk_smoke_08.png
 kk_smoke_10.png
 kk_spark_01.png
 kk_spark_02.png
+kk_spark_05.png
 kk_star_06.png
 kk_trace_01.png
+kk_trace_03.png
 kk_twirl_01.png
 kk_twirl_02.png
+kz_aura_wisp_2x2.png
 kz_beam_core.png
 kz_beam_flow.png
 kz_beam_glow.png

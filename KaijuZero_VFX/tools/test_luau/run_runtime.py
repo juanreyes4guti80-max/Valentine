@@ -290,6 +290,86 @@ run("CosmicBeam 3s", function()
 	return OMNI.CosmicBeam(R.Vector3.new(0, 30, 0), R.Vector3.new(0, -10, -60), 1, 1, {}).Holder
 end, 8)
 assert(OMNI.CosmicBeamStart > 0.3 and OMNI.CosmicBeamStop >= OMNI.CosmicBeamStart + 2.85, "tiempos del rayo cósmico")
+-- AURAS: se adaptan al modelo (sus partes, su alto), lo siguen, tienen oleadas y se limpian al apagarlas
+local function auraModel(height)
+	local m = R.Instance.new("Model")
+	m.Name = "Kaiju"
+	m.Parent = R.workspace
+	local k = height / 22
+	local function part(name, size, pos, tr)
+		local p = R.Instance.new("Part")
+		p.Name = name
+		p.Size = size * k
+		p.CFrame = R.CFrame.new(pos.X * k, pos.Y * k, pos.Z * k)
+		p.Transparency = tr or 0
+		p.Parent = m
+		return p
+	end
+	local list = {
+		part("Torso", R.Vector3.new(6, 9, 5), R.Vector3.new(0, 8, 0)),
+		part("Head", R.Vector3.new(4, 3, 3), R.Vector3.new(2, 19, 0)),
+		part("LegL", R.Vector3.new(3, 6, 2.5), R.Vector3.new(-1, 3, 2)),
+		part("LegR", R.Vector3.new(3, 6, 2.5), R.Vector3.new(-1, 3, -2)),
+		part("Tail", R.Vector3.new(8, 2.5, 2.5), R.Vector3.new(-7, 2, 0)),
+		part("HumanoidRootPart", R.Vector3.new(2, 2, 1), R.Vector3.new(0, 60, 0), 1),
+		part("Hitbox", R.Vector3.new(10, 22, 10), R.Vector3.new(0, 80, 0), 1),
+	}
+	local center = R.Vector3.new(0, 11 * k, 0)
+	m.GetBoundingBox = function() return R.CFrame.new(center.X, center.Y, center.Z), R.Vector3.new(16, 22, 6) * k end
+	m.GetDescendants = function() return list end
+	return m, function(c) center = c end
+end
+local function runAura(name, mod, fnName)
+	R.reset()
+	R.workspace = R.Instance.new("Workspace")
+	mod.Parent = R.workspace
+	local model, moveTo = auraModel(44)
+	local aura = mod[fnName](model, 1, nil, 1)
+	stepFor(1.0)
+	-- los emisores van en las partes visibles del cuerpo (no en la raíz ni en la caja de golpes invisibles)
+	local onBody, onHidden = 0, 0
+	for _, p in R.stats.streamPos do
+		if p.Y > 50 then onHidden += 1 elseif p.Y > 0.5 then onBody += 1 end
+	end
+	assert(onBody >= 5, name .. ": no salió de las partes del cuerpo")
+	assert(onHidden == 0, name .. ": salió de una parte invisible")
+	-- el tamaño sigue al alto del modelo (44 studs = el doble)
+	assert(R.stats.maxPSize > 45 and R.stats.maxPSize < 55, name .. ": el tamaño no siguió al alto del modelo") -- el mayor: 25 studs a 22 de alto
+	-- oleada
+	local emits0 = R.stats.emits
+	stepFor(2.0)
+	assert(R.stats.emits > emits0, name .. ": no hubo oleada")
+	-- lo sigue si se mueve
+	moveTo(R.Vector3.new(30, 22, -12))
+	stepFor(0.1)
+	assert((aura.Holder.CFrame.p - R.Vector3.new(30, 22, -12)).Magnitude < 0.01, name .. ": no siguió al modelo")
+	aura:SetIntensity(1.5)
+	assert(aura.Active and aura.Intensity == 1.5, name .. ": intensidad")
+	aura:Stop()
+	stepFor(0.8)
+	assert(not aura.Active, name .. ": no se apagó")
+	stepFor(1.6)
+	local dl, wt, hb, rs = R.pending()
+	print(("%-17s   aura: emisores en el cuerpo %d | tamaño máx %.1f | emits %d | apagada: destruida=%s heartbeat=%d"):format(
+		name, onBody, R.stats.maxPSize, R.stats.emits, tostring(R.isDestroyed(aura.Holder)), hb))
+	assert(R.isDestroyed(aura.Holder) and hb == 0, name .. ": no se limpió al apagarla")
+	-- con duración: se apaga sola
+	R.reset()
+	local model2 = auraModel(22)
+	local a2 = mod[fnName](model2, 1, 1.5)
+	stepFor(4.0)
+	assert(R.isDestroyed(a2.Holder) and select(3, R.pending()) == 0, name .. ": con duración no se limpió sola")
+	-- si el modelo desaparece, el aura también
+	R.reset()
+	local model3 = auraModel(22)
+	local a3 = mod[fnName](model3)
+	stepFor(0.5)
+	model3:Destroy()
+	stepFor(0.1)
+	assert(R.isDestroyed(a3.Holder) and select(3, R.pending()) == 0, name .. ": quedó viva sin el modelo")
+end
+runAura("CrimsonAura", VFX, "CrimsonAura")
+runAura("CosmicAura", OMNI, "CosmicAura")
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"

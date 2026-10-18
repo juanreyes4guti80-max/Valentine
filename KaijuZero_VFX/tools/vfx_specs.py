@@ -994,3 +994,8 @@ SPECS["UltimateBeam"] = _VB.ULTIMATE_BEAM
 import vfx_hits as _VH
 
 SPECS.update(_VH.HITS)
+# el aura carmesí que se adapta a cualquier modelo (vfx_aura.py, la misma receta que la de Omnívora)
+import vfx_omnivora  # noqa: E402,F401  (primero: vfx_aura toma sus colores)
+import vfx_aura as _AU  # noqa: E402
+
+SPECS["CrimsonAura"] = _AU.CRIMSON_AURA

@@ -6,8 +6,8 @@
 |---|---|
 | `roblox/OmnivoraVFX.rbxmx` | El ModuleScript listo para insertar en Studio. |
 | `roblox/OmnivoraVFX.lua` | El mismo código en texto, si prefieres copiar y pegar. |
-| `roblox/texturas_necesarias.txt` | Las 41 imágenes que usa el módulo. |
-| `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 41). |
+| `roblox/texturas_necesarias.txt` | Las 43 imágenes que usa el módulo. |
+| `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 43). |
 | `preview/` | Videos simulados de los efectos. |
 
 Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los módulos de Kaiju Zero, Astral Colossus y Omnívora.
@@ -19,6 +19,7 @@ Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los mód
 | `CosmicPillar(cf, radio, altura, escala, sacudida)` | **Pilar cósmico**: en la zona circular elegida brota un **cilindro de energía** que sube (no un pilar sólido). Primero hay una **carga de 0.5 s**: se marca el círculo en el suelo, el suelo se agrieta con luz, la energía y el polvo se absorben hacia el centro, crece un orbe eléctrico y los cubos del suelo levitan temblando. Luego viene la **erupción**, con destello, ondas en el suelo y una explosión de **cubos**. El **pilar dura 2 s**. Es **denso**, casi no se ve a través, y **cósmico**: por dentro es una nebulosa de azul muy oscuro con vetas azules y púrpura y puntitos de estrella, de bordes ondulados (nada cuadrado). Lleva estelas celestes y púrpura que suben ondulando, velos de aurora, destellos blancos, anillos que trepan, relámpagos, tres oleadas de energía y estrellas que giran en espiral. Al final **colapsa**: el cuerpo se desvanece, la energía sale disparada hacia arriba y quedan estrellas. | 3 s (los cubos del suelo se desvanecen hasta los 4 s) |
 | `BlackHole(boca, enemigos, escala, sacudida, radio)` | **Agujero negro**, la habilidad que **golpea a dos enemigos a la vez**. Se forma frente a la boca de Omnívora: la energía y las estrellas se absorben y nace un núcleo negro con su anillo de luz. Después **avanza creciendo** en un arco suave hacia los enemigos. Lleva un disco de acreción que gira (azul celeste y púrpura), materia y estrellas que caen hacia él, una estela de nebulosa oscura con estrellas y ondas de gravedad. **Distorsiona el fondo** detrás de él y levanta polvo y cubitos del suelo. Al llegar **implosiona y detona en medio de los enemigos**: destello, nebulosa que se expande, anillos, rayos, estrellas, ondas y grietas de luz en el suelo, y la **destrucción de cubos** (los que el agujero ya levantaba salen despedidos con los demás). | 3.5 s (los cubos se desvanecen hasta los 5.6 s) |
 | `CosmicBeam(origen, objetivo, escala, sacudida, ignorar)` | **Rayo cósmico** de 3 s que **se puede apuntar** mientras dura. La boca de Omnívora **devora energía y estrellas** un instante (estelas que caen hacia ella, un disco púrpura que gira) y suelta un rayo de **nebulosa**: un cuerpo denso de azul muy oscuro con venas celestes, manchas púrpura y estrellas, envuelto en hebras de energía celestes y púrpura, con el núcleo blanco. En la boca gira el disco púrpura y se abren anillos. A lo largo del rayo **viajan anillos y remolinos**, saltan relámpagos y suben auroras, y deja una **estela cósmica** de nebulosa y estrellas que se queda flotando cuando lo mueves. Se corta en la **primera superficie que toca** y, si no toca nada, llega a su **largo máximo de 124 studs** × escala. Donde pega: destello, halo, ondas, la nebulosa que estalla, estelas, **cubitos** que salen volando y **grietas de luz** en el suelo. Si **barres el suelo** deja una estela de grietas. | 3.6 s (las marcas del suelo se borran unos 3 s después de hechas) |
+| `CosmicAura(modelo, escala, duración, intensidad)` | **Aura cósmica** que se adapta a cualquier modelo. Delinea todo el cuerpo en celeste que respira hacia el púrpura y de toda su silueta emanan lenguas de nebulosa azul muy oscura con venas celestes, energía celeste y púrpura, estrellas y chispas; a los pies, anillos y destellos que suben. | hasta que la apagues |
 | `Shake(intensidad, duración)` | Sacudida de cámara corta. Solo funciona en el cliente. | — |
 | `ShakeRamp(inicial, final, duración)` | Sacudida continua que crece de `inicial` a `final` y se detiene al terminar. La usan el pilar y el agujero negro. Solo funciona en el cliente. | — |
 
@@ -238,6 +239,26 @@ task.delay(OmnivoraVFX.CosmicBeamStart, function()
 end)
 ```
 
+### Aura (CosmicAura)
+
+Un aura que **se adapta sola a cualquier modelo**: le pasas el Model y el módulo recorre sus partes, mide su alto y la arma encima. No hace falta ajustar nada a mano para Omnívora.
+
+```lua
+-- LocalScript (en todos los clientes, igual que los demás efectos)
+local aura = OmnivoraVFX.CosmicAura(modeloDeOmnivora, 1)   -- encendida hasta que la apagues
+aura:SetIntensity(1.5)                 -- más fuerte (0.5 = suave)
+aura:Stop()                            -- se desvanece en 0.7 s y se limpia sola
+
+OmnivoraVFX.CosmicAura(modeloDeOmnivora, 1, 5)             -- o con duración: 5 s y se apaga sola
+```
+
+- **`model`**: el Model (o una Part). **`escala`**: multiplica el tamaño (por defecto 1). **`duración`**: segundos, o `nil` para dejarla encendida. **`intensidad`**: 1 normal.
+- **Qué la forma**: un **delineado de todo el cuerpo** (un `Highlight` de Roblox) que respira entre celeste y púrpura, y lenguas de energía que **emanan de toda la silueta** y suben, con estrellas, chispas y estelas; a los pies, anillos que se abren y destellos que suben. Las lenguas grandes son de la misma nebulosa que el pilar y el rayo. Cada 2.2 s hay una **oleada**: el delineado se enciende y sale una ráfaga.
+- **Cómo se adapta**: pone un emisor en cada parte visible del modelo (las 30 más grandes; la tasa se reparte según el tamaño de cada una, así brota de toda la silueta por igual). Se salta la `HumanoidRootPart` y las partes invisibles (hitboxes). El tamaño de todo crece con el alto del modelo (22 studs = tamaño 1): en un kaiju de 200 studs se ve igual de proporcionada.
+- **Sigue las animaciones**: los emisores van dentro de las partes del modelo, así que se mueven con él. Lo que ya salió se queda atrás un momento, por eso al caminar deja estela.
+- **Al apagarla** borra todo lo que puso (también los emisores de dentro de tus partes). Si el modelo se destruye, el aura se limpia sola.
+- **Ten en cuenta**: Roblox muestra como mucho 31 `Highlight` a la vez, y si el modelo ya tiene uno propio solo se ve uno de los dos. En las MeshParts las partículas salen de su caja, no de la malla exacta (en modelos normales no se nota).
+
 ### El daño lo pone tu código (pilar)
 
 El módulo solo dibuja el efecto. El daño va en tu script del servidor. Para que coincida con lo que se ve, usa el mismo centro, radio y altura:
@@ -267,7 +288,7 @@ end)
 
 ### Rendimiento
 
-En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 97 emisores. El agujero negro llega a unas 400 partículas y 180 cubos. El rayo cósmico se mantiene en unas 370 partículas, con 6 Beams; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
+En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 97 emisores. El agujero negro llega a unas 400 partículas y 180 cubos. El aura tiene unas 370 partículas encendidas y un emisor por capa en cada parte (hasta 30 partes). El rayo cósmico se mantiene en unas 370 partículas, con 6 Beams; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
 
 ## Para que se vea como en el video
 
@@ -286,11 +307,11 @@ En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos 
 
 - **Kenney Particle Pack** (`kk_*`): CC0, de kenney.nl. El crédito es opcional. Ver `textures/KENNEY_LICENSE.txt`.
 - **Muestras oficiales de Effekseer** (`fx_*`): CC0. Agradecen el crédito a "Effekseer" y a los autores de las muestras. Ver `textures/EFFEKSEER_SAMPLES_LICENSE_CC0.txt`.
-- **`om_*` y `kz_*`**: generadas para este proyecto (los cubitos, las grietas, el cuerpo del pilar, el núcleo del agujero negro, la marca del suelo y las del rayo cósmico, `om_beam_*`), son tuyas.
+- **`om_*` y `kz_*`**: generadas para este proyecto (los cubitos, las grietas, el cuerpo del pilar, el núcleo del agujero negro, la marca del suelo las del rayo cósmico, `om_beam_*`, y las del aura, `om_aura_wisp_2x2` y `fx_aura_tongue_2x2`), son tuyas.
 
 ## Si quieres cambiar algo
 
-El pilar está en `KaijuZero_VFX/tools/vfx_omnivora.py`: colores, tiempos de la carga y del pilar, cantidad y tamaño de los cubos (`CUBES`), oleadas, luces. El agujero negro está en `KaijuZero_VFX/tools/vfx_blackhole.py`: tiempos de la formación, del avance y de la detonación, tamaño, altura, arco, la lente, las capas del agujero y los cubos (`CUBES_BH`). El rayo cósmico está en `KaijuZero_VFX/tools/vfx_cosmicbeam.py`: arriba los tiempos (`START`, `GROW`, `STOP`, `FADE`), en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo, y al final, en `"beam"`, el largo máximo (`max_len`: 124), cada cuánto deja marcas al barrer (`trail_every`, `trail_move`) y el tiempo mínimo entre impactos (`rehit`). Sus texturas (`om_beam_*`) salen de `KaijuZero_VFX/tools/gen_cosmic_beam_textures.py`. Después de editarlo, regenera los módulos desde la carpeta `KaijuZero_VFX`:
+El pilar está en `KaijuZero_VFX/tools/vfx_omnivora.py`: colores, tiempos de la carga y del pilar, cantidad y tamaño de los cubos (`CUBES`), oleadas, luces. El agujero negro está en `KaijuZero_VFX/tools/vfx_blackhole.py`: tiempos de la formación, del avance y de la detonación, tamaño, altura, arco, la lente, las capas del agujero y los cubos (`CUBES_BH`). El rayo cósmico está en `KaijuZero_VFX/tools/vfx_cosmicbeam.py`: arriba los tiempos (`START`, `GROW`, `STOP`, `FADE`), en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo, y al final, en `"beam"`, el largo máximo (`max_len`: 124), cada cuánto deja marcas al barrer (`trail_every`, `trail_move`) y el tiempo mínimo entre impactos (`rehit`). Sus texturas (`om_beam_*`) salen de `KaijuZero_VFX/tools/gen_cosmic_beam_textures.py`. El aura está en `KaijuZero_VFX/tools/vfx_aura.py` (la misma receta que el aura carmesí de Kaiju Zero; `COSMIC` es su paleta y en `aura_cfg` están el delineado, las oleadas y los tiempos) y sus texturas salen de `KaijuZero_VFX/tools/gen_aura_textures.py`. Después de editarlo, regenera los módulos desde la carpeta `KaijuZero_VFX`:
 
 ```
 python tools/gen_luau.py roblox
@@ -307,3 +328,5 @@ La prueba `KaijuZero_VFX/tools/test_luau/run_runtime.py` ejecuta los efectos con
 En el agujero negro prueba dos enemigos, enemigos como Parts y Models con escala 1.5, uno solo y ninguno. Comprueba que salga de la boca, que llegue sobre el centro de los enemigos, que la lente crezca con él, que los cubos tomen el color del suelo y salgan despedidos, y que se limpie todo.
 
 En el rayo cósmico comprueba que sin nada delante llegue a su largo máximo (124), que se corte en el suelo, que se acorte y deje marcas al barrer el suelo, que vuelva a su máximo al apuntar al cielo, que siga a un objetivo que se mueve y a un origen nuevo, y que `Stop()` lo apague y se limpie todo.
+
+En el aura comprueba que salga de las partes visibles del cuerpo (no de la raíz ni de hitboxes invisibles), que su tamaño siga el alto del modelo, que haya oleadas, que siga al modelo si se mueve y que se limpie al apagarla, al acabar su duración o si el modelo desaparece.

@@ -31,6 +31,7 @@ local KaijuFireVFX = {}
 
 -- Pega aquí los IDs de las imágenes subidas
 KaijuFireVFX.TEXTURES = {
+	fx_aura_tongue_2x2 = "rbxassetid://0",
 	fx_burst_a = "rbxassetid://0",
 	fx_burst_fan = "rbxassetid://0",
 	fx_feather_4x4 = "rbxassetid://0",
@@ -38,14 +39,17 @@ KaijuFireVFX.TEXTURES = {
 	fx_glow = "rbxassetid://0",
 	fx_line = "rbxassetid://0",
 	fx_line_curve = "rbxassetid://0",
+	fx_particle02 = "rbxassetid://0",
 	fx_shock_soft = "rbxassetid://0",
 	fx_shock_spiky = "rbxassetid://0",
 	fx_smoke_2x2 = "rbxassetid://0",
 	fx_smoke_round = "rbxassetid://0",
+	fx_spark002 = "rbxassetid://0",
 	fx_spark4 = "rbxassetid://0",
 	fx_star = "rbxassetid://0",
 	fx_wind_lines = "rbxassetid://0",
 	fx_wind_swirl = "rbxassetid://0",
+	kk_circle_02 = "rbxassetid://0",
 	kk_circle_03 = "rbxassetid://0",
 	kk_fire_01 = "rbxassetid://0",
 	kk_fire_02 = "rbxassetid://0",
@@ -61,10 +65,13 @@ KaijuFireVFX.TEXTURES = {
 	kk_smoke_10 = "rbxassetid://0",
 	kk_spark_01 = "rbxassetid://0",
 	kk_spark_02 = "rbxassetid://0",
+	kk_spark_05 = "rbxassetid://0",
 	kk_star_06 = "rbxassetid://0",
 	kk_trace_01 = "rbxassetid://0",
+	kk_trace_03 = "rbxassetid://0",
 	kk_twirl_01 = "rbxassetid://0",
 	kk_twirl_02 = "rbxassetid://0",
+	kz_aura_wisp_2x2 = "rbxassetid://0",
 	kz_beam_core = "rbxassetid://0",
 	kz_beam_flow = "rbxassetid://0",
 	kz_beam_glow = "rbxassetid://0",
@@ -2128,6 +2135,253 @@ local function _playOrb(spec: Layer, mouth: any, targets: any, scale: number?, s
 	runOrb(spec, Z, A, Vector3.new(c.X, Z.groundY + O.height * s, c.Z))
 	finish(spec, holder, s, shake, {})
 	return holder
+end
+
+-- ---------------------------------------------------------------- aura que se adapta al modelo
+-- Envuelve cualquier Model (o una Part): un Highlight delinea todo el cuerpo y respira; capas `aura`:
+-- "surface" = un emisor en cada parte del cuerpo (la tasa se reparte según su área: brota de toda la silueta),
+-- "body" = un emisor en una caja invisible del tamaño del modelo que lo sigue, "feet" = en el suelo bajo sus pies.
+-- Los tamaños de la spec son para un modelo de `ref` studs de alto: crecen con el alto real del modelo. Cada
+-- `surge` s hay una oleada (capas con `surge` = partículas de golpe y el delineado se enciende).
+export type AuraControl = {
+	Holder: Part,
+	Model: Instance,
+	Active: boolean,
+	Intensity: number,
+	SetIntensity: (AuraControl, intensity: number) -> (),
+	Stop: (AuraControl, fade: number?) -> (),
+}
+
+type AuraItem = { L: Layer, e: ParticleEmitter, share: number, carrier: Part? }
+
+local function auraBox(model: Instance): (CFrame, Vector3)
+	if model:IsA("Model") then
+		return (model :: Model):GetBoundingBox()
+	elseif model:IsA("BasePart") then
+		return (model :: BasePart).CFrame, (model :: BasePart).Size
+	end
+	return CFrame.new(), Vector3.one
+end
+
+local function auraParts(model: Instance, maxParts: number): ({ BasePart }, { number })
+	local list: { BasePart } = {}
+	local function consider(p: Instance)
+		if p:IsA("BasePart") and p.Transparency < 0.95 and p.Name ~= "HumanoidRootPart" then
+			table.insert(list, p)
+		end
+	end
+	consider(model)
+	for _, d in model:GetDescendants() do
+		consider(d)
+	end
+	local function area(p: BasePart): number
+		local s = p.Size
+		return 2 * (s.X * s.Y + s.Y * s.Z + s.Z * s.X)
+	end
+	-- solo las más grandes (las piezas diminutas casi no aportan y cuestan un emisor cada una)
+	table.sort(list, function(a, b)
+		return area(a) > area(b)
+	end)
+	while #list > maxParts do
+		table.remove(list)
+	end
+	local total = 0
+	for _, p in list do
+		total += area(p)
+	end
+	local shares: { number } = {}
+	for i, p in list do
+		shares[i] = area(p) / math.max(total, 1e-3)
+	end
+	return list, shares
+end
+
+local function playAura(spec: Layer, model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
+	local Au = spec.aura
+	local cf0, size0 = auraBox(model)
+	local k = (scale or 1) * math.clamp(size0.Y / Au.ref, 0.25, 8)
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf0, KaijuFireVFX.Parent)
+	local t0 = time()
+	local items: { AuraItem } = {}
+	local bodyCarriers: { { c: Part, L: Layer } } = {}
+	local feetCarriers: { { c: Part, L: Layer } } = {}
+	local parts, shares = auraParts(model, Au.max_parts)
+
+	for _, L in spec.layers do
+		if L.aura == "surface" then
+			for i, p in parts do
+				local e = configureEmitter(L, k)
+				e.Shape = Enum.ParticleEmitterShape.Box
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+				e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+				e.Name = "KZAura_" .. L.name
+				e.Parent = p
+				table.insert(items, { L = L, e = e, share = shares[i] })
+			end
+		else
+			local c = invisiblePart(L.name .. "_Shape", Vector3.one, cf0, holder)
+			local e = configureEmitter(L, k)
+			if L.aura == "feet" then
+				e.Shape = Enum.ParticleEmitterShape.Disc
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+				table.insert(feetCarriers, { c = c, L = L })
+			else
+				e.Shape = Enum.ParticleEmitterShape.Box
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+				table.insert(bodyCarriers, { c = c, L = L })
+			end
+			e.Parent = c
+			table.insert(items, { L = L, e = e, share = 1, carrier = c })
+		end
+	end
+
+	-- el delineado: un Highlight sobre todo el modelo
+	local hl = Instance.new("Highlight")
+	hl.Name = "KZAuraOutline"
+	hl.Adornee = model
+	hl.DepthMode = Enum.HighlightDepthMode.Occluded
+	hl.FillColor = Color3.fromRGB(Au.fill[1], Au.fill[2], Au.fill[3])
+	hl.FillTransparency = 1
+	hl.OutlineTransparency = 1
+	hl.Parent = holder
+
+	local light: PointLight? = nil
+	if KaijuFireVFX.UseLight then
+		local li = Instance.new("PointLight")
+		li.Color = Color3.fromRGB(Au.light_color[1], Au.light_color[2], Au.light_color[3])
+		li.Range = math.min(Au.light_range * k, 60)
+		li.Brightness = 0
+		li.Shadows = false
+		li.Parent = holder
+		light = li
+	end
+
+	local c1 = Color3.fromRGB(Au.outline[1][1], Au.outline[1][2], Au.outline[1][3])
+	local c2 = Color3.fromRGB(Au.outline[2][1], Au.outline[2][2], Au.outline[2][3])
+	local stopAt: number? = if duration then duration else nil
+	local fadeOut = Au.fade_out
+	local lastSurge = 0
+	local groundY: number? = nil
+	local nextGround = 0
+	local ctl: AuraControl
+	ctl = {
+		Holder = holder,
+		Model = model,
+		Active = true,
+		Intensity = intensity or 1,
+		SetIntensity = function(self, v: number)
+			self.Intensity = math.max(v, 0)
+		end,
+		Stop = function(_, fade: number?)
+			local t = time() - t0
+			if not stopAt or (stopAt :: number) > t then
+				stopAt = t
+				fadeOut = fade or Au.fade_out
+			end
+		end,
+	}
+
+	local function destroyAll()
+		for _, it in items do
+			if it.e.Parent then
+				it.e:Destroy()
+			end
+		end
+		if holder.Parent then
+			holder:Destroy()
+		end
+		ctl.Active = false
+	end
+
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not model.Parent or not holder.Parent then
+			conn:Disconnect()
+			destroyAll()
+			return
+		end
+		-- cuánto está encendida: sube al empezar y baja al cortarla
+		local on = math.clamp(t / math.max(Au.fade_in, 1e-3), 0, 1)
+		if stopAt then
+			local u = (t - (stopAt :: number)) / math.max(fadeOut, 1e-3)
+			on = math.min(on, math.clamp(1 - u, 0, 1))
+			if u >= 1 then
+				for _, it in items do
+					it.e.Enabled = false
+				end
+				hl.OutlineTransparency, hl.FillTransparency = 1, 1
+				if light then
+					light.Brightness = 0
+				end
+				ctl.Active = false
+				if t > (stopAt :: number) + fadeOut + Au.life_max then
+					conn:Disconnect()
+					destroyAll()
+				end
+				return
+			end
+		end
+		local k2 = on * ctl.Intensity
+		-- seguir al modelo: caja del cuerpo y suelo bajo los pies
+		local cf, size = auraBox(model)
+		holder.CFrame = cf
+		if t >= nextGround then
+			nextGround = t + 0.25
+			local _, _, gy = groundLook(cf.Position, { model, holder }, size.Y * 0.5 + 12)
+			groundY = gy
+		end
+		local bottom = cf.Position.Y - size.Y * 0.5
+		local nearGround = groundY ~= nil and bottom - (groundY :: number) < size.Y * 0.4
+		for _, bc in bodyCarriers do
+			local f = bc.L.box or { 1, 1, 1 }
+			bc.c.Size = Vector3.new(size.X * f[1], size.Y * f[2], size.Z * f[3])
+			bc.c.CFrame = cf
+		end
+		for _, fc in feetCarriers do
+			local w = math.max(size.X, size.Z) * (fc.L.radius_k or 0.6)
+			local y = if groundY then groundY :: number else bottom
+			fc.c.Size = Vector3.new(w, 0.2, w)
+			fc.c.CFrame = CFrame.new(cf.Position.X, y + (fc.L.offset[2] or 0) * k, cf.Position.Z)
+		end
+		-- tasas
+		for _, it in items do
+			local L = it.L
+			local gate = if L.aura == "feet" and not nearGround then 0 else 1
+			local rate = (L.rate or 0) * it.share * k2 * gate * KaijuFireVFX.Quality
+			it.e.Rate = rate
+			it.e.Enabled = rate > 0.01
+		end
+		-- oleadas
+		local surgeK = 0
+		if Au.surge and Au.surge > 0 then
+			if t - lastSurge >= Au.surge and on > 0.5 then
+				lastSurge = t
+				for _, it in items do
+					local n = (it.L.surge or 0) * it.share * ctl.Intensity * KaijuFireVFX.Quality
+					local whole = math.floor(n)
+					if rng:NextNumber() < n - whole then
+						whole += 1
+					end
+					if whole > 0 and (it.L.aura ~= "feet" or nearGround) then
+						it.e:Emit(whole)
+					end
+				end
+			end
+			surgeK = math.exp(-(t - lastSurge) / 0.25)
+		end
+		-- el delineado respira entre sus dos colores y se enciende en cada oleada
+		local w = 0.5 + 0.5 * math.sin(t * math.pi * 2 * Au.pulse_hz)
+		hl.OutlineColor = c1:Lerp(c2, math.clamp(w * 0.7 + surgeK * 0.6, 0, 1))
+		local ot = Au.outline_t[1] + (Au.outline_t[2] - Au.outline_t[1]) * (1 - w)
+		hl.OutlineTransparency = 1 - (1 - ot * (1 - surgeK)) * math.min(k2, 1)
+		local ft = Au.fill_t[1] + (Au.fill_t[2] - Au.fill_t[1]) * (1 - w)
+		hl.FillTransparency = math.clamp(1 - (1 - ft) * math.min(k2, 1) * (1 + surgeK * 0.6), 0, 1)
+		if light then
+			light.Brightness = Au.light_brightness * k2 * (0.75 + 0.25 * w + surgeK * 0.8)
+		end
+	end)
+	return ctl
 end
 
 local SPEC_GiantExplosion = {
@@ -30699,5 +30953,761 @@ function KaijuFireVFX.BiteHit(target: any, scale: number?, shake: number?): Part
 end
 -- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
 KaijuFireVFX.BiteHitImpact = 0.14
+
+local SPEC_CrimsonAura = {
+	name = "CrimsonAura",
+	duration = 0,
+	cleanup = 0.3,
+	layers = {
+		{
+			name = "AuraWisps",
+			aura = "surface",
+			texture = "kz_aura_wisp_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			spread = {35, 35},
+			speed = {2, 5},
+			drag = 1,
+			accel = {0, 9, 0},
+			lifetime = {0.8, 1.3},
+			size = {
+				{0, 2.5, 0.6},
+				{0.3, 6, 1.2},
+				{1, 8, 1.5},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.35, 0},
+				{0.7, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.68,
+			brightness = 1.1,
+			rotation = {-10, 10},
+			rate = 60,
+			surge = 25,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraWispsOut",
+			aura = "surface",
+			texture = "kz_aura_wisp_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 1,
+			accel = {0, 9, 0},
+			lifetime = {0.8, 1.3},
+			size = {
+				{0, 4, 1},
+				{0.3, 9, 2},
+				{1, 12, 2},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.25, 0.5, 0},
+				{0.7, 0.62, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.68,
+			brightness = 1.1,
+			rotation = {-10, 10},
+			zoffset = -2,
+			rate = 16,
+			surge = 8,
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraTongues",
+			aura = "surface",
+			texture = "fx_aura_tongue_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 4},
+			drag = 1,
+			accel = {0, 10, 0},
+			lifetime = {0.45, 0.7},
+			size = {
+				{0, 3, 0.6},
+				{0.4, 6, 1.2},
+				{1, 7, 1.4},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.15, 0.3, 0},
+				{0.7, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 210, 120},
+				},
+				{
+					0.35,
+					{255, 130, 35},
+				},
+				{
+					1,
+					{220, 25, 35},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rotation = {-10, 10},
+			rate = 45,
+			surge = 20,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraTongues2",
+			aura = "surface",
+			texture = "fx_aura_tongue_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			spread = {20, 20},
+			speed = {2, 4},
+			drag = 1,
+			accel = {0, 10, 0},
+			lifetime = {0.45, 0.7},
+			size = {
+				{0, 2.6, 0.5},
+				{0.4, 5, 1},
+				{1, 6, 1.2},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.15, 0.35, 0},
+				{0.7, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 90, 80},
+				},
+				{
+					0.4,
+					{220, 20, 40},
+				},
+				{
+					1,
+					{110, 0, 15},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.35,
+			rotation = {-10, 10},
+			rate = 20,
+			surge = 10,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraStars",
+			aura = "surface",
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {60, 60},
+			speed = {1, 3},
+			drag = 1,
+			accel = {0, 9, 0},
+			lifetime = {0.8, 1.4},
+			size = {
+				{0, 0, 0},
+				{0.08, 0.96, 0},
+				{0.22, 0.42, 0},
+				{0.38, 1.02, 0},
+				{0.55, 0.36, 0},
+				{0.72, 0.84, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 240},
+				},
+				{
+					0.4,
+					{255, 190, 90},
+				},
+				{
+					1,
+					{240, 60, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			rate = 40,
+			surge = 25,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraMotes",
+			aura = "surface",
+			texture = "fx_particle02",
+			direction = "Top",
+			spread = {60, 60},
+			speed = {1, 4},
+			drag = 1.5,
+			accel = {0, 6, 0},
+			lifetime = {0.5, 0.9},
+			size = {
+				{0, 0, 0},
+				{0.15, 0.32, 0.1},
+				{0.8, 0.24, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 210},
+				},
+				{
+					1,
+					{255, 120, 40},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rate = 30,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraBolts",
+			aura = "surface",
+			texture = "kk_spark_05",
+			lifetime = {0.07, 0.1},
+			size = {
+				{0, 2, 0.6},
+				{1, 2.6, 0.6},
+			},
+			color = {
+				{
+					0,
+					{255, 245, 230},
+				},
+				{
+					0.5,
+					{255, 140, 60},
+				},
+				{
+					1,
+					{230, 30, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rate = 6,
+			surge = 8,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraHalo",
+			aura = "body",
+			box = {0.8, 0.8, 0.8},
+			texture = "fx_glow",
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 15, 2},
+				{1, 18, 2},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.3, 0.8, 0},
+				{0.7, 0.84, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 30, 30},
+				},
+				{
+					0.5,
+					{150, 10, 20},
+				},
+				{
+					1,
+					{70, 0, 10},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = -3,
+			rate = 6,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraStreaks",
+			aura = "body",
+			box = {1.05, 0.8, 1.05},
+			texture = "kk_trace_03",
+			orientation = "VelocityParallel",
+			direction = "Top",
+			spread = {5, 5},
+			speed = {18, 28},
+			lifetime = {0.25, 0.4},
+			size = {
+				{0, 0.5, 0},
+				{0.3, 3, 0},
+				{1, 0.6, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 235, 200},
+				},
+				{
+					0.5,
+					{255, 120, 40},
+				},
+				{
+					1,
+					{210, 20, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			rate = 14,
+			surge = 16,
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FeetRings",
+			aura = "feet",
+			radius_k = 0.05,
+			texture = "kk_circle_02",
+			offset = {0, 0.25, 0},
+			lifetime = {1, 1.2},
+			size = {
+				{0, 8, 0},
+				{1, 20, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.6, 0.7, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 190, 110},
+				},
+				{
+					0.5,
+					{255, 70, 40},
+				},
+				{
+					1,
+					{170, 10, 20},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.1,
+			rate = 1.6,
+			surge = 1,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FeetGlow",
+			aura = "feet",
+			radius_k = 0.05,
+			texture = "fx_glow",
+			offset = {0, 0.15, 0},
+			lifetime = {0.6, 0.8},
+			size = {
+				{0, 22, 0},
+				{1, 25, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.3, 0.65, 0},
+				{0.7, 0.7, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 30, 30},
+				},
+				{
+					0.5,
+					{150, 10, 20},
+				},
+				{
+					1,
+					{70, 0, 10},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			rate = 4,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FeetRise",
+			aura = "feet",
+			radius_k = 0.6,
+			texture = "fx_spark002",
+			offset = {0, 0.3, 0},
+			direction = "Top",
+			spread = {10, 10},
+			speed = {6, 12},
+			drag = 0.5,
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.08, 0.8, 0},
+				{0.22, 0.35, 0},
+				{0.38, 0.85, 0},
+				{0.55, 0.3, 0},
+				{0.72, 0.7, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 240},
+				},
+				{
+					0.4,
+					{255, 190, 90},
+				},
+				{
+					1,
+					{240, 60, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.7,
+			rotation = {0, 45},
+			rate = 25,
+			surge = 15,
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FeetTongues",
+			aura = "feet",
+			radius_k = 0.55,
+			texture = "fx_aura_tongue_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "FacingCameraWorldUp",
+			offset = {0, 0.5, 0},
+			direction = "Top",
+			speed = {2, 4},
+			accel = {0, 8, 0},
+			lifetime = {0.4, 0.6},
+			size = {
+				{0, 3, 0},
+				{0.4, 6, 0},
+				{1, 7, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.35, 0},
+				{0.7, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 210, 120},
+				},
+				{
+					0.35,
+					{255, 130, 35},
+				},
+				{
+					1,
+					{220, 25, 35},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rotation = {-8, 8},
+			rate = 18,
+			surge = 8,
+			spread = {0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraFlames",
+			aura = "surface",
+			texture = "kk_fire_01",
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			spread = {15, 15},
+			speed = {2, 4},
+			drag = 1,
+			accel = {0, 9, 0},
+			lifetime = {0.35, 0.55},
+			size = {
+				{0, 1, 0.3},
+				{0.3, 2.2, 0.5},
+				{1, 0.6, 0},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.2, 0.2, 0},
+				{0.7, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 200},
+				},
+				{
+					0.25,
+					{255, 160, 50},
+				},
+				{
+					0.6,
+					{230, 40, 30},
+				},
+				{
+					1,
+					{90, 0, 10},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {-15, 15},
+			rate = 30,
+			surge = 12,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AuraSmoke",
+			aura = "surface",
+			texture = "kk_smoke_07",
+			direction = "Top",
+			spread = {25, 25},
+			speed = {1, 3},
+			drag = 1,
+			accel = {0, 6, 0},
+			lifetime = {0.8, 1.2},
+			size = {
+				{0, 1.5, 0.4},
+				{1, 4.5, 1},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.25, 0.7, 0},
+				{0.7, 0.8, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{40, 6, 8},
+				},
+				{
+					1,
+					{14, 6, 8},
+				},
+			},
+			light_emission = 0,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -1,
+			rate = 10,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+	},
+	aura = {
+		ref = 22,
+		fade_in = 0.6,
+		fade_out = 0.7,
+		surge = 2.2,
+		pulse_hz = 0.8,
+		max_parts = 30,
+		outline = {
+			{255, 40, 50},
+			{255, 150, 40},
+		},
+		outline_t = {0, 0.35},
+		fill = {120, 0, 12},
+		fill_t = {0.74, 0.88},
+		light_color = {255, 60, 40},
+		light_brightness = 2.5,
+		light_range = 26,
+		life_max = 1.4,
+	},
+}
+
+-- KAIJU ZERO: AURA CARMESÍ que se adapta a cualquier modelo (la misma receta que el aura de Omnívora). Delinea todo su cuerpo (carmesí que respira hacia el naranja) y de toda su silueta emanan lenguas de energía carmesí y naranja con chispas al rojo blanco, llamitas, brasas y algo de humo oscuro; a los pies, anillos y brasas que suben. Cada 2.2 s, una oleada.
+-- model = el modelo (Model o Part): el aura se adapta sola a su forma y a su tamaño y lo sigue si se mueve
+-- (22 studs de alto = tamaño 1; scale lo multiplica). duration = segundos que dura (nil = hasta que la
+-- apagues); intensity = 1 normal (0.5 suave, 1.5 fuerte). Devuelve un control:
+--   aura:Stop(fade)          la apaga (se desvanece en fade s; nil = el de siempre)
+--   aura:SetIntensity(k)     más fuerte o más suave mientras dura
+--   aura.Active = true mientras se ve; aura.Holder = la Part que la contiene
+function KaijuFireVFX.CrimsonAura(model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
+	return playAura(SPEC_CrimsonAura, model, scale, duration, intensity)
+end
 
 return KaijuFireVFX

@@ -477,3 +477,6 @@ SPECS["BlackHole"] = _BH.BLACK_HOLE
 # el rayo cósmico (se puede apuntar) también usa los colores de este archivo
 import vfx_cosmicbeam as _CB  # noqa: E402
 SPECS["CosmicBeam"] = _CB.COSMIC_BEAM
+# el aura que se adapta a cualquier modelo (vfx_aura.py)
+import vfx_aura as _AU  # noqa: E402
+SPECS["CosmicAura"] = _AU.COSMIC_AURA
