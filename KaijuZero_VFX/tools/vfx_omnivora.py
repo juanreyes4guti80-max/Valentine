@@ -473,3 +473,7 @@ SPECS = {"CosmicPillar": COSMIC_PILLAR}
 # el agujero negro usa los colores de este archivo: se importa al final
 import vfx_blackhole as _BH  # noqa: E402
 SPECS["BlackHole"] = _BH.BLACK_HOLE
+
+# el rayo cósmico (se puede apuntar) también usa los colores de este archivo
+import vfx_cosmicbeam as _CB  # noqa: E402
+SPECS["CosmicBeam"] = _CB.COSMIC_BEAM

@@ -30,6 +30,11 @@ kk_trace_06.png
 kk_twirl_01.png
 kk_twirl_02.png
 kz_scorch.png
+om_beam_core.png
+om_beam_flow.png
+om_beam_glow.png
+om_beam_nebula.png
+om_beam_stars.png
 om_cracks.png
 om_cubes_2x2.png
 om_hole.png

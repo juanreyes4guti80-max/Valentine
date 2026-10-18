@@ -448,15 +448,20 @@ def draw_beam(buf, tb, cam, Bm, A, Bp, w, fade, t, scale):
     den = np.maximum(1 - bb * bb, 1e-9)
     tt = (bb * ee - dd) / den                                 # a lo largo del rayo del píxel
     sl = (ee - bb * dd) / den                                 # a lo largo del eje del Beam
-    X = cam.C[:, None] + r * tt
     Pa = A[:, None] + d[:, None] * sl
-    diff = X - Pa
-    side = np.cross(d, (cam.C[:, None] - Pa).T).T             # dirección del ancho (mirando a la cámara)
-    side /= np.maximum(np.linalg.norm(side, axis=0), 1e-9)
+    toc = cam.C[:, None] - Pa
+    nrm = toc - d[:, None] * (d @ toc)                          # la cinta mira a la cámara en ese punto del eje
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=0), 1e-9)
+    side = np.cross(d, nrm.T).T                                 # dirección del ancho
+    # el rayo del píxel contra el plano de la cinta en ese punto (visto casi de punta, el plano se pierde)
+    den2 = np.sum(r * nrm, axis=0)
+    t2 = np.sum((Pa - cam.C[:, None]) * nrm, axis=0) / np.where(np.abs(den2) < 1e-6, 1e-6, den2)
+    diff = cam.C[:, None] + r * t2 - Pa
+    sl = sl + d @ diff
     q = np.sum(diff * side, axis=0)
     fr = np.clip(sl / Ln, 0, 1)
     wl = w0 + (w1 - w0) * fr
-    ok = (sl >= 0) & (sl <= Ln) & (np.abs(q) <= wl / 2) & (tt > 0)
+    ok = (sl >= 0) & (sl <= Ln) & (np.abs(q) <= wl / 2) & (t2 > 0) & (np.abs(den2) > 0.05)
     if not ok.any():
         return
     T = np.asarray(tb.get(Bm["texture"], "None")[0], dtype=np.float32) / 255.0
@@ -1343,3 +1348,252 @@ class CubeSim:
         srgb = rgb[ya - y0:yb - y0, xa - x0:xb - x0] * c.alpha
         dst *= (1 - sa)
         dst += srgb
+
+
+# --------------------------------------------------------------- rayo que se apunta (dinámico)
+def look_frame(d):
+    """Rotación como CFrame.lookAt(A, A + d): columnas X (derecha), Y (arriba), Z (= -d)."""
+    d = np.asarray(d, float) / np.linalg.norm(d)
+    up = np.array([0.0, 0.0, 1.0]) if abs(d[1]) > 0.999 else np.array([0.0, 1.0, 0.0])
+    right = np.cross(d, up)
+    right /= np.linalg.norm(right)
+    up2 = np.cross(right, d)
+    return np.stack([right, up2, -d], axis=1)
+
+
+def ray_scene(A, d, max_len, ground_y, props):
+    """Primera superficie en el camino del rayo: el suelo (y = ground_y) o una caja de props. Devuelve la distancia
+    (o None si no toca nada antes de max_len)."""
+    best = None
+    if d[1] < -1e-6:
+        tg = (ground_y - A[1]) / d[1]
+        if 0 < tg <= max_len:
+            best = tg
+    for pr in props or []:
+        lo = np.array(pr["pos"], float) - np.array([pr["size"][0] / 2, 0, pr["size"][2] / 2])
+        hi = lo + np.array(pr["size"], float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t1, t2 = (lo - A) / d, (hi - A) / d
+        tn, tf = np.nanmax(np.minimum(t1, t2)), np.nanmin(np.maximum(t1, t2))
+        if tn <= tf and tf > 0 and 0 < tn <= max_len and (best is None or tn < best):
+            best = tn
+    return best
+
+
+def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, seed=7, ground_y=0.0,
+                background=None, bloom=None, only_frames=None, props=None, info=None):
+    """El rayo que se apunta (como playBeam en el módulo): path(t) -> (origen, dirección) en cada cuadro. Lanza el
+    rayo contra el suelo y los props, se corta en la primera superficie (o en max_len × escala) y mueve con él el
+    impacto (capas impact / on_hit), la punta (line_u = 1), lo que va a lo largo (cajas len_k) y el suelo de
+    debajo (at_ground); deja marcas (trail) al barrer el suelo. info: lista donde se anota (t, largo, pega)."""
+    rng = random.Random(seed)
+    tb = TexBank(tex_folder)
+    Bq = spec["beam"]
+    duration = duration or spec["duration"] + 0.15
+    nframes = int(round(duration * FPS))
+    os.makedirs(out_dir, exist_ok=True)
+    bg = background if background is not None else make_background(cam, ground_y)
+    max_len = Bq["max_len"] * scale
+    parts, meteors, pending = [], [], []        # pending: (t, fn) ráfagas programadas
+    streams = [L for L in spec["layers"] if L.get("stream") and not L.get("decal")]
+    acc = {id(L): 0.0 for L in streams}
+    trails = [L for L in spec["layers"] if L.get("trail")]
+    onhit = [L for L in spec["layers"] if L.get("on_hit")]
+    st = {"len": 0.05, "hit": False, "was": False, "last_end": -1e9, "ground": None, "trail_t": -1e9,
+          "trail_p": None, "A": None, "R": np.eye(3)}
+
+    def tip_origin(L):
+        return st["A"] + st["R"] @ np.array([0.0, 0.0, -L.get("line_u", 0.0) * st["len"]])
+
+    def gate(L):
+        if L.get("at_ground"):
+            return st["hit"] and st["ground"] is not None
+        if L.get("impact"):
+            return st["hit"]
+        return True
+
+    def emit_layer(L, n):
+        if L.get("at_ground"):
+            g = st["ground"]
+            if g is None:
+                return
+            for _ in range(n):
+                parts.append(spawn(L, g, rng, scale, np.eye(3), st["len"]))
+        elif L.get("type") == "meteor":
+            for _ in range(n):
+                meteors.append(spawn_meteor(L, tip_origin(L), rng, scale, st["R"]))
+        else:
+            for _ in range(n):
+                parts.append(spawn(L, tip_origin(L), rng, scale, st["R"], st["len"]))
+
+    for L in spec["layers"]:
+        if L.get("on_hit") or L.get("trail"):
+            continue
+        for ev in L.get("emit", []):
+            def fire(L=L, n=ev[1]):
+                if gate(L):
+                    emit_layer(L, n)
+            pending.append((ev[0], fire))
+    dt = 1.0 / FPS
+    stats = []
+    for fi in range(nframes):
+        t = fi * dt
+        A, d = path(t)
+        A, d = np.asarray(A, float), np.asarray(d, float) / np.linalg.norm(d)
+        head = min(max((t - Bq["start"]) / max(Bq["grow"], 1e-3), 0.0), 1.0) * max_len
+        th = ray_scene(A, d, max_len, ground_y, props)
+        ray_len = th if th is not None else max_len
+        st["len"] = max(min(ray_len, head), 0.05)
+        st["hit"] = th is not None and head >= ray_len and t < Bq["stop"]
+        st["A"], st["R"] = A, look_frame(d)
+        P = A + d * st["len"]
+        st["ground"] = None
+        if st["hit"]:
+            Q = P - d * 2 * scale
+            st["ground"] = np.array([Q[0], ground_y, Q[2]])
+        if info is not None:
+            info.append((t, st["len"], st["hit"]))
+        # cada vez que empieza a pegar: las capas on_hit (sus emit son relativos a ese momento)
+        if st["hit"] and not st["was"] and t - st["last_end"] >= Bq["rehit"]:
+            for L in onhit:
+                for ev in L.get("emit", []):
+                    def fire(L=L, n=ev[1]):
+                        if L.get("decal"):
+                            if st["ground"] is not None:
+                                for _ in range(n):
+                                    parts.append(spawn(L, st["ground"], rng, scale, np.eye(3), st["len"]))
+                        elif gate(L) or not L.get("impact"):
+                            emit_layer(L, n)
+                    pending.append((t + ev[0], fire))
+        if st["was"] and not st["hit"]:
+            st["last_end"] = t
+        st["was"] = st["hit"]
+        # marcas que van quedando al barrer el suelo
+        g = st["ground"]
+        if g is not None and t - st["trail_t"] >= Bq["trail_every"] and (
+                st["trail_p"] is None or np.linalg.norm(g - st["trail_p"]) >= Bq["trail_move"] * scale):
+            st["trail_t"], st["trail_p"] = t, g
+            for L in trails:
+                parts.append(spawn(L, g, rng, scale, np.eye(3), st["len"]))
+        # ráfagas en su tiempo
+        keep = []
+        for (te, fn) in pending:
+            if te <= t + 1e-9:
+                fn()
+            else:
+                keep.append((te, fn))
+        pending = keep
+        # emisión continua (en la posición de ahora)
+        for L in streams:
+            rate = 0.0
+            for (a0, a1, r0, r1) in L["stream"]:
+                if a0 <= t <= a1:
+                    rate += r0 + (r1 - r0) * (t - a0) / max(a1 - a0, 1e-6)
+            if not gate(L):
+                rate = 0.0
+            acc[id(L)] += rate * dt
+            while acc[id(L)] >= 1.0:
+                acc[id(L)] -= 1.0
+                emit_layer(L, 1)
+        # meteoros: estelas y aterrizaje
+        for m in meteors:
+            if m.dead:
+                continue
+            if not m.landed:
+                for k, TL in enumerate(m.L.get("trails", [])):
+                    m.acc[k] += TL["rate"] * dt
+                    while m.acc[k] >= 1.0:
+                        m.acc[k] -= 1.0
+                        p = spawn(TL, m.pos, rng, scale, st["R"])
+                        if TL.get("locked"):
+                            p.lock, p.lofs = m, p.pos - m.pos
+                        parts.append(p)
+                if (m.pos[1] <= ground_y + 0.3 and m.vel[1] < 0) or m.age >= m.life:
+                    m.landed = True
+                    if m.pos[1] <= ground_y + 0.6:
+                        lp = np.array([m.pos[0], ground_y + 0.4, m.pos[2]])
+                        for LL in m.L.get("land", []):
+                            if LL.get("stream"):
+                                for _ in range(max(1, int(LL["stream"][0][2] * 0.6))):
+                                    parts.append(spawn(LL, lp, rng, scale, np.eye(3)))
+                            else:
+                                for _ in range(LL["emit"][0][1]):
+                                    parts.append(spawn(LL, lp, rng, scale, np.eye(3)))
+                    m.dead = True
+        parts = [p for p in parts if p.age < p.life]
+        draw = only_frames is None or fi in only_frames
+        if draw:
+            buf = bg.copy()
+            items = []
+            for p in parts:
+                dd = cam.to_cam(p.pos)
+                if dd[2] > 0.5:
+                    items.append((dd[2] - p.L.get("zoffset", 0.0) * p.ks, 0, p, dd))
+            for pr_ in props or []:
+                dd = cam.to_cam(np.asarray(pr_["pos"], float))
+                if dd[2] > 0.5:
+                    items.append((dd[2], 3, pr_, dd))
+            if t >= Bq["start"]:
+                B0, B1 = A, A + d * st["len"]
+                for bi, Bm in enumerate(spec["beams"]):
+                    w = Bm["width"] * scale * eval_seq(Bm["width_t"], t) * \
+                        (1 + Bm["pulse"] * smooth_noise(bi * 7.1, t * Bm["pulse_hz"]))
+                    bfade = eval_seq(Bm["alpha_t"], t)
+                    if w > 0.02 and bfade < 0.999:
+                        if not st["hit"]:          # sin superficie: la punta se esfuma (igual que el módulo)
+                            kp = [k for k in Bm["transparency"] if k[0] < 0.8]
+                            v = float(np.interp(0.8, [k[0] for k in Bm["transparency"]],
+                                                [k[1] for k in Bm["transparency"]]))
+                            Bm = dict(Bm, transparency=kp + [(0.8, v), (1.0, 1.0)])
+                        dz = cam.to_cam((B0 + B1) * 0.5)[2] - Bm.get("zoffset", 0.0) * scale
+                        items.append((dz, 4, (Bm, B0, B1, w, bfade), None))
+            items.sort(key=lambda x: -x[0])
+            for _, kind, obj, dd in items:
+                if kind == 3:
+                    draw_box(buf, cam, obj)
+                elif kind == 4:
+                    draw_beam(buf, tb, cam, *obj, t, scale)
+                else:
+                    draw_particle(buf, tb, cam, obj, dd, scale, ground_y, 1.0)
+            for m in meteors:
+                if m.dead:
+                    continue
+                pr = cam.project(m.pos)
+                if pr is None:
+                    continue
+                sp = m.L["sprite"]
+                px = cam.f * m.size / pr[2]
+                gl = sp.get("glow")
+                if gl:
+                    gs = tb.sprite(gl["texture"], "None", 0, px * gl["size_k"], px * gl["size_k"], 0)
+                    gs[..., :3] *= np.array(gl["color"], float) / 255
+                    gs[..., 3] *= gl["alpha"]
+                    draw_sprite(buf, gs, pr[0], pr[1], 1.0, gl.get("brightness", 1.4))
+                spr = tb.sprite(sp["texture"], sp.get("layout", "Grid2x2"), m.frame, px, px, m.rot)
+                spr[..., :3] *= np.array(sp.get("color", (255, 255, 255)), float) / 255
+                draw_sprite(buf, spr, pr[0], pr[1], 0.0, 1.0)
+            if bloom:
+                buf = apply_bloom(buf, **bloom)
+            Image.fromarray((np.clip(buf, 0, 1) * 255).astype(np.uint8)).save(os.path.join(out_dir, f"{fi:04d}.png"))
+        stats.append(len(parts))
+        # física
+        for m in meteors:
+            if m.dead:
+                continue
+            accm = np.asarray(m.L.get("accel", (0, -100, 0)), float) * scale
+            m.vel = m.vel * (2.0 ** (-m.L.get("drag", 0.0) * dt)) + accm * dt
+            m.pos = m.pos + m.vel * dt
+            m.rot += m.rots * dt
+            m.age += dt
+        for p in parts:
+            L = p.L
+            accp = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
+            p.vel = p.vel * (2.0 ** (-L.get("drag", 0.0) * dt)) + accp * dt
+            if p.lock is not None:
+                p.lofs = p.lofs + p.vel * dt
+                p.pos = p.lock.pos + p.lofs
+            else:
+                p.pos = p.pos + p.vel * dt
+            p.rot += p.rots * dt
+            p.age += dt
+    return stats

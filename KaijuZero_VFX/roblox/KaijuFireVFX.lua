@@ -7,8 +7,8 @@
 		local KaijuFireVFX = require(ReplicatedStorage.KaijuFireVFX)
 		-- cf = punto del SUELO bajo la explosión; 1 = escala; 1 = intensidad de la sacudida de cámara
 		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
-		-- ULTIMATE: rayo de la boca al rival (pega a los KaijuFireVFX.UltimateBeamStart s); se ignora al propio kaiju
-		KaijuFireVFX.UltimateBeam(bocaDeKaijuZero, rival, 1, 1, { modeloDeKaijuZero })
+		-- ULTIMATE: rayo de la boca al rival (o adonde lo apuntes con rayo:AimAt); se ignora al propio kaiju
+		local rayo = KaijuFireVFX.UltimateBeam(bocaDeKaijuZero, rival, 1, 1, { modeloDeKaijuZero })
 		-- golpes que recibe el rival: corte en garra (en diagonal), corte quemado y mordisco
 		KaijuFireVFX.SlashHit(rival, 1, 1)
 		KaijuFireVFX.BiteHit(rival, 1, 1)
@@ -267,7 +267,8 @@ local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos:
 end
 
 -- emisión continua: Rate interpolado por ventanas {t0, t1, rate0, rate1}
-local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?, windows: { any }?, mul: number?)
+local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?, windows: { any }?, mul: number?,
+	gate: (() -> number)?)
 	local W = windows or L.stream
 	local tEnd = 0
 	for _, w in W do
@@ -289,7 +290,7 @@ local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?, wind
 					rate += w[3] + (w[4] - w[3]) * (t - w[1]) / math.max(w[2] - w[1], 1e-3)
 				end
 			end
-			rate *= mul or 1
+			rate *= (mul or 1) * (if gate then gate() else 1)
 			e.Rate = rate * KaijuFireVFX.Quality
 			e.Enabled = rate > 0.05
 			task.wait(0.05)
@@ -382,13 +383,14 @@ end
 
 -- rocas en llamas: vuelan con estela, y al caer levantan polvo y dejan fuego
 local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
-	local localPos = holder.CFrame:PointToObjectSpace(worldPos)
+	-- un ancla quieta en el punto donde cayó: lo que arde ahí no se mueve aunque el contenedor se mueva
+	local anchor = invisiblePart("Land", Vector3.new(0.2, 0.2, 0.2), CFrame.new(worldPos), holder)
 	for _, LL in L.land do
 		if LL.decal then
 			playDecalAt(LL, holder, s, LL.emit[1][2], CFrame.new(worldPos))
 			continue
 		end
-		local e, carrier = buildEmitter(LL, holder, s, localPos)
+		local e, carrier = buildEmitter(LL, anchor, s, Vector3.zero)
 		levelCarrier(carrier, worldPos)
 		if LL.stream then
 			runStream(LL, e)
@@ -941,19 +943,202 @@ local function groundLook(pos: Vector3, exclude: { Instance }, depth: number?): 
 	return GROUND_FALLBACK, Enum.Material.Slate, nil
 end
 
--- ---------------------------------------------------------------- rayo (beam)
--- capas de Beam entre el origen y el impacto. El rayo sale de la boca a los `start` s y en `grow` s llega al
--- impacto; el ancho se anima en el tiempo (width_t, con un pulso) y la textura corre hacia el impacto;
--- alpha_t desvanece todo el rayo (0 = se ve, 1 = no se ve)
-local function runBeams(spec: Layer, holder: BasePart, s: number, len: number)
+-- ---------------------------------------------------------------- rayo (beam) que se puede apuntar
+-- El rayo sale de la boca a los `start` s y su punta avanza hasta el largo máximo en `grow` s. Cada cuadro mira
+-- hacia donde apunta (el rival o lo que le digas), lanza un Raycast y se corta en la primera superficie que toca:
+-- ahí sale el impacto y en el suelo de debajo quedan las marcas. Capas: line_u 0 = la boca, 1 = la punta;
+-- impact = solo mientras pega; on_hit = sus ráfagas salen cada vez que empieza a pegar (emit relativo a ese
+-- momento); at_ground = en el suelo bajo el impacto; trail = decals que van quedando en el suelo mientras el rayo
+-- lo barre. Lo que va después de `stop` se adelanta si se corta antes (Stop).
+export type BeamControl = {
+	Holder: Part,
+	Active: boolean,
+	Length: number,
+	MaxLength: number,
+	HitPosition: Vector3?,
+	HitInstance: Instance?,
+	AimAt: (BeamControl, target: any) -> (),
+	SetDirection: (BeamControl, direction: Vector3) -> (),
+	SetOrigin: (BeamControl, origin: any) -> (),
+	Stop: (BeamControl) -> (),
+}
+
+-- posición de un origen u objetivo: Vector3, CFrame, Attachment, BasePart o Model
+local function pointOf(src: any): Vector3?
+	if typeof(src) == "Vector3" then
+		return src
+	elseif typeof(src) == "CFrame" then
+		return src.Position
+	elseif typeof(src) == "Instance" then
+		if src:IsA("Attachment") then
+			return src.WorldPosition
+		elseif src:IsA("BasePart") then
+			return src.Position
+		elseif src:IsA("Model") then
+			return src:GetPivot().Position
+		end
+	end
+	return nil
+end
+
+local function lookCF(A: Vector3, dir: Vector3): CFrame
+	return CFrame.lookAt(A, A + dir, if math.abs(dir.Y) > 0.999 then Vector3.zAxis else Vector3.yAxis)
+end
+
+type BeamItem = { L: Layer, e: ParticleEmitter, c: Instance }
+type BeamEvent = { t: number, fn: () -> (), abs: boolean }
+
+local function playBeam(spec: Layer, origin: any, target: any, scale: number?, shake: number?,
+	ignore: { Instance }?): BeamControl
+	local s = (scale or 1) * (spec.scale_mult or 1)
 	local Bm = spec.beam
+	local originSrc: any, aimSrc: any, aimDir: Vector3? = origin, target, nil
+	local A0 = pointOf(origin) or Vector3.zero
+	local T0 = pointOf(target)
+	local lastDir = if T0 and (T0 - A0).Magnitude > 1e-3 then (T0 - A0).Unit
+		elseif typeof(origin) == "CFrame" then origin.LookVector
+		else Vector3.new(0, 0, -1)
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), lookCF(A0, lastDir), KaijuFireVFX.Parent)
+	local t0 = time()
+	local stopAt: number? = nil
+	local len, hitting, wasHitting = 0.05, false, false
+	local ground: Vector3? = nil
+	local lastHitEnd = -1e9
+	local lastTrail, lastTrailPos = -1e9, nil :: Vector3?
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = ignore or {}
+	local exclude: { Instance } = table.clone(ignore or {})
+	if typeof(target) == "Instance" then
+		table.insert(exclude, target)
+	end
+
+	local ctl: BeamControl
+	ctl = {
+		Holder = holder,
+		Active = true,
+		Length = 0,
+		MaxLength = Bm.max_len * s,
+		HitPosition = nil,
+		HitInstance = nil,
+		AimAt = function(_, tg: any)
+			aimSrc = tg
+			aimDir = nil
+		end,
+		SetDirection = function(_, d: Vector3)
+			if d.Magnitude > 1e-3 then
+				aimDir = d.Unit
+			end
+		end,
+		SetOrigin = function(_, o: any)
+			originSrc = o
+		end,
+		Stop = function(_)
+			local t = time() - t0
+			if not stopAt and t < Bm.stop then
+				stopAt = math.max(t, Bm.start)
+			end
+		end,
+	}
+
+	-- tiempos: los que van después de `stop` se corren si el rayo se corta antes
+	local events: { BeamEvent } = {}
+	local function at(tt: number, fn: () -> (), abs: boolean?)
+		table.insert(events, { t = tt, fn = fn, abs = abs == true })
+	end
+	local function due(ev: BeamEvent): number
+		if not ev.abs and ev.t >= Bm.stop then
+			return (stopAt or Bm.stop) + (ev.t - Bm.stop)
+		end
+		return ev.t
+	end
+	local function cut(): boolean
+		return stopAt ~= nil and time() - t0 > (stopAt :: number)
+	end
+	local function lineOff(L: Layer, u: number?, side: number?, up: number?): Vector3
+		return Vector3.new(L.offset[1], L.offset[2], L.offset[3]) * s + linePos(u or L.line_u or 0, side or 0, up or 0, s, len)
+	end
+	local function groundCF(L: Layer): CFrame
+		return CFrame.new((ground :: Vector3) + Vector3.new(0, L.offset[2] * s, 0))
+	end
+
+	local lineItems: { BeamItem } = {}
+	local groundItems: { BeamItem } = {}
+	local onHit: { { L: Layer, e: ParticleEmitter? } } = {}
+	local trails: { Layer } = {}
+	for _, L in spec.layers do
+		if L.type == "meteor" then
+			for _, ev in L.emit do
+				local n = quality(ev[2])
+				at(ev[1], function()
+					if L.impact and not hitting then
+						return
+					end
+					local pos = holder.CFrame:PointToWorldSpace(lineOff(L))
+					launchMeteors(L, holder, s, n, pos, if ground then ground.Y else -math.huge)
+				end)
+			end
+		elseif L.decal then
+			if L.trail then
+				table.insert(trails, L)
+			elseif L.on_hit then
+				table.insert(onHit, { L = L })
+			else
+				for _, ev in L.emit do
+					at(ev[1], function()
+						if ground then
+							playDecalAt(L, holder, s, ev[2], groundCF(L))
+						end
+					end)
+				end
+			end
+		else
+			local e, carrier
+			if L.at_ground then
+				e, carrier = buildEmitter(L, holder, s, Vector3.zero, len)
+				table.insert(groundItems, { L = L, e = e, c = carrier })
+			else
+				e, carrier = buildEmitter(L, holder, s, lineOff(L), len)
+				if (L.line_u or 0) ~= 0 or L.speed_len or not carrier:IsA("Attachment") then
+					table.insert(lineItems, { L = L, e = e, c = carrier })
+				end
+			end
+			if L.on_hit then
+				table.insert(onHit, { L = L, e = e })
+			else
+				for _, ev in L.emit do
+					local n = quality(ev[2])
+					at(ev[1], function()
+						if not e.Parent or (L.impact and not hitting) or (L.at_ground and not ground) then
+							return
+						end
+						if ev[3] ~= nil then
+							placeCarrier(carrier, holder, holder.CFrame:PointToWorldSpace(lineOff(L, ev[3], ev[4], ev[5])))
+						end
+						e:Emit(n)
+					end)
+				end
+			end
+			if L.stream then
+				runStream(L, e, nil, nil, nil, function()
+					if cut() or (L.impact and not hitting) or (L.at_ground and not (hitting and ground)) then
+						return 0
+					end
+					return 1
+				end)
+			end
+		end
+	end
+
+	-- el cuerpo del rayo: Beams de la boca a la punta
 	local a0 = Instance.new("Attachment")
 	a0.Name = "BeamStart"
 	a0.Parent = holder
 	local a1 = Instance.new("Attachment")
 	a1.Name = "BeamEnd"
 	a1.Parent = holder
-	local list: { { B: Layer, b: Beam, seed: number } } = {}
+	local beams: { { B: Layer, b: Beam, seed: number } } = {}
 	for _, B in spec.beams do
 		local b = Instance.new("Beam")
 		b.Name = B.name
@@ -974,142 +1159,189 @@ local function runBeams(spec: Layer, holder: BasePart, s: number, len: number)
 		b.Width1 = 0
 		b.Transparency = NumberSequence.new(1)
 		b.Parent = holder
-		table.insert(list, { B = B, b = b, seed = rng:NextNumber(0, 100) })
+		table.insert(beams, { B = B, b = b, seed = rng:NextNumber(0, 100) })
 	end
-	local tEnd = Bm.stop + Bm.fade
-	local t0 = time()
+
+	-- luces: una en la boca y otra en el impacto (solo mientras pega), que parpadean
+	local lights: { { li: PointLight, a: Attachment, impact: boolean } } = {}
+	if KaijuFireVFX.UseLight then
+		for i = 1, 2 do
+			local la = Instance.new("Attachment")
+			la.Name = "Light"
+			la.Parent = holder
+			local li = Instance.new("PointLight")
+			li.Color = Color3.fromRGB(Bm.light_color[1], Bm.light_color[2], Bm.light_color[3])
+			li.Brightness = 0
+			li.Range = math.min(Bm.light_range * s, 60)
+			li.Shadows = false
+			li.Parent = la
+			table.insert(lights, { li = li, a = la, impact = i == 2 })
+		end
+	end
+
+	-- sacudida: golpes en sus tiempos y un temblor continuo que se corta con el rayo
+	if shake and shake > 0 and RunService:IsClient() then
+		for _, sk in spec.shakes or {} do
+			at(sk[1], function()
+				KaijuFireVFX.Shake(shake * sk[2], sk[3])
+			end)
+		end
+		local r = spec.shake_ramp
+		local cam = workspace.CurrentCamera
+		if r and cam then
+			local seed = rng:NextNumber(0, 1000)
+			local name = "KZBeamShake" .. tostring(rng:NextInteger(1, 1000000000))
+			RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
+				local tt = time() - t0
+				if tt > math.min(r[2], stopAt or r[2]) or not holder.Parent then
+					RunService:UnbindFromRenderStep(name)
+					return
+				end
+				if tt < r[1] then
+					return
+				end
+				local k = shake * (r[3] + (r[4] - r[3]) * ((tt - r[1]) / (r[2] - r[1])) ^ r[5])
+				cam.CFrame = cam.CFrame * CFrame.Angles(math.noise(seed, tt * 24) * k * 0.03,
+					math.noise(seed + 17, tt * 24) * k * 0.03, math.noise(seed + 31, tt * 16) * k * 0.015)
+			end)
+		end
+	end
+
+	local after = spec.cleanup - Bm.stop -- cuánto vive lo último después del corte
 	local conn: RBXScriptConnection
 	conn = RunService.Heartbeat:Connect(function()
-		if not holder.Parent then
+		local t = time() - t0
+		local te = if stopAt and t > stopAt then Bm.stop + (t - stopAt) else t -- tiempo de las curvas del rayo
+		if not holder.Parent or t > (stopAt or Bm.stop) + after then
 			conn:Disconnect()
+			if holder.Parent then
+				holder:Destroy()
+			end
+			ctl.Active, ctl.Length, ctl.HitPosition, ctl.HitInstance = false, 0, nil, nil
 			return
 		end
-		local t = time() - t0
-		local k = math.clamp((t - Bm.start) / math.max(Bm.grow, 1e-3), 0, 1)
-		a1.Position = Vector3.new(0, 0, -len * k) -- la punta avanza rapidísimo hasta el impacto
-		for _, it in list do
+		-- de dónde sale y hacia dónde apunta
+		local A = pointOf(originSrc) or holder.Position
+		local dir = aimDir
+		if not dir then
+			local T = pointOf(aimSrc)
+			dir = if T and (T - A).Magnitude > 1e-3 then (T - A).Unit else lastDir
+		end
+		lastDir = dir :: Vector3
+		-- hasta dónde llega: la punta crece al disparar y se corta en la primera superficie
+		local maxLen = ctl.MaxLength
+		local head = math.clamp((t - Bm.start) / math.max(Bm.grow, 1e-3), 0, 1) * maxLen
+		local hit = workspace:Raycast(A, lastDir * maxLen, params)
+		local rayLen = if hit then (hit.Position - A).Magnitude else maxLen
+		len = math.max(math.min(rayLen, head), 0.05)
+		hitting = hit ~= nil and head >= rayLen and te < Bm.stop
+		holder.CFrame = lookCF(A, lastDir)
+		local P = A + lastDir * len
+		ground = nil
+		if hitting then
+			local _, _, gy = groundLook(P - lastDir * 2 * s, exclude, 200)
+			ground = if gy then Vector3.new(P.X, gy, P.Z) else nil
+		end
+		-- cada vez que empieza a pegar: destello, onda, marcas grandes en el suelo
+		if hitting and not wasHitting and t - lastHitEnd >= Bm.rehit then
+			for _, h in onHit do
+				for _, ev in h.L.emit do
+					local n = if h.e then quality(ev[2]) else ev[2]
+					at(t + ev[1], function()
+						if h.e then
+							if h.e.Parent and (not h.L.at_ground or ground) then
+								h.e:Emit(n)
+							end
+						elseif ground then
+							playDecalAt(h.L, holder, s, n, groundCF(h.L))
+						end
+					end, true)
+				end
+			end
+		end
+		if wasHitting and not hitting then
+			lastHitEnd = t
+		end
+		wasHitting = hitting
+		-- lo que va a lo largo del rayo y en la punta sigue su largo
+		for _, it in lineItems do
+			local L = it.L
+			local off = lineOff(L)
+			if it.c:IsA("Attachment") then
+				(it.c :: Attachment).Position = off
+			else
+				local part = it.c :: BasePart
+				if L.shape and L.shape.len_k then
+					part.Size = Vector3.new(part.Size.X, part.Size.Y, math.min(len * L.shape.len_k, 2048))
+				end
+				part.CFrame = holder.CFrame * CFrame.new(off)
+			end
+			if L.speed_len then
+				it.e.Speed = NumberRange.new(L.speed_len[1] * len, L.speed_len[2] * len)
+			end
+		end
+		if ground then
+			for _, it in groundItems do
+				levelCarrier(it.c, (ground :: Vector3) + Vector3.new(0, it.L.offset[2] * s, 0))
+			end
+			-- marcas que van quedando en el suelo mientras el rayo lo barre
+			if t - lastTrail >= Bm.trail_every
+				and (not lastTrailPos or (ground - (lastTrailPos :: Vector3)).Magnitude >= Bm.trail_move * s) then
+				lastTrail, lastTrailPos = t, ground
+				for _, L in trails do
+					playDecalAt(L, holder, s, 1, groundCF(L))
+				end
+			end
+		end
+		-- ráfagas y golpes en su tiempo
+		local i = 1
+		while i <= #events do
+			local ev = events[i]
+			if t >= due(ev) then
+				table.remove(events, i)
+				ev.fn()
+			else
+				i += 1
+			end
+		end
+		-- el cuerpo del rayo: largo, ancho que late, se desvanece al final; sin superficie, la punta se esfuma
+		a1.Position = Vector3.new(0, 0, -len)
+		for _, it in beams do
 			local B = it.B
 			local pulse = math.clamp(2 * math.noise(it.seed, t * B.pulse_hz), -1, 1)
-			local w = B.width * s * evalNum(B.width_t, t) * (1 + B.pulse * pulse)
+			local w = B.width * s * evalNum(B.width_t, te) * (1 + B.pulse * pulse)
 			it.b.Width0 = w * B.w0
 			it.b.Width1 = w * B.w1
-			local fade = evalNum(B.alpha_t, t)
-			local kps = table.create(#B.transparency)
-			for i, kp in B.transparency do
-				kps[i] = NumberSequenceKeypoint.new(kp[1], math.clamp(kp[2] + (1 - kp[2]) * fade, 0, 1))
+			local fade = evalNum(B.alpha_t, te)
+			local kps = {}
+			for _, kp in B.transparency do
+				if hitting or kp[1] < 0.8 then
+					table.insert(kps, NumberSequenceKeypoint.new(kp[1], math.clamp(kp[2] + (1 - kp[2]) * fade, 0, 1)))
+				end
+			end
+			if not hitting then
+				local v = evalNum(B.transparency, 0.8)
+				table.insert(kps, NumberSequenceKeypoint.new(0.8, math.clamp(v + (1 - v) * fade, 0, 1)))
+				table.insert(kps, NumberSequenceKeypoint.new(1, 1))
 			end
 			it.b.Transparency = NumberSequence.new(kps)
+			it.b.Enabled = te < Bm.stop + Bm.fade
 		end
-		if t > tEnd then
-			conn:Disconnect()
-			for _, it in list do
-				it.b.Enabled = false
+		local on = math.clamp((t - Bm.start) / 0.05, 0, 1) * math.clamp(1 - (te - Bm.stop) / Bm.fade, 0, 1)
+		for k, Lt in lights do
+			if Lt.impact then
+				Lt.a.Position = Vector3.new(0, 0, -math.max(len - 4 * s, 0))
 			end
+			local lit = if Lt.impact and not hitting then 0 else on
+			Lt.li.Brightness = Bm.light_brightness * lit * (1 + 0.25 * math.noise(k * 7.3, t * 12))
 		end
+		-- lo que el juego puede leer
+		ctl.Active = te < Bm.stop + Bm.fade
+		ctl.Length = len
+		ctl.HitPosition = if hitting then P else nil
+		ctl.HitInstance = if hitting and hit then hit.Instance else nil
 	end)
-end
-
--- luces del rayo: una en la boca y otra en el impacto (cuando el rayo llega), que parpadean mientras dura
-local function beamLights(spec: Layer, holder: BasePart, s: number, len: number)
-	if not KaijuFireVFX.UseLight then
-		return
-	end
-	local Bm = spec.beam
-	local lights: { { li: PointLight, t0: number } } = {}
-	for i, z in { 0, -math.max(len - 4 * s, 0) } do
-		local a = Instance.new("Attachment")
-		a.Name = "Light"
-		a.Position = Vector3.new(0, 0, z)
-		a.Parent = holder
-		local li = Instance.new("PointLight")
-		li.Color = Color3.fromRGB(Bm.light_color[1], Bm.light_color[2], Bm.light_color[3])
-		li.Brightness = 0
-		li.Range = math.min(Bm.light_range * s, 60)
-		li.Shadows = false
-		li.Parent = a
-		table.insert(lights, { li = li, t0 = if i == 1 then Bm.start else Bm.start + Bm.grow })
-	end
-	local t0 = time()
-	local conn: RBXScriptConnection
-	conn = RunService.Heartbeat:Connect(function()
-		local t = time() - t0
-		if not holder.Parent or t > Bm.stop + Bm.fade then
-			conn:Disconnect()
-			return
-		end
-		for i, L in lights do
-			local on = math.clamp((t - L.t0) / 0.05, 0, 1) * math.clamp(1 - (t - Bm.stop) / Bm.fade, 0, 1)
-			L.li.Brightness = Bm.light_brightness * on * (1 + 0.25 * math.noise(i * 7.3, t * 12))
-		end
-	end)
-end
-
--- el rayo sale de origin hacia el rival y pega en la primera superficie que encuentra (o en el rival)
-local function playBeam(spec: Layer, origin: any, target: any, scale: number?, shake: number?, ignore: { Instance }?): Part
-	local s = (scale or 1) * (spec.scale_mult or 1)
-	local A: Vector3 = if typeof(origin) == "CFrame" then origin.Position else origin
-	local T: Vector3
-	if typeof(target) == "Vector3" then
-		T = target
-	elseif typeof(target) == "CFrame" then
-		T = target.Position
-	elseif typeof(target) == "Instance" and target:IsA("Model") then
-		T = (target :: Model):GetPivot().Position
-	else
-		T = (target :: BasePart).Position
-	end
-	local dir = T - A
-	if dir.Magnitude < 1e-3 then
-		dir = Vector3.new(0, 0, -1)
-	end
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = ignore or {}
-	local hit = workspace:Raycast(A, dir.Unit * (dir.Magnitude + spec.beam.extra * s), params)
-	local P = if hit then hit.Position else T
-	local len = math.max((P - A).Magnitude, 1)
-	-- el suelo bajo el impacto (atravesando a quien lo lanza y al rival): ahí caen las rocas y quedan las marcas
-	local exclude: { Instance } = table.clone(ignore or {})
-	if typeof(target) == "Instance" then
-		table.insert(exclude, target)
-	end
-	local _, _, gy = groundLook(P - dir.Unit * 2 * s, exclude, 200)
-	local holder = play(spec, CFrame.lookAt(A, A + dir.Unit), scale, len, shake, nil, gy or -math.huge)
-	runBeams(spec, holder, s, len)
-	beamLights(spec, holder, s, len)
-	if gy then
-		local ground = Vector3.new(P.X, gy, P.Z)
-		for _, L in spec.layers do
-			if not L.at_ground then
-				continue
-			end
-			local at = ground + Vector3.new(0, L.offset[2] * s, 0)
-			if L.decal then
-				for _, ev in L.emit do
-					task.delay(ev[1], function()
-						if holder.Parent then
-							playDecalAt(L, holder, s, ev[2], CFrame.new(at))
-						end
-					end)
-				end
-			else
-				local e, carrier = buildEmitter(L, holder, s, Vector3.zero, len)
-				levelCarrier(carrier, at)
-				for _, ev in L.emit do
-					local n = quality(ev[2])
-					task.delay(ev[1], function()
-						if e.Parent then
-							e:Emit(n)
-						end
-					end)
-				end
-				if L.stream then
-					runStream(L, e)
-				end
-			end
-		end
-	end
-	return holder
+	return ctl
 end
 
 -- ---------------------------------------------------------------- golpe que recibe el rival
@@ -26164,7 +26396,7 @@ end
 local SPEC_UltimateBeam = {
 	name = "UltimateBeam",
 	duration = 3.6,
-	cleanup = 5.3,
+	cleanup = 7.62,
 	layers = {
 		{
 			name = "ChargeGlow",
@@ -26786,20 +27018,15 @@ local SPEC_UltimateBeam = {
 		{
 			name = "BeamHead",
 			texture = "fx_glow",
-			emit = {
-				{0.3, 1},
-			},
-			offset = {0, 0, -2},
-			direction = "Front",
-			speed_len = {10, 10},
-			lifetime = {0.1, 0.1},
+			line_u = 1,
+			lifetime = {0.05, 0.07},
 			size = {
-				{0, 18, 0},
-				{1, 26, 0},
+				{0, 20, 0},
+				{1, 24, 0},
 			},
 			transparency = {
-				{0, 0.1, 0},
-				{1, 0.2, 0},
+				{0, 0.15, 0},
+				{1, 0.4, 0},
 			},
 			color = {
 				{
@@ -26814,32 +27041,32 @@ local SPEC_UltimateBeam = {
 			light_emission = 1,
 			brightness = 1.4,
 			zoffset = 4,
+			stream = {
+				{0.3, 0.43, 70, 70},
+			},
 			speed = {0, 0},
 			spread = {0, 0},
+			direction = "Top",
 			accel = {0, 0, 0},
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			orientation = "FacingCamera",
-			line_u = 0,
+			offset = {0, 0, 0},
+			emit = {},
 		},
 		{
 			name = "BeamHeadStar",
 			texture = "kk_star_06",
-			emit = {
-				{0.3, 1},
-			},
-			offset = {0, 0, -2},
-			direction = "Front",
-			speed_len = {10, 10},
-			lifetime = {0.1, 0.1},
+			line_u = 1,
+			lifetime = {0.05, 0.07},
 			size = {
-				{0, 22, 0},
-				{1, 30, 0},
+				{0, 24, 0},
+				{1, 28, 0},
 			},
 			transparency = {
 				{0, 0, 0},
-				{1, 0.1, 0},
+				{1, 0.3, 0},
 			},
 			color = {
 				{
@@ -26863,13 +27090,18 @@ local SPEC_UltimateBeam = {
 			brightness = 1.6,
 			rotation = {0, 360},
 			zoffset = 5,
+			stream = {
+				{0.3, 0.43, 40, 40},
+			},
 			speed = {0, 0},
 			spread = {0, 0},
+			direction = "Top",
 			accel = {0, 0, 0},
 			drag = 0,
 			rot_speed = {0, 0},
 			orientation = "FacingCamera",
-			line_u = 0,
+			offset = {0, 0, 0},
+			emit = {},
 		},
 		{
 			name = "TravelRings",
@@ -27191,8 +27423,9 @@ local SPEC_UltimateBeam = {
 			name = "ImpactFlash",
 			texture = "fx_glow",
 			emit = {
-				{0.4, 1},
+				{0, 1},
 			},
+			on_hit = true,
 			lifetime = {0.3, 0.3},
 			size = {
 				{0, 20, 0},
@@ -27227,6 +27460,7 @@ local SPEC_UltimateBeam = {
 			zoffset = 4,
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -27240,8 +27474,9 @@ local SPEC_UltimateBeam = {
 			name = "ImpactBurst",
 			texture = "fx_burst_a",
 			emit = {
-				{0.4, 2},
+				{0, 2},
 			},
+			on_hit = true,
 			lifetime = {0.2, 0.24},
 			size = {
 				{0, 16, 0},
@@ -27277,6 +27512,7 @@ local SPEC_UltimateBeam = {
 			zoffset = 3,
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -27291,8 +27527,9 @@ local SPEC_UltimateBeam = {
 			orientation = "VelocityPerpendicular",
 			direction = "Back",
 			emit = {
-				{0.4, 2},
+				{0, 2},
 			},
+			on_hit = true,
 			speed = {0.5, 0.5},
 			lifetime = {0.32, 0.4},
 			size = {
@@ -27327,6 +27564,7 @@ local SPEC_UltimateBeam = {
 			rotation = {0, 360},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
@@ -27375,6 +27613,7 @@ local SPEC_UltimateBeam = {
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
@@ -27423,6 +27662,7 @@ local SPEC_UltimateBeam = {
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -27462,6 +27702,7 @@ local SPEC_UltimateBeam = {
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -27524,6 +27765,7 @@ local SPEC_UltimateBeam = {
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			zoffset = 0,
 			orientation = "FacingCamera",
 			emit = {},
@@ -27559,13 +27801,15 @@ local SPEC_UltimateBeam = {
 			light_emission = 1,
 			brightness = 1.8,
 			emit = {
-				{0.4, 40},
+				{0, 40},
 			},
+			on_hit = true,
 			stream = {
 				{0.4, 3.28, 75, 75},
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -27622,13 +27866,15 @@ local SPEC_UltimateBeam = {
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
 			emit = {
-				{0.4, 20},
+				{0, 20},
 			},
+			on_hit = true,
 			stream = {
 				{0.4, 3.28, 30, 30},
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			zoffset = 0,
 			orientation = "FacingCamera",
 		},
@@ -27666,13 +27912,15 @@ local SPEC_UltimateBeam = {
 			rotation = {0, 360},
 			rot_speed = {-360, 360},
 			emit = {
-				{0.4, 16},
+				{0, 16},
 			},
+			on_hit = true,
 			stream = {
 				{0.4, 3.28, 18, 18},
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -27733,6 +27981,7 @@ local SPEC_UltimateBeam = {
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			orientation = "FacingCamera",
 			emit = {},
 		},
@@ -27780,6 +28029,7 @@ local SPEC_UltimateBeam = {
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			accel = {0, 0, 0},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
@@ -28030,6 +28280,7 @@ local SPEC_UltimateBeam = {
 			},
 			line_u = 1,
 			offset = {0, 0, 3},
+			impact = true,
 			rock = {
 				size = {2.6, 4.2},
 				spin = {-480, 480},
@@ -28139,8 +28390,9 @@ local SPEC_UltimateBeam = {
 			name = "GroundScorch",
 			texture = "kz_scorch",
 			emit = {
-				{0.42, 1},
+				{0.02, 1},
 			},
+			on_hit = true,
 			at_ground = true,
 			offset = {0, 0.14, 0},
 			lifetime = {4, 4},
@@ -28182,8 +28434,9 @@ local SPEC_UltimateBeam = {
 			name = "GroundCracks",
 			texture = "kz_lava_cracks",
 			emit = {
-				{0.45, 1},
+				{0.05, 1},
 			},
+			on_hit = true,
 			at_ground = true,
 			offset = {0, 0.18, 0},
 			lifetime = {3.9, 3.9},
@@ -28233,8 +28486,9 @@ local SPEC_UltimateBeam = {
 			name = "GroundDust",
 			texture = "kk_smoke_07",
 			emit = {
-				{0.42, 22},
+				{0.02, 22},
 			},
+			on_hit = true,
 			at_ground = true,
 			offset = {0, 2, 0},
 			direction = "Front",
@@ -28384,6 +28638,98 @@ local SPEC_UltimateBeam = {
 			line_u = 0,
 			emit = {},
 		},
+		{
+			name = "TrailScorch",
+			texture = "kz_scorch",
+			trail = true,
+			at_ground = true,
+			offset = {0, 0.12, 0},
+			lifetime = {2.4, 2.4},
+			size = {
+				{0, 6, 0},
+				{0.08, 17, 0},
+				{1, 18, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.75, 0.3, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "TrailCracks",
+			texture = "kz_lava_cracks",
+			trail = true,
+			at_ground = true,
+			offset = {0, 0.16, 0},
+			lifetime = {2, 2},
+			size = {
+				{0, 6, 0},
+				{0.1, 15, 0},
+				{1, 16, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.6, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 120, 120},
+				},
+				{
+					0.15,
+					{240, 40, 62},
+				},
+				{
+					0.6,
+					{180, 16, 38},
+				},
+				{
+					1,
+					{80, 10, 20},
+				},
+			},
+			light_emission = 1,
+			rotation = {0, 360},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+			emit = {},
+		},
 	},
 	shakes = {
 		{0.4, 1, 0.6},
@@ -28395,7 +28741,10 @@ local SPEC_UltimateBeam = {
 		grow = 0.1,
 		stop = 3.3,
 		fade = 0.3,
-		extra = 40,
+		max_len = 186,
+		trail_every = 0.1,
+		trail_move = 4,
+		rehit = 0.3,
 		light_color = {255, 40, 62},
 		light_brightness = 5,
 		light_range = 50,
@@ -28624,14 +28973,22 @@ local SPEC_UltimateBeam = {
 	},
 }
 
--- ULTIMATE de Kaiju Zero: la boca junta energía 0.3 s y suelta un RAYO CARMESÍ de 3 s con el núcleo al rojo blanco y vetas de lava, con aros, brasas y humo rojo, que pega en el rival (o en la primera superficie) con un impacto de destellos, chispas, lava y rocas fundidas; el suelo debajo se quema y se agrieta. Cierra limpio.
--- origin = de dónde sale (la boca: Vector3 o CFrame). target = el rival (Vector3, BasePart o Model).
--- ignore = lo que el rayo atraviesa (p. ej. el modelo de quien lo lanza). Pega en la primera superficie
--- camino al rival (normalmente el rival) y ahí sale el impacto. Pega a los 0.4 s y se corta a los 3.3 s.
-function KaijuFireVFX.UltimateBeam(origin: Vector3 | CFrame, target: any, scale: number?, shake: number?, ignore: { Instance }?): Part
+-- ULTIMATE de Kaiju Zero: la boca junta energía 0.3 s y suelta un RAYO CARMESÍ de 3 s con el núcleo al rojo blanco y vetas de lava, con aros, brasas y humo rojo. Se puede apuntar mientras dura: pega en la primera superficie (hasta 186 studs × escala) con destellos, chispas, lava y rocas fundidas, y el suelo debajo se quema y se agrieta (deja una estela si lo barre). Cierra limpio.
+-- origin = de dónde sale: un Attachment en la boca (lo sigue solo), una Part, un Vector3 o un CFrame.
+-- target = hacia dónde apunta: el rival (Model o Part: lo sigue solo) o un punto (Vector3 o CFrame).
+-- ignore = lo que el rayo atraviesa (el modelo de quien lo lanza). Se corta en la primera superficie
+-- que toca y nunca pasa de su largo máximo (186 studs × escala). Devuelve un control:
+--   rayo:AimAt(objetivo)     apunta a otro lado (Model, Part, Vector3 o CFrame; si se mueve, lo sigue)
+--   rayo:SetDirection(dir)   apunta en una dirección (Vector3)
+--   rayo:SetOrigin(origen)   cambia de dónde sale
+--   rayo:Stop()              lo corta antes de tiempo
+--   rayo.MaxLength           largo máximo (lo puedes cambiar); rayo.Length = largo de ahora
+--   rayo.HitPosition, rayo.HitInstance = dónde y qué está tocando (nil si no toca nada)
+--   rayo.Active = true mientras se ve; rayo.Holder = la Part que lo contiene
+function KaijuFireVFX.UltimateBeam(origin: any, target: any, scale: number?, shake: number?, ignore: { Instance }?): BeamControl
 	return playBeam(SPEC_UltimateBeam, origin, target, scale, shake, ignore)
 end
--- segundos (desde la llamada) en que el rayo empieza a pegar y en que se corta: para sincronizar el daño
+-- segundos (desde la llamada) en que llega a su largo máximo y en que se corta solo
 KaijuFireVFX.UltimateBeamStart = 0.4
 KaijuFireVFX.UltimateBeamStop = 3.3
 

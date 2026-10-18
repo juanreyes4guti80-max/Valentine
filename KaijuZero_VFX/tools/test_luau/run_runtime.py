@@ -64,53 +64,70 @@ run("Giant Classic", function() return VFX.GiantExplosionClassic(R.CFrame.new(0,
 run("Explosion", function() return VFX.Explosion(R.CFrame.new(0, 2.5, 0), 1) end, 2)
 run("ExplosionAnime", function() return VFX.ExplosionAnime(R.CFrame.new(0, 2.5, 0), 1) end, 2)
 run("FireLine", function() return VFX.FireLine(R.CFrame.new(0, 0, 0), 120, 1) end, 3.6, 120)
--- ULTIMATE: el rayo llega hasta donde pega (el rival o la primera superficie) y el impacto sale ahí; el suelo
--- debajo se quema; al final los Beams se apagan y todo se limpia
-local function runBeam(name, call, seconds, hit, gy)
-	run(name, call, seconds)
-	local st = R.stats
-	local e = st.beamEnd
-	assert(e ~= nil, name .. ": el rayo no tiene punta")
-	-- ráfagas (Emit) y emisores continuos (Rate) en el impacto y en el suelo debajo
-	local nearHit, streamHit, nearGround = 0, 0, 0
-	local function onGround(p)
-		return gy and math.abs(p.Y - gy) < 2.5 and (R.Vector3.new(p.X, 0, p.Z) - R.Vector3.new(hit.X, 0, hit.Z)).Magnitude < 6
-	end
-	for _, p in st.emitPos do
-		if (p - hit).Magnitude < 8 then nearHit += 1 end
-		if onGround(p) then nearGround += 1 end
-	end
-	for _, p in st.streamPos do
-		if (p - hit).Magnitude < 8 then streamHit += 1 end
-		if onGround(p) then nearGround += 1 end
-	end
-	print(("%-17s   rayo: largo %.1f | ancho máx %.1f | Beams apagados %d | impacto: %d ráfagas, %d continuos | suelo: %d | decals %d"):format(
-		"", e.Magnitude, st.beamMaxW, st.beamsOff, nearHit, streamHit, nearGround, st.decals))
-	assert(st.beamMaxW > 10, name .. ": el rayo casi no tiene ancho")
-	assert(st.beamsOff >= 4, name .. ": los Beams no se apagaron al final")
-	assert(nearHit >= 6 and streamHit >= 8, name .. ": casi no hubo impacto donde pega el rayo")
-	if gy then
-		assert(nearGround >= 3, name .. ": el suelo bajo el impacto no recibió nada")
-		assert(st.decals >= 2, name .. ": faltan las marcas del suelo")
+-- RAYOS que se apuntan (ULTIMATE de Kaiju Zero y rayo cósmico de Omnívora): sin nada delante llegan a su largo
+-- máximo; contra el suelo se acortan; siguen la dirección, el objetivo y el origen que les des; al barrer el suelo
+-- dejan marcas; Stop() los corta antes y todo se limpia
+local function stepFor(sec)
+	local t = 0
+	while t < sec - 1e-9 do
+		R.step(1 / 60)
+		t += 1 / 60
 	end
 end
--- de lado, sin nada en el camino: pega en el punto del rival (a 120 studs); el suelo está 20 studs abajo
-runBeam("UltimateBeam", function()
-	return VFX.UltimateBeam(R.Vector3.new(0, 20, 0), R.Vector3.new(0, 20, -120), 1, 1)
-end, 6, R.Vector3.new(0, 20, -117), 0)
-assert(math.abs(R.stats.beamEnd.Magnitude - 120) < 0.5, "UltimateBeam: el rayo no llegó al rival")
--- hacia abajo: el rival está bajo tierra, así que pega en el suelo (a 45 studs de la boca, en horizontal)
-runBeam("Beam al suelo x1.5", function()
-	return VFX.UltimateBeam(R.CFrame.new(0, 30, 0), R.Vector3.new(0, -10, -60), 1.5, 0)
-end, 6, R.Vector3.new(0, 0, -45), 0)
-assert(math.abs(R.stats.beamEnd.Magnitude - math.sqrt(45 ^ 2 + 30 ^ 2)) < 0.5, "Beam al suelo: no se cortó en el suelo")
--- contra un Model (el pivote del rival), ignorando a quien lo lanza
-local rival = R.Instance.new("Model")
-rival.GetPivot = function() return R.CFrame.new(80, 15, 0) end
-local caster = R.Instance.new("Model")
-runBeam("Beam Model", function()
-	return VFX.UltimateBeam(R.Vector3.new(0, 25, 0), rival, 1, 2, { caster })
-end, 6, R.Vector3.new(80, 15, 0) + (R.Vector3.new(0, 25, 0) - R.Vector3.new(80, 15, 0)).Unit * 3, 0)
+local function runSteer(name, mod, fnName, maxLen)
+	R.reset()
+	local A = R.Vector3.new(0, 20, 0)
+	local beam = mod[fnName](A, R.Vector3.new(0, 20, -50), 1, 1, {})
+	stepFor(0.6)
+	assert(math.abs(beam.Length - maxLen) < 0.5, name .. ": sin nada delante no llegó a su largo máximo")
+	assert(beam.HitPosition == nil and beam.HitInstance == nil, name .. ": pegó sin tener nada delante")
+	-- apunta al suelo 40 studs adelante: se corta donde el rayo cruza el suelo
+	beam:AimAt(R.Vector3.new(0, 0, -40))
+	stepFor(0.2)
+	local onGround = beam.Length
+	assert(math.abs(onGround - math.sqrt(40 ^ 2 + 20 ^ 2)) < 0.5, name .. ": no se cortó en el suelo")
+	assert(beam.HitPosition and math.abs(beam.HitPosition.Y) < 0.01 and beam.HitInstance, name .. ": no marca dónde pega")
+	local decals0 = R.stats.decals
+	-- barre el suelo acercándose: se acorta y va dejando marcas
+	for i = 1, 30 do
+		beam:AimAt(R.Vector3.new(0, 0, -40 + i))
+		stepFor(1 / 60 * 2)
+	end
+	assert(beam.Length < onGround - 10, name .. ": no se acortó al barrer el suelo")
+	assert(R.stats.decals - decals0 >= 4, name .. ": no dejó marcas al barrer el suelo")
+	-- dirección hacia arriba: otra vez el largo máximo, sin impacto
+	beam:SetDirection(R.Vector3.new(0, 1, -1))
+	stepFor(0.2)
+	assert(math.abs(beam.Length - maxLen) < 0.5 and beam.HitPosition == nil, name .. ": hacia el cielo no volvió al máximo")
+	-- sigue a un objetivo que se mueve y a un origen nuevo
+	local target = R.Instance.new("Model")
+	local tp = R.Vector3.new(60, 20, 0)
+	target.GetPivot = function() return R.CFrame.new(tp.X, tp.Y, tp.Z) end
+	beam:AimAt(target)
+	beam:SetOrigin(R.CFrame.new(0, 25, 10))
+	stepFor(0.1)
+	tp = R.Vector3.new(0, 25, -70)
+	stepFor(0.1)
+	local look = beam.Holder.CFrame.LookVector
+	assert(look.Z < -0.99 and math.abs(beam.Holder.Position.Y - 25) < 0.01, name .. ": no siguió al objetivo ni al origen")
+	-- un objetivo más cerca que el largo máximo, en el aire: el rayo pasa de largo hasta su máximo
+	assert(math.abs(beam.Length - maxLen) < 0.5, name .. ": se cortó en el aire")
+	-- se corta antes de tiempo y todo se limpia
+	beam:Stop()
+	stepFor(0.45)
+	assert(not beam.Active, name .. ": no se apagó al cortarlo")
+	stepFor(5)   -- lo último (las marcas grandes del suelo) dura unos 4 s después del corte
+	local dl, wt, hb, rs = R.pending()
+	print(("%-17s   rayo: máx %.0f | en el suelo %.1f | marcas %d | cortado antes: destruido=%s heartbeat=%d render=%d"):format(
+		name, maxLen, onGround, R.stats.decals, tostring(R.isDestroyed(beam.Holder)), hb, rs))
+	assert(R.isDestroyed(beam.Holder), name .. ": el contenedor no se destruyó al cortarlo")
+	assert(hb == 0 and rs == 0, name .. ": quedaron conexiones o sacudidas activas")
+end
+runSteer("UltimateBeam", VFX, "UltimateBeam", 186)
+-- sin cortarlo: dura sus 3 s y se limpia solo
+run("UltimateBeam 3s", function()
+	return VFX.UltimateBeam(R.CFrame.new(0, 30, 0), R.Vector3.new(0, -10, -60), 1.5, 0).Holder
+end, 8)
 assert(VFX.UltimateBeamStart > 0.3 and VFX.UltimateBeamStop >= VFX.UltimateBeamStart + 2.85, "tiempos del rayo")
 
 -- GOLPES en el rival: salen delante del rival (hacia la cámara, que en el simulado está en 0, 10, 30), su tamaño
@@ -268,6 +285,11 @@ end, 6, 0, 0, 28)
 runOrb("BlackHole sin obj", function()
 	return OMNI.BlackHole(R.CFrame.lookAt(R.Vector3.new(0, 14, 140), R.Vector3.new(0, 14, 0)), {}, 1, 1)
 end, 6, 0, 0, 28)
+runSteer("CosmicBeam", OMNI, "CosmicBeam", 124)
+run("CosmicBeam 3s", function()
+	return OMNI.CosmicBeam(R.Vector3.new(0, 30, 0), R.Vector3.new(0, -10, -60), 1, 1, {}).Holder
+end, 8)
+assert(OMNI.CosmicBeamStart > 0.3 and OMNI.CosmicBeamStop >= OMNI.CosmicBeamStart + 2.85, "tiempos del rayo cósmico")
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"

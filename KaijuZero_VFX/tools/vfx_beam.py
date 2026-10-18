@@ -6,7 +6,12 @@ estallido de destellos y aros que se abren; a lo largo del rayo pasan aros finos
 humo rojo. Donde pega (el rival, o la primera superficie que encuentre) revienta un impacto: destellos,
 ondas, chispas, lava, escombros de roca y rocas fundidas que salen volando; el suelo debajo se quema y se
 agrieta en carmesí. A los 3 s el rayo se corta, se adelgaza y se apaga.
-Origen = la boca; el rayo mira hacia -Z (lo orienta playBeam hacia el rival). line_u: 0 = boca, 1 = impacto.
+SE PUEDE APUNTAR: cada cuadro mira hacia donde apunta (el rival, o lo que le digas con rayo:AimAt) y se corta en
+la primera superficie que toca, hasta 186 studs × escala (1.5 veces el largo con el que se presentó). El impacto
+y las marcas del suelo siguen al punto donde pega; si barre el suelo, deja una estela quemada; cada vez que
+vuelve a pegar después de ir por el aire, revienta de nuevo.
+Origen = la boca; el rayo mira hacia -Z. line_u: 0 = boca, 1 = la punta (donde pega). impact = solo mientras
+pega; on_hit = ráfagas cada vez que empieza a pegar (emit relativo); trail = marcas que van quedando en el suelo.
 """
 STATIC2x2 = ("Grid2x2", "Random", 0, True)
 DECAL = dict(decal=True, orientation="VelocityPerpendicular", direction="Top", speed=(0.01, 0.01))
@@ -30,7 +35,8 @@ SMOKE_DARK = [(0, (190, 42, 52)), (0.4, (125, 34, 42)), (1, (86, 46, 50))]
 DUST = [(0, (150, 50, 50)), (0.4, (122, 60, 60)), (1, (105, 80, 80))]
 FADE_IO = [(0, 1), (0.12, 0.3), (0.75, 0.4), (1, 1)]
 
-IMPACT = dict(line_u=1.0, offset=(0, 0, 3))        # en el impacto, un poco hacia la boca (no dentro del rival)
+IMPACT = dict(line_u=1.0, offset=(0, 0, 3), impact=True)   # en el impacto, un poco hacia la boca (no dentro del rival)
+TIP = dict(line_u=1.0, offset=(0, 0, 3))            # en la punta, pegue o no (el resoplido final)
 ALONG = dict(line_u=0.5)                             # cajas a lo largo de todo el rayo (Box con len_k)
 
 
@@ -119,14 +125,13 @@ LAYERS = [
          spread=(40, 40), speed=(6, 12), drag=1.5, accel=(0, 10, 0), lifetime=(0.9, 1.3), size=[(0, 6, 2), (1, 20, 4)],
          transparency=[(0, 1), (0.15, 0.62), (0.5, 0.72), (1, 1)], color=SMOKE, light_emission=0.1, brightness=1.2,
          rotation=(0, 360), rot_speed=(-25, 25), zoffset=-3, stream=[(HIT, ON, 7, 7)]),
-    # ---------------- la punta del rayo: un destello que viaja con ella hasta el rival ----------------
-    dict(name="BeamHead", texture="fx_glow", emit=[(START, 1)], offset=(0, 0, -2), direction="Front",
-         speed_len=(1 / GROW, 1 / GROW), lifetime=(GROW, GROW), size=[(0, 18), (1, 26)],
-         transparency=[(0, 0.1), (1, 0.2)], color=[(0, (255, 236, 232)), (1, (255, 120, 120))], light_emission=1.0,
-         brightness=1.4, zoffset=4),
-    dict(name="BeamHeadStar", texture="kk_star_06", emit=[(START, 1)], offset=(0, 0, -2), direction="Front",
-         speed_len=(1 / GROW, 1 / GROW), lifetime=(GROW, GROW), size=[(0, 22), (1, 30)],
-         transparency=[(0, 0), (1, 0.1)], color=HOT, light_emission=1.0, brightness=1.6, rotation=(0, 360), zoffset=5),
+    # ---------------- la punta del rayo: un destello que va con ella mientras crece ----------------
+    dict(name="BeamHead", texture="fx_glow", line_u=1.0, lifetime=(0.05, 0.07), size=[(0, 20), (1, 24)],
+         transparency=[(0, 0.15), (1, 0.4)], color=[(0, (255, 236, 232)), (1, (255, 120, 120))], light_emission=1.0,
+         brightness=1.4, zoffset=4, stream=[(START, START + GROW + 0.03, 70, 70)]),
+    dict(name="BeamHeadStar", texture="kk_star_06", line_u=1.0, lifetime=(0.05, 0.07), size=[(0, 24), (1, 28)],
+         transparency=[(0, 0), (1, 0.3)], color=HOT, light_emission=1.0, brightness=1.6, rotation=(0, 360), zoffset=5,
+         stream=[(START, START + GROW + 0.03, 40, 40)]),
     # ---------------- a lo largo del rayo: aros, brasas, rayas de energía, gotas de lava y humo rojo ----------------
     dict(name="TravelRings", texture="kz_beam_ring", orientation="VelocityPerpendicular", direction="Front",
          offset=(0, 0, -3), speed_len=(1.7, 2.1), lifetime=(0.4, 0.45), size=[(0, 26), (0.5, 30), (1, 27)],
@@ -153,14 +158,14 @@ LAYERS = [
          transparency=[(0, 1), (0.15, 0.5), (0.6, 0.62), (1, 1)], color=SMOKE_DARK, light_emission=0.1, brightness=1.2,
          rotation=(0, 360), rot_speed=(-20, 20), zoffset=-6, stream=[(HIT + 0.05, ON, 14, 14)], **ALONG),
     # ---------------- el impacto ----------------
-    dict(name="ImpactFlash", texture="fx_glow", emit=[(HIT, 1)], lifetime=(0.3, 0.3),
+    dict(name="ImpactFlash", texture="fx_glow", emit=[(0, 1)], on_hit=True, lifetime=(0.3, 0.3),
          size=[(0, 20), (0.25, 60), (1, 66)], transparency=[(0, 0.1), (0.5, 0.55), (1, 1)], color=HOT,
          light_emission=1.0, brightness=1.1, zoffset=4, **IMPACT),
-    dict(name="ImpactBurst", texture="fx_burst_a", emit=[(HIT, 2)], lifetime=(0.2, 0.24),
+    dict(name="ImpactBurst", texture="fx_burst_a", emit=[(0, 2)], on_hit=True, lifetime=(0.2, 0.24),
          size=[(0, 16), (0.4, 50), (1, 56)], transparency=[(0, 0), (0.5, 0.35), (1, 1)], color=FLAME,
          light_emission=0.6, brightness=1.6, rotation=(0, 360), zoffset=3, **IMPACT),
     dict(name="ImpactShock", texture="kz_beam_ring", orientation="VelocityPerpendicular", direction="Back",
-         emit=[(HIT, 2)], speed=(0.5, 0.5), lifetime=(0.32, 0.4), size=[(0, 12), (1, 80)],
+         emit=[(0, 2)], on_hit=True, speed=(0.5, 0.5), lifetime=(0.32, 0.4), size=[(0, 12), (1, 80)],
          transparency=[(0, 0), (0.5, 0.3), (1, 1)], color=HOT, light_emission=1.0, brightness=1.7,
          rotation=(0, 360), **IMPACT),
     dict(name="ImpactRings", texture="kz_beam_ring", orientation="VelocityPerpendicular", direction="Back",
@@ -180,16 +185,16 @@ LAYERS = [
     dict(name="ImpactSpray", texture="kk_trace_01", orientation="VelocityParallel", direction="Back",
          spread=(80, 80), speed=(90, 170), drag=3.5, accel=(0, -70, 0), lifetime=(0.25, 0.45),
          size=[(0, 12, 3), (1, 4)], color=SPARK, light_emission=1.0, brightness=1.8,
-         emit=[(HIT, 40)], stream=[(HIT, ON, 75, 75)], **IMPACT),
+         emit=[(0, 40)], on_hit=True, stream=[(HIT, ON, 75, 75)], **IMPACT),
     dict(name="ImpactLava", texture="kz_lava_glob_2x2", flipbook=STATIC2x2, direction="Back", spread=(70, 70),
          speed=(35, 75), drag=0.5, accel=(0, -130, 0), lifetime=(0.6, 0.9),
          size=[(0, 1.6, 0.4), (0.3, 3.0, 0.6), (1, 2.0, 0.4)], transparency=[(0, 0), (0.75, 0.05), (1, 1)],
          color=LAVA, light_emission=0.45, brightness=1.6, rotation=(0, 360), rot_speed=(-220, 220),
-         emit=[(HIT, 20)], stream=[(HIT, ON, 30, 30)], **IMPACT),
+         emit=[(0, 20)], on_hit=True, stream=[(HIT, ON, 30, 30)], **IMPACT),
     dict(name="ImpactDebris", texture="kz_lava_rock_2x2", flipbook=STATIC2x2, direction="Back", spread=(70, 70),
          speed=(40, 90), drag=0.3, accel=(0, -130, 0), lifetime=(0.7, 1.1), size=[(0, 2.2, 0.8), (1, 1.9, 0.7)],
          color=ROCK, light_emission=0.1, brightness=1.5, rotation=(0, 360), rot_speed=(-360, 360),
-         emit=[(HIT, 16)], stream=[(HIT, ON, 18, 18)], **IMPACT),
+         emit=[(0, 16)], on_hit=True, stream=[(HIT, ON, 18, 18)], **IMPACT),
     dict(name="ImpactSmoke", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Top", spread=(35, 35),
          speed=(10, 20), drag=1.2, accel=(0, 10, 0), lifetime=(1.0, 1.5), size=[(0, 10, 3), (1, 30, 5)],
          transparency=[(0, 0.6), (0.15, 0.32), (0.6, 0.45), (1, 1)], color=SMOKE, light_emission=0.1,
@@ -232,20 +237,20 @@ LAYERS = [
     dict(name="CutPuff", texture="fx_smoke_2x2", flipbook=STATIC2x2, emit=[(STOP + 0.02, 8)], direction="Back",
          spread=(70, 70), speed=(14, 30), drag=2, accel=(0, 10, 0), lifetime=(0.9, 1.3), size=[(0, 8, 2), (1, 26, 5)],
          transparency=[(0, 0.6), (0.3, 0.55), (1, 1)], color=SMOKE, light_emission=0.1, brightness=1.2,
-         rotation=(0, 360), rot_speed=(-30, 30), zoffset=-4, **IMPACT),
+         rotation=(0, 360), rot_speed=(-30, 30), zoffset=-4, **TIP),
     dict(name="CutEmbers", texture="kk_flare_01", emit=[(STOP + 0.02, 40)], direction="Back", spread=(90, 90),
          speed=(20, 60), drag=2, accel=(0, 10, 0), lifetime=(0.5, 1.0), size=[(0, 0), (0.15, 2.6, 0.6), (1, 0)],
-         color=EMBER, light_emission=1.0, brightness=1.8, **IMPACT),
+         color=EMBER, light_emission=1.0, brightness=1.8, **TIP),
     # ---------------- el suelo bajo el impacto: quemadura, grietas carmesí, polvo y fuego ----------------
-    dict(name="GroundScorch", texture="kz_scorch", emit=[(HIT + 0.02, 1)], at_ground=True, offset=(0, 0.14, 0),
+    dict(name="GroundScorch", texture="kz_scorch", emit=[(0.02, 1)], on_hit=True, at_ground=True, offset=(0, 0.14, 0),
          lifetime=(4.0, 4.0), size=[(0, 8), (0.05, 40), (1, 44)], transparency=[(0, 0.15), (0.8, 0.25), (1, 1)],
          rotation=(0, 360), **DECAL),
-    dict(name="GroundCracks", texture="kz_lava_cracks", emit=[(HIT + 0.05, 1)], at_ground=True,
+    dict(name="GroundCracks", texture="kz_lava_cracks", emit=[(0.05, 1)], on_hit=True, at_ground=True,
          offset=(0, 0.18, 0), lifetime=(3.9, 3.9), size=[(0, 10), (0.06, 46), (1, 50)],
          transparency=[(0, 0.1), (0.7, 0.3), (1, 1)],
          color=[(0, (255, 120, 120)), (0.1, (240, 40, 62)), (0.6, (190, 18, 40)), (1, (90, 10, 22))],
          light_emission=1.0, rotation=(0, 360), **DECAL),
-    dict(name="GroundDust", texture="kk_smoke_07", emit=[(HIT + 0.02, 22)], at_ground=True, offset=(0, 2, 0),
+    dict(name="GroundDust", texture="kk_smoke_07", emit=[(0.02, 22)], on_hit=True, at_ground=True, offset=(0, 2, 0),
          direction="Front", spread=(180, 3), speed=(60, 100), drag=3.5, accel=(0, 4, 0), lifetime=(0.9, 1.3),
          size=[(0, 8, 2), (0.3, 18, 3), (1, 24, 4)], transparency=[(0, 0.5), (0.2, 0.35), (1, 1)], color=DUST,
          rotation=(0, 360), rot_speed=(-40, 40), zoffset=-3),
@@ -258,17 +263,26 @@ LAYERS = [
          shape={"type": "Box", "size": (18, 1, 18)}, direction="Top", spread=(20, 20), speed=(6, 16),
          accel=(0, 10, 0), lifetime=(0.6, 1.0), size=[(0, 0), (0.15, 2.2, 0.6), (1, 0)], color=EMBER,
          light_emission=1.0, brightness=1.8, stream=[(HIT + 0.1, ON, 16, 16)]),
+    # la estela quemada que deja al barrer el suelo
+    dict(name="TrailScorch", texture="kz_scorch", trail=True, at_ground=True, offset=(0, 0.12, 0), lifetime=(2.4, 2.4),
+         size=[(0, 6), (0.08, 17), (1, 18)], transparency=[(0, 0.2), (0.75, 0.3), (1, 1)], rotation=(0, 360), **DECAL),
+    dict(name="TrailCracks", texture="kz_lava_cracks", trail=True, at_ground=True, offset=(0, 0.16, 0),
+         lifetime=(2.0, 2.0), size=[(0, 6), (0.1, 15), (1, 16)], transparency=[(0, 0.15), (0.6, 0.35), (1, 1)],
+         color=[(0, (255, 120, 120)), (0.15, (240, 40, 62)), (0.6, (180, 16, 38)), (1, (80, 10, 20))],
+         light_emission=1.0, rotation=(0, 360), **DECAL),
 ]
 
 ULTIMATE_BEAM = {
     "name": "UltimateBeam",
     "doc": ("ULTIMATE de Kaiju Zero: la boca junta energía 0.3 s y suelta un RAYO CARMESÍ de 3 s con el núcleo al rojo "
-            "blanco y vetas de lava, con aros, brasas y humo rojo, que pega en el rival (o en la primera superficie) "
-            "con un impacto de destellos, chispas, lava y rocas fundidas; el suelo debajo se quema y se agrieta. "
-            "Cierra limpio."),
+            "blanco y vetas de lava, con aros, brasas y humo rojo. Se puede apuntar mientras dura: pega en la primera "
+            "superficie (hasta 186 studs × escala) con destellos, chispas, lava y rocas fundidas, y el suelo debajo se "
+            "quema y se agrieta (deja una estela si lo barre). Cierra limpio."),
     "duration": STOP + FADE,
-    "beam": {"start": START, "grow": GROW, "stop": STOP, "fade": FADE, "extra": 40,
-             "light_color": (255, 40, 62), "light_brightness": 5, "light_range": 50},
+    # max_len = largo máximo (studs × escala); trail_every / trail_move = cada cuánto y desde qué distancia deja
+    # marcas al barrer el suelo; rehit = tiempo sin pegar antes de que un nuevo impacto vuelva a reventar
+    "beam": {"start": START, "grow": GROW, "stop": STOP, "fade": FADE, "max_len": 186, "trail_every": 0.1,
+             "trail_move": 4, "rehit": 0.3, "light_color": (255, 40, 62), "light_brightness": 5, "light_range": 50},
     "beams": BEAMS,
     "layers": LAYERS,
     "shake_ramp": (START, STOP, 0.3, 0.55, 1.0),
