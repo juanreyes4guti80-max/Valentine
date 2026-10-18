@@ -113,6 +113,49 @@ runBeam("Beam Model", function()
 end, 6, R.Vector3.new(80, 15, 0) + (R.Vector3.new(0, 25, 0) - R.Vector3.new(80, 15, 0)).Unit * 3, 0)
 assert(VFX.UltimateBeamStart > 0.3 and VFX.UltimateBeamStop >= VFX.UltimateBeamStart + 2.85, "tiempos del rayo")
 
+-- GOLPES en el rival: salen delante del rival (hacia la cámara, que en el simulado está en 0, 10, 30), su tamaño
+-- sigue el alto del rival y se limpian
+local camPos = R.Vector3.new(0, 10, 30)
+local function front(c, lift)
+	return c + (camPos - c).Unit * lift
+end
+local function runHit(name, call, seconds, P, k)
+	run(name, call, seconds)
+	local st = R.stats
+	local far = 0
+	for _, p in st.emitPos do
+		if (p - P).Magnitude > 14 * k then far += 1 end
+	end
+	for _, p in st.streamPos do
+		if (p - P).Magnitude > 14 * k then far += 1 end
+	end
+	print(("%-17s   golpe: %d ráfagas, %d continuos, lejos del golpe %d | partícula más grande %.1f studs"):format(
+		"", #st.emitPos, #st.streamPos, far, st.maxPSize))
+	assert(#st.emitPos >= 6, name .. ": casi no hubo golpe")
+	assert(far == 0, name .. ": hay emisiones lejos del golpe")
+end
+local victim = R.Instance.new("Model")
+victim.GetPivot = function() return R.CFrame.new(0, 11, 0) end
+victim.GetExtentsSize = function() return R.Vector3.new(12, 22, 12) end
+runHit("SlashHit", function() return VFX.SlashHit(victim, 1, 1) end, 1.5, front(R.Vector3.new(0, 11, 0), 3), 1)
+local size1 = R.stats.maxPSize
+local giant = R.Instance.new("Model")
+giant.GetPivot = function() return R.CFrame.new(0, 22, 0) end
+giant.GetExtentsSize = function() return R.Vector3.new(24, 44, 24) end
+runHit("SlashHit gigante", function() return VFX.SlashHit(giant, 1, 1, 30) end, 1.5, front(R.Vector3.new(0, 22, 0), 6), 2)
+assert(math.abs(R.stats.maxPSize / size1 - 2) < 0.05, "el golpe no se adaptó al alto del rival")
+local wall = R.Instance.new("Part")
+wall.Size = R.Vector3.new(10, 22, 10)
+wall.CFrame = R.CFrame.new(20, 11, -10)
+runHit("BurningSlash Part", function() return VFX.BurningSlashHit(wall, 1, 0, -45) end, 2.5,
+	front(R.Vector3.new(20, 11, -10), 3), 1)
+runHit("BiteHit Vector3", function() return VFX.BiteHit(R.Vector3.new(5, 8, 0), 1, 1) end, 1.5,
+	front(R.Vector3.new(5, 8, 0), 3), 1)
+VFX.HitAutoSize = false
+runHit("BiteHit x1.5", function() return VFX.BiteHit(giant, 1.5, 1) end, 1.5, front(R.Vector3.new(0, 22, 0), 4.5), 1.5)
+VFX.HitAutoSize = true
+assert(VFX.SlashHitImpact == 0.05 and VFX.BiteHitImpact == 0.14, "tiempos de los golpes")
+
 -- rocas en línea recta (desordenadas a propósito: el módulo las ordena)
 local line = {}
 for i = 0, 6 do table.insert(line, R.Vector3.new(8 + 14 * i, 0, 0.5 * i)) end

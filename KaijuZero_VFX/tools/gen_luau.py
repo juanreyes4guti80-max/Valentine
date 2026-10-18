@@ -176,7 +176,10 @@ DOC_KAIJU = """	KaijuFireVFX — VFX de fuego y lava para KAIJU ZERO
 		-- cf = punto del SUELO bajo la explosión; 1 = escala; 1 = intensidad de la sacudida de cámara
 		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
 		-- ULTIMATE: rayo de la boca al rival (pega a los KaijuFireVFX.UltimateBeamStart s); se ignora al propio kaiju
-		KaijuFireVFX.UltimateBeam(bocaDeKaijuZero, rival, 1, 1, { modeloDeKaijuZero })"""
+		KaijuFireVFX.UltimateBeam(bocaDeKaijuZero, rival, 1, 1, { modeloDeKaijuZero })
+		-- golpes que recibe el rival: corte en garra (en diagonal), corte quemado y mordisco
+		KaijuFireVFX.SlashHit(rival, 1, 1)
+		KaijuFireVFX.BiteHit(rival, 1, 1)"""
 
 DOC_OMNIVORA = """	OmnivoraVFX — VFX cósmicos (azul muy oscuro, celeste y blanco, con el púrpura de su boca) para OMNÍVORA
 	(generado automáticamente desde vfx_omnivora.py y vfx_blackhole.py; edita allí y regenera)
@@ -974,7 +977,8 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 		for i = 1, n do
 			local u = if len > 0 then (i - 0.5) / n else 0
 			local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
-			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+			local t0 = if spec.light then (spec.light.delay or 0) + (spec.light.sweep or 0) * u else 0
+			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = t0 })
 		end
 	end
 	finish(spec, holder, s, shake, lights)
@@ -1246,6 +1250,52 @@ local function playBeam(spec: Layer, origin: any, target: any, scale: number?, s
 		end
 	end
 	return holder
+end
+
+-- ---------------------------------------------------------------- golpe que recibe el rival
+-- el efecto mira a la cámara (X = derecha de la pantalla, Y = arriba, +Z = hacia la cámara) y sale delante de la
+-- superficie del rival que se ve; con un Model o una Part su tamaño se adapta al alto del rival
+local function playHit(spec: Layer, target: any, scale: number?, shake: number?, angle: number?): Part
+	local H = spec.hit
+	local C: Vector3
+	local inst: Instance? = nil
+	local height: number? = nil
+	if typeof(target) == "Vector3" then
+		C = target
+	elseif typeof(target) == "CFrame" then
+		C = target.Position
+	elseif typeof(target) == "Instance" and target:IsA("Model") then
+		C = (target :: Model):GetPivot().Position
+		height = (target :: Model):GetExtentsSize().Y
+		inst = target
+	else
+		C = (target :: BasePart).Position
+		height = (target :: BasePart).Size.Y
+		inst = target
+	end
+	local k = if height and (KaijuFireVFX :: any).HitAutoSize then math.clamp(height / H.ref, 0.5, 4) else 1
+	local sc = (scale or 1) * k
+	local s = sc * (spec.scale_mult or 1)
+	local cam = workspace.CurrentCamera
+	local camPos = if cam then cam.CFrame.Position else C + Vector3.new(0, 0, 60)
+	local toCam = camPos - C
+	if toCam.Magnitude < 1e-3 then
+		toCam = Vector3.zAxis
+	end
+	local P = C
+	if inst then
+		-- la superficie del rival que ve la cámara
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = { inst :: Instance }
+		local hit = workspace:Raycast(camPos, C - camPos, params)
+		if hit then
+			P = hit.Position
+		end
+	end
+	P += toCam.Unit * H.lift * s
+	local cf = CFrame.lookAt(P, P - toCam.Unit) * CFrame.Angles(0, 0, math.rad(angle or H.angle))
+	return play(spec, cf, sc, nil, shake)
 end
 
 -- escala de tamaños de una capa: con el radio ("r"), con la altura del pilar ("h") o con la escala
@@ -2032,7 +2082,7 @@ def build(specs, name, doc):
         data = {"name": spec["name"], "duration": spec["duration"],
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
-        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb", "beam"):
+        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb", "beam", "hit"):
             if spec.get(k):
                 data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         if spec.get("cubes"):
@@ -2068,6 +2118,23 @@ def build(specs, name, doc):
                 f"\treturn playBeam(SPEC_{key}, origin, target, scale, shake, ignore)\nend\n" \
                 f"-- segundos (desde la llamada) en que el rayo empieza a pegar y en que se corta: para sincronizar el daño\n" \
                 f"KaijuFireVFX.{key}Start = {hit:g}\nKaijuFireVFX.{key}Stop = {b['stop']:g}\n\n"
+        elif spec.get("hit"):
+            h = spec["hit"]
+            out += head + \
+                "-- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira\n" \
+                f"-- hacia ella. Con un Model o una Part se adapta al alto del rival ({h['ref']:g} studs = tamaño 1; " \
+                "scale lo multiplica).\n"
+            if h.get("angled"):
+                out += f"-- angle = inclinación del corte en grados (por defecto {h['angle']:g}: en diagonal, de arriba a la izquierda\n" \
+                    "-- a abajo a la derecha). 0 = vertical, -35 = la otra diagonal (de arriba a la derecha a abajo a la\n" \
+                    "-- izquierda), 90 = horizontal.\n" + \
+                    f"function KaijuFireVFX.{key}(target: any, scale: number?, shake: number?, angle: number?): Part\n" \
+                    f"\treturn playHit(SPEC_{key}, target, scale, shake, angle)\nend\n"
+            else:
+                out += f"function KaijuFireVFX.{key}(target: any, scale: number?, shake: number?): Part\n" \
+                    f"\treturn playHit(SPEC_{key}, target, scale, shake, 0)\nend\n"
+            out += "-- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido\n" \
+                f"KaijuFireVFX.{key}Impact = {h['impact']:g}\n\n"
         elif spec.get("orb"):
             o = spec["orb"]
             out += head + \
@@ -2103,6 +2170,10 @@ def build(specs, name, doc):
                           "-- Color y material de los cubos de destrucción (nil = los del suelo donde sale el efecto)\n"
                           "KaijuFireVFX.CubeColor = nil :: Color3?\n"
                           "KaijuFireVFX.CubeMaterial = nil :: Enum.Material?\n", 1)
+    if any(spec.get("hit") for spec in specs.values()):
+        out = out.replace("KaijuFireVFX.UseLight = true\n", "KaijuFireVFX.UseLight = true\n"
+                          "-- Los golpes (corte, mordisco) se adaptan al alto del rival si le pasas su Model o su Part\n"
+                          "KaijuFireVFX.HitAutoSize = true\n", 1)
     if any(spec.get("orb") for spec in specs.values()):
         out = out.replace("KaijuFireVFX.UseLight = true\n", "KaijuFireVFX.UseLight = true\n"
                           "-- Lente de vidrio que distorsiona el fondo detrás del agujero negro (solo con gráficos altos)\n"

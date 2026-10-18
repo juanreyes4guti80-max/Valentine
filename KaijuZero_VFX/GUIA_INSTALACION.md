@@ -6,7 +6,7 @@
 |---|---|
 | `roblox/KaijuFireVFX.rbxmx` | El ModuleScript listo para insertar en Studio. |
 | `roblox/KaijuFireVFX.lua` | El mismo código en texto, si prefieres copiar y pegar. |
-| `roblox/texturas_necesarias.txt` | Las 46 imágenes que usa el módulo. |
+| `roblox/texturas_necesarias.txt` | Las 50 imágenes que usa el módulo. |
 | `textures/` | Las imágenes que hay que subir a Roblox. |
 | `preview/` | Videos simulados de cada efecto. |
 | `tools/` | Generadores (texturas, simulador, módulo). No hace falta tocarlos. |
@@ -21,6 +21,9 @@
 | `GiantExplosionIgnition(cf, escala, sacudida)` | **H1 Ignition**: la misma explosión de lava en **rojo carmesí**, con la misma iluminación que la normal: el centro nace blanco y pasa a rojo encendido. Es **1.5 veces más grande** y **1.5 veces más intensa**: tiene más magma y más rocas fundidas, y la luz y la sacudida son más fuertes. La lava carmesí queda viva en el suelo 5 s. | 5.8 s |
 | `H3_Detonation(rocas, escala, sacudida)` | **H3**: las rocas que dejó el rayo **detonan todas a la vez**. Cada una levanta su racimo de pilares de fuego y entre todas forman una pared de llamas. Los pilares brotan de golpe, se sostienen sin rebotar y se hunden. En la roca más lejana sale un **pilar gigante** de remate. | 2.8 s |
 | `H3_DetonationIgnition(rocas, escala, sacudida)` | **H3 Ignition**: lo mismo en carmesí, con pilares más altos, y deja una **marca de fuego** en cada roca unos 3 s. | 4.6 s |
+| `SlashHit(rival, escala, sacudida, ángulo)` | **Corte** (el golpe que recibe el rival): un **zarpazo de garra**, tres marcas rasgadas como la garra del logo de Monster. Va **en diagonal** y se desgarra sobre el rival en un instante, con chispas que saltan a los lados, un destello y un anillo. | 0.6 s |
+| `BurningSlashHit(rival, escala, sacudida, ángulo)` | **Corte quemado**: el mismo zarpazo al rojo vivo. Las tres marcas quedan **encendidas ardiendo** un momento, con llamas, brasas, gotas de lava y humo. | 1 s |
+| `BiteHit(rival, escala, sacudida)` | **Mordisco**: dos **mandíbulas de colmillos** aparecen sobre el rival y se cierran de golpe. Al chocar hay un destello corto (alumbra poco), chispas y un anillo. | 0.6 s |
 | `UltimateBeam(origen, rival, escala, sacudida, ignorar)` | **ULTIMATE**: un **rayo carmesí de 3 s** con el núcleo al rojo blanco. Lo envuelve energía con **vetas de lava** que corre hacia el rival. La boca junta energía un instante (chispas y aros que se cierran) y dispara. En la boca queda un **estallido de destellos con aros** que se abren, y a lo largo del rayo pasan **aros finos**, brasas, gotas de lava y **humo rojo**. Donde pega revienta un **impacto**: destellos, ondas, chispas, lava, escombros de roca y **rocas fundidas** que salen volando. El suelo debajo se quema y se agrieta en carmesí. Al final el rayo se corta, se adelgaza y se apaga. | 3.6 s (lo último se apaga hacia los 4.7 s) |
 
 ### Otros efectos
@@ -52,6 +55,10 @@ Todos los efectos **cierran limpio**: el contenedor se destruye solo cuando ya m
    La ULTIMATE (el rayo) usa además estas 9:
 
    `fx_smoke_2x2, fx_spark4, kk_star_06, kk_twirl_01, kz_beam_core, kz_beam_flow, kz_beam_glow, kz_beam_ring, kz_lava_rock_2x2`
+
+   Y los golpes (corte, corte quemado y mordisco) usan además estas 4:
+
+   `kz_claw_4x4, kz_claw, kz_claw_glow, kz_bite_4x4`
 
 ## Cómo llamarlo
 
@@ -166,13 +173,40 @@ task.delay(KaijuFireVFX.UltimateBeamStart, aplicarDanio) -- el golpe, cuando el 
 - **Escala**: con `1`, el rayo mide unos 22 studs de ancho (el núcleo blanco unos 6.5) y el resplandor llega a unos 42. El largo no depende de la escala: siempre llega hasta el rival. Para un kaiju más grande prueba de `1.5` a `2`.
 - **Sacudida**: tiembla sin parar mientras dura el rayo y da un golpe al pegar. `0` o `nil` la desactiva.
 
+### Golpes en el rival (corte y mordisco)
+
+En el combate por turnos, Kaiju Zero hace su animación de ataque desde su lado (por ejemplo *Vertical Slash* con la mano) y **en el rival aparece el golpe**. Llama la función en el cuadro de la animación en que el golpe conecta, en todos los clientes:
+
+```lua
+-- Server, cuando el ataque conecta: evento:FireAllClients("GOLPE", { tipo = "corte", rival = modeloDelRival })
+
+-- LocalScript (el mismo evento de arriba)
+evento.OnClientEvent:Connect(function(habilidad: string, datos: any)
+	if habilidad == "GOLPE" then
+		if datos.tipo == "corte" then
+			KaijuFireVFX.SlashHit(datos.rival, 1, 1)
+		elseif datos.tipo == "corte quemado" then
+			KaijuFireVFX.BurningSlashHit(datos.rival, 1, 1)
+		elseif datos.tipo == "mordisco" then
+			KaijuFireVFX.BiteHit(datos.rival, 1, 1)
+		end
+	end
+end)
+```
+
+- **`rival`**: su **Model** (lo normal), una Part, o un `Vector3`/`CFrame` si quieres un punto exacto (por ejemplo `rival.Head.Position`).
+- **Siempre se ve de frente**: el golpe mira a la cámara de cada jugador y sale delante de la parte del rival que se ve, así no queda escondido dentro del cuerpo.
+- **Se adapta al tamaño del rival**: con un Model o una Part, el golpe crece con su alto (22 studs = tamaño 1; uno de 44 studs lo recibe el doble de grande). `escala` lo multiplica. Si prefieres controlarlo tú, pon `KaijuFireVFX.HitAutoSize = false`.
+- **Ángulo del corte**: por defecto va **en diagonal**, de arriba a la izquierda a abajo a la derecha (35°). Puedes pasar otro: `0` = vertical, `-35` = la otra diagonal, `90` = horizontal. Por ejemplo `KaijuFireVFX.SlashHit(rival, 1, 1, -35)`.
+- **Tiempos**: el corte conecta a los `KaijuFireVFX.SlashHitImpact` s (0.05) y el mordisco cierra la boca a los `KaijuFireVFX.BiteHitImpact` s (0.14). Úsalos para sincronizar el número de daño o el sonido.
+
 ### Otros efectos
 
 - En `Explosion` y `ExplosionAnime`, pon `cf` unos `2.5 × escala` studs por encima del suelo. En `FireLine`, `cf` es el inicio de la línea en el suelo.
 
 ### Rendimiento
 
-En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a unas 1900 partículas y 24 rocas. La H3 y la H3 Ignition llegan a unas 1600 partículas (con 7 rocas). La ULTIMATE se mantiene en unas 400 partículas, con 5 Beams y 8 rocas fundidas en total. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
+En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a unas 1900 partículas y 24 rocas. La H3 y la H3 Ignition llegan a unas 1600 partículas (con 7 rocas). La ULTIMATE se mantiene en unas 400 partículas, con 5 Beams y 8 rocas fundidas en total. Los golpes son livianos: unas 80 partículas el corte y el mordisco, y unas 110 el corte quemado. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
 
 ## Para que se vea como en el video
 
@@ -183,19 +217,21 @@ En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a u
 - Las rocas en llamas de la H1 clásica y de la H3 son Parts de Slate oscuro que dejan estela. Al caer levantan polvo y dejan fuego unos segundos.
 - Todas las rocas se mueven por código: no chocan con nada, no empujan a los jugadores y no detectan toques.
 - El cuerpo del **rayo** de la ULTIMATE son 5 **Beams** de Roblox entre la boca y el impacto: resplandor, lenguas de energía, la envoltura con vetas de lava, el interior y el núcleo blanco. Usan `FaceCamera`, así que siempre se ven de frente, y su textura corre hacia el rival (`TextureSpeed`). El ancho late un poco mientras dura.
+- El zarpazo y el mordisco son **flipbooks** de 16 cuadros (`Grid4x4`, modo `OneShot`): la animación de la garra que se desgarra y de las mandíbulas que se cierran va dentro de la textura, así se ve igual en cualquier equipo. La garra usa la orientación `VelocityParallel`, así sigue el ángulo del corte.
 - El carmesí se lee mejor con cielos no muy claros. Sobre un cielo azul muy brillante el resplandor tira un poco a rosa; en el video está la versión de día y la de noche para comparar.
 
 ## Licencias de las texturas (todas libres para uso comercial)
 
 - **Kenney Particle Pack** (`kk_*`): CC0, de kenney.nl. El crédito es opcional. Ver `textures/KENNEY_LICENSE.txt`.
 - **Muestras oficiales de Effekseer** (`fx_*`): CC0. Agradecen el crédito a "Effekseer" y a los autores de las muestras. Ver `textures/EFFEKSEER_SAMPLES_LICENSE_CC0.txt`.
-- **`kz_*`**: generadas aquí, son tuyas. Las de lava (`kz_lava_*`) se hicieron en parte a partir de las muestras CC0 de Effekseer. Las del rayo (`kz_beam_*`) y las rocas de lava (`kz_lava_rock_2x2`) se generan desde cero.
+- **`kz_*`**: generadas aquí, son tuyas. Las de lava (`kz_lava_*`) se hicieron en parte a partir de las muestras CC0 de Effekseer. Las del rayo (`kz_beam_*`), las rocas de lava (`kz_lava_rock_2x2`), la garra (`kz_claw_*`) y el mordisco (`kz_bite_4x4`) se generan desde cero.
 
 ## Si quieres cambiar algo
 
 - **H3** (pilares, tiempos, colores, separación de rocas): `tools/vfx_pillars.py`.
 - **H1** (explosión de lava): `tools/vfx_lava.py`. Sus texturas propias (`kz_lava_*`) salen de `tools/gen_lava_textures.py`. La Ignition se genera desde ella con `ignitionize`, en `tools/vfx_specs.py`. Ahí puedes cambiar el tamaño, la intensidad y el brillo del carmesí: `bright_k` sube el brillo y `_G_MAP_HOT` decide cuánto se blanquean los tonos más calientes. El núcleo de magma que nace blanco está en `IGNITION_CORE`, en `tools/vfx_lava.py`.
 - **H1 clásica** (la de fuego): `GIANT` en `tools/vfx_specs.py`.
+- **Golpes** (corte en garra, corte quemado y mordisco): `tools/vfx_hits.py`. Ahí están el ángulo por defecto del corte (`"angle"`), los colores y el brillo de cada golpe. Sus texturas (`kz_claw_*` y `kz_bite_4x4`) salen de `tools/gen_hit_textures.py`.
 - **ULTIMATE** (el rayo): `tools/vfx_beam.py`. Arriba están los tiempos (`START`, `GROW`, `STOP`, `FADE`) y los colores, y en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo. Sus texturas (`kz_beam_*` y `kz_lava_rock_2x2`) salen de `tools/gen_beam_textures.py`.
 
 Después de editarlos se regenera el módulo con:
@@ -207,5 +243,5 @@ python tools/gen_luau.py roblox
 El mismo comando regenera también los módulos de Astral Colossus (`AstralColossus_VFX/roblox`) y Omnívora (`Omnivora_VFX/roblox`), que usan el mismo motor.
 
 Las pruebas que validan el módulo son estas:
-- `tools/test_luau/run_runtime.py`: ejecuta cada efecto contra un Roblox simulado. Comprueba que se limpie todo y, en la H3, que cada roca reciba su explosión y que el remate quede en la última. En la ULTIMATE comprueba que el rayo llegue al rival (o se corte en el suelo si está en medio), que el impacto salga donde pega, que el suelo de debajo quede marcado y que los Beams se apaguen.
+- `tools/test_luau/run_runtime.py`: ejecuta cada efecto contra un Roblox simulado. Comprueba que se limpie todo y, en la H3, que cada roca reciba su explosión y que el remate quede en la última. En la ULTIMATE comprueba que el rayo llegue al rival (o se corte en el suelo si está en medio), que el impacto salga donde pega, que el suelo de debajo quede marcado y que los Beams se apaguen. En los golpes comprueba que salgan delante del rival y que su tamaño siga el alto del rival.
 - `luau-lsp analyze` con las definiciones de Roblox: verifica que todas las propiedades y métodos existan en la API.

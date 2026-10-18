@@ -989,3 +989,8 @@ SPECS = {"GiantExplosion": _VL.LAVA_EXPLOSION, "GiantExplosionIgnition": GIANT_I
 import vfx_beam as _VB
 
 SPECS["UltimateBeam"] = _VB.ULTIMATE_BEAM
+
+# los golpes que recibe el rival: corte, corte quemado, mordisco, mordisco quemado (vfx_hits.py)
+import vfx_hits as _VH
+
+SPECS.update(_VH.HITS)

@@ -143,7 +143,7 @@ M.task = {
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
 	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0,
-	lensMax = 0, beamMaxW = 0, beamsOff = 0 }
+	lensMax = 0, beamMaxW = 0, beamsOff = 0, maxPSize = 0 }
 M.orbPath = {}
 local live = {}
 -- lo que devuelve el rayo al tocar el suelo: una Part de pasto verde (no cuenta como instancia viva)
@@ -237,6 +237,10 @@ function Inst.new(class)
 			if props.Name == "Lens" and k == "Size" then M.stats.lensMax = math.max(M.stats.lensMax, v.X) end
 			-- el rayo: ancho máximo de sus Beams y hasta dónde llega su punta
 			if class == "Beam" and k == "Width0" then M.stats.beamMaxW = math.max(M.stats.beamMaxW, v) end
+			-- tamaño de partícula más grande (los golpes siguen el alto del rival)
+			if class == "ParticleEmitter" and k == "Size" then
+				for _, kp in v.Keypoints do M.stats.maxPSize = math.max(M.stats.maxPSize, kp.Value) end
+			end
 			if class == "Beam" and k == "Enabled" and v == false then M.stats.beamsOff += 1 end
 			if props.Name == "BeamEnd" and k == "Position" then M.stats.beamEnd = v end
 			if props.Name == "Cube" and k == "CFrame" then

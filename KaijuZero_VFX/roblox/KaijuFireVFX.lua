@@ -9,6 +9,9 @@
 		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)
 		-- ULTIMATE: rayo de la boca al rival (pega a los KaijuFireVFX.UltimateBeamStart s); se ignora al propio kaiju
 		KaijuFireVFX.UltimateBeam(bocaDeKaijuZero, rival, 1, 1, { modeloDeKaijuZero })
+		-- golpes que recibe el rival: corte en garra (en diagonal), corte quemado y mordisco
+		KaijuFireVFX.SlashHit(rival, 1, 1)
+		KaijuFireVFX.BiteHit(rival, 1, 1)
 
 	ANTES DE USARLO:
 	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
@@ -66,6 +69,10 @@ KaijuFireVFX.TEXTURES = {
 	kz_beam_flow = "rbxassetid://0",
 	kz_beam_glow = "rbxassetid://0",
 	kz_beam_ring = "rbxassetid://0",
+	kz_bite_4x4 = "rbxassetid://0",
+	kz_claw = "rbxassetid://0",
+	kz_claw_4x4 = "rbxassetid://0",
+	kz_claw_glow = "rbxassetid://0",
 	kz_debris_2x2 = "rbxassetid://0",
 	kz_lava_cracks = "rbxassetid://0",
 	kz_lava_drop = "rbxassetid://0",
@@ -82,6 +89,8 @@ KaijuFireVFX.Parent = workspace :: Instance
 KaijuFireVFX.Quality = 1
 -- Luz breve en el impacto (del color del efecto)
 KaijuFireVFX.UseLight = true
+-- Los golpes (corte, mordisco) se adaptan al alto del rival si le pasas su Model o su Part
+KaijuFireVFX.HitAutoSize = true
 
 type Layer = { [string]: any }
 
@@ -828,7 +837,8 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 		for i = 1, n do
 			local u = if len > 0 then (i - 0.5) / n else 0
 			local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
-			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+			local t0 = if spec.light then (spec.light.delay or 0) + (spec.light.sweep or 0) * u else 0
+			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = t0 })
 		end
 	end
 	finish(spec, holder, s, shake, lights)
@@ -1100,6 +1110,52 @@ local function playBeam(spec: Layer, origin: any, target: any, scale: number?, s
 		end
 	end
 	return holder
+end
+
+-- ---------------------------------------------------------------- golpe que recibe el rival
+-- el efecto mira a la cámara (X = derecha de la pantalla, Y = arriba, +Z = hacia la cámara) y sale delante de la
+-- superficie del rival que se ve; con un Model o una Part su tamaño se adapta al alto del rival
+local function playHit(spec: Layer, target: any, scale: number?, shake: number?, angle: number?): Part
+	local H = spec.hit
+	local C: Vector3
+	local inst: Instance? = nil
+	local height: number? = nil
+	if typeof(target) == "Vector3" then
+		C = target
+	elseif typeof(target) == "CFrame" then
+		C = target.Position
+	elseif typeof(target) == "Instance" and target:IsA("Model") then
+		C = (target :: Model):GetPivot().Position
+		height = (target :: Model):GetExtentsSize().Y
+		inst = target
+	else
+		C = (target :: BasePart).Position
+		height = (target :: BasePart).Size.Y
+		inst = target
+	end
+	local k = if height and (KaijuFireVFX :: any).HitAutoSize then math.clamp(height / H.ref, 0.5, 4) else 1
+	local sc = (scale or 1) * k
+	local s = sc * (spec.scale_mult or 1)
+	local cam = workspace.CurrentCamera
+	local camPos = if cam then cam.CFrame.Position else C + Vector3.new(0, 0, 60)
+	local toCam = camPos - C
+	if toCam.Magnitude < 1e-3 then
+		toCam = Vector3.zAxis
+	end
+	local P = C
+	if inst then
+		-- la superficie del rival que ve la cámara
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = { inst :: Instance }
+		local hit = workspace:Raycast(camPos, C - camPos, params)
+		if hit then
+			P = hit.Position
+		end
+	end
+	P += toCam.Unit * H.lift * s
+	local cf = CFrame.lookAt(P, P - toCam.Unit) * CFrame.Angles(0, 0, math.rad(angle or H.angle))
+	return play(spec, cf, sc, nil, shake)
 end
 
 -- escala de tamaños de una capa: con el radio ("r"), con la altura del pilar ("h") o con la escala
@@ -28578,5 +28634,1713 @@ end
 -- segundos (desde la llamada) en que el rayo empieza a pegar y en que se corta: para sincronizar el daño
 KaijuFireVFX.UltimateBeamStart = 0.4
 KaijuFireVFX.UltimateBeamStop = 3.3
+
+local SPEC_SlashHit = {
+	name = "SlashHit",
+	duration = 0.6,
+	cleanup = 1.05,
+	layers = {
+		{
+			name = "ClawMarks",
+			texture = "kz_claw_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 30,
+				startRandom = false,
+			},
+			orientation = "VelocityParallel",
+			direction = "Bottom",
+			speed = {4, 4},
+			emit = {
+				{0, 1},
+			},
+			lifetime = {0.28, 0.28},
+			size = {
+				{0, 27, 0},
+				{1, 28, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.7, 0, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.6,
+					{255, 240, 220},
+				},
+				{
+					1,
+					{255, 205, 160},
+				},
+			},
+			light_emission = 0.55,
+			brightness = 1.15,
+			zoffset = 5,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ClawGlow",
+			texture = "kz_claw_glow",
+			orientation = "VelocityParallel",
+			direction = "Bottom",
+			speed = {4, 4},
+			emit = {
+				{0.03, 1},
+			},
+			lifetime = {0.32, 0.32},
+			size = {
+				{0, 29, 0},
+				{1, 31, 0},
+			},
+			transparency = {
+				{0, 0.62, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 230, 200},
+				},
+				{
+					1,
+					{255, 180, 120},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.45,
+			zoffset = 4,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitFlash",
+			texture = "fx_glow",
+			emit = {
+				{0.05, 1},
+			},
+			lifetime = {0.16, 0.18},
+			size = {
+				{0, 6, 0},
+				{0.3, 20, 0},
+				{1, 22, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 246, 236},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.9,
+			zoffset = 6,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitStar",
+			texture = "kk_star_06",
+			emit = {
+				{0.05, 1},
+			},
+			lifetime = {0.14, 0.14},
+			size = {
+				{0, 10, 0},
+				{0.4, 19, 0},
+				{1, 12, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			zoffset = 7,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitRing",
+			texture = "kz_beam_ring",
+			emit = {
+				{0.05, 1},
+			},
+			lifetime = {0.22, 0.24},
+			size = {
+				{0, 6, 0},
+				{1, 34, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.5, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 246, 236},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			zoffset = 3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "SparksRight",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {14, 22, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Right",
+			spread = {25, 35},
+			speed = {70, 140},
+			drag = 5,
+			accel = {0, -40, 0},
+			lifetime = {0.16, 0.3},
+			emit = {
+				{0.04, 16},
+				{0.07, 8},
+			},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "SparksLeft",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {14, 22, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Left",
+			spread = {25, 35},
+			speed = {70, 140},
+			drag = 5,
+			accel = {0, -40, 0},
+			lifetime = {0.16, 0.3},
+			emit = {
+				{0.04, 16},
+				{0.07, 8},
+			},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ClawShards",
+			texture = "fx_spark4",
+			shape = {
+				type = "Box",
+				size = {14, 24, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			emit = {
+				{0.05, 16},
+			},
+			direction = "Back",
+			spread = {60, 60},
+			speed = {8, 20},
+			drag = 2,
+			lifetime = {0.2, 0.35},
+			size = {
+				{0, 0, 0},
+				{0.2, 2.2, 0.6},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			rotation = {0, 360},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Chips",
+			texture = "kz_debris_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0.05, 8},
+			},
+			direction = "Back",
+			spread = {55, 55},
+			speed = {25, 50},
+			drag = 0.5,
+			accel = {0, -90, 0},
+			lifetime = {0.45, 0.7},
+			size = {
+				{0, 1, 0.3},
+				{1, 0.9, 0.3},
+			},
+			color = {
+				{
+					0,
+					{150, 120, 100},
+				},
+				{
+					1,
+					{100, 88, 80},
+				},
+			},
+			light_emission = 0.05,
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DustPuff",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.06, 3},
+			},
+			direction = "Back",
+			spread = {60, 60},
+			speed = {4, 10},
+			drag = 2,
+			accel = {0, 4, 0},
+			lifetime = {0.45, 0.6},
+			size = {
+				{0, 4, 1},
+				{1, 11, 2},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{170, 160, 150},
+				},
+				{
+					1,
+					{130, 124, 120},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -2,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+	},
+	shakes = {
+		{0.05, 0.45, 0.22},
+	},
+	light = {
+		color = {255, 236, 210},
+		brightness = 3,
+		range = 22,
+		time = 0.25,
+		delay = 0.05,
+	},
+	hit = {
+		lift = 3,
+		ref = 22,
+		angle = 35,
+		angled = true,
+		impact = 0.05,
+	},
+}
+
+-- CORTE: el rival recibe un zarpazo de garra (tres marcas rasgadas) que se desgarra en diagonal, con chispas, destello y anillo.
+-- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
+-- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
+-- angle = inclinación del corte en grados (por defecto 35: en diagonal, de arriba a la izquierda
+-- a abajo a la derecha). 0 = vertical, -35 = la otra diagonal (de arriba a la derecha a abajo a la
+-- izquierda), 90 = horizontal.
+function KaijuFireVFX.SlashHit(target: any, scale: number?, shake: number?, angle: number?): Part
+	return playHit(SPEC_SlashHit, target, scale, shake, angle)
+end
+-- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
+KaijuFireVFX.SlashHitImpact = 0.05
+
+local SPEC_BurningSlashHit = {
+	name = "BurningSlashHit",
+	duration = 1,
+	cleanup = 2.2,
+	layers = {
+		{
+			name = "ClawMarks",
+			texture = "kz_claw_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 30,
+				startRandom = false,
+			},
+			orientation = "VelocityParallel",
+			direction = "Bottom",
+			speed = {4, 4},
+			emit = {
+				{0, 1},
+			},
+			lifetime = {0.28, 0.28},
+			size = {
+				{0, 27, 0},
+				{1, 28, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.7, 0, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 240},
+				},
+				{
+					0.3,
+					{255, 212, 120},
+				},
+				{
+					0.65,
+					{255, 140, 45},
+				},
+				{
+					1,
+					{220, 70, 20},
+				},
+			},
+			light_emission = 0.55,
+			brightness = 1.2,
+			zoffset = 5,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ClawGlow",
+			texture = "kz_claw_glow",
+			orientation = "VelocityParallel",
+			direction = "Bottom",
+			speed = {4, 4},
+			emit = {
+				{0.03, 1},
+			},
+			lifetime = {0.45, 0.45},
+			size = {
+				{0, 29, 0},
+				{1, 31, 0},
+			},
+			transparency = {
+				{0, 0.62, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 160, 60},
+				},
+				{
+					1,
+					{255, 100, 30},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.45,
+			zoffset = 4,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "BurnScar",
+			texture = "kz_claw",
+			orientation = "VelocityParallel",
+			direction = "Bottom",
+			speed = {0.5, 0.5},
+			emit = {
+				{0.11, 1},
+			},
+			lifetime = {0.9, 0.9},
+			size = {
+				{0, 27.5, 0},
+				{1, 27.5, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.6, 0.25, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 226, 150},
+				},
+				{
+					0.2,
+					{255, 146, 50},
+				},
+				{
+					0.6,
+					{215, 64, 20},
+				},
+				{
+					1,
+					{90, 26, 12},
+				},
+			},
+			light_emission = 0.85,
+			brightness = 1.6,
+			zoffset = 4.5,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ScarGlow",
+			texture = "kz_claw_glow",
+			orientation = "VelocityParallel",
+			direction = "Bottom",
+			speed = {0.5, 0.5},
+			emit = {
+				{0.11, 1},
+			},
+			lifetime = {0.8, 0.8},
+			size = {
+				{0, 30, 0},
+				{1, 31, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 120, 35},
+				},
+				{
+					1,
+					{200, 50, 15},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 4,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "FireLicks",
+			texture = "kk_muzzle_04",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {14, 24, 1.5},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {35, 35},
+			speed = {4, 10},
+			drag = 1.5,
+			accel = {0, 35, 0},
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 2, 0.5},
+				{0.3, 6, 1.2},
+				{1, 3.5, 0.8},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.25, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 236, 150},
+				},
+				{
+					0.3,
+					{255, 166, 50},
+				},
+				{
+					0.7,
+					{240, 90, 20},
+				},
+				{
+					1,
+					{160, 40, 12},
+				},
+			},
+			light_emission = 0.4,
+			brightness = 1.6,
+			stream = {
+				{0.06, 0.75, 45, 10},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FireBurst",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			shape = {
+				type = "Box",
+				size = {14, 22, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			emit = {
+				{0.05, 14},
+			},
+			direction = "Back",
+			spread = {60, 60},
+			speed = {10, 26},
+			drag = 3,
+			accel = {0, 12, 0},
+			lifetime = {0.3, 0.45},
+			size = {
+				{0, 4, 1},
+				{0.4, 9, 2},
+				{1, 10, 2},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 220, 140},
+				},
+				{
+					0.15,
+					{255, 170, 60},
+				},
+				{
+					0.4,
+					{250, 120, 30},
+				},
+				{
+					0.75,
+					{225, 70, 15},
+				},
+				{
+					1,
+					{190, 50, 12},
+				},
+			},
+			light_emission = 0.3,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-90, 90},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "LavaDrops",
+			texture = "kz_lava_glob_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			shape = {
+				type = "Box",
+				size = {14, 22, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			emit = {
+				{0.06, 12},
+			},
+			direction = "Back",
+			spread = {60, 60},
+			speed = {8, 20},
+			drag = 0.4,
+			accel = {0, -110, 0},
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 0.8, 0.2},
+				{0.3, 1.6, 0.4},
+				{1, 1, 0.3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.75, 0.05, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 214, 120},
+				},
+				{
+					0.2,
+					{255, 150, 40},
+				},
+				{
+					0.55,
+					{240, 90, 18},
+				},
+				{
+					1,
+					{185, 44, 12},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-220, 220},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Embers",
+			texture = "kk_flare_01",
+			shape = {
+				type = "Box",
+				size = {16, 24, 2},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {4, 14},
+			accel = {0, 14, 0},
+			lifetime = {0.5, 0.9},
+			size = {
+				{0, 0, 0},
+				{0.15, 1.8, 0.5},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 225, 130},
+				},
+				{
+					0.5,
+					{255, 140, 40},
+				},
+				{
+					1,
+					{220, 60, 15},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			emit = {
+				{0.05, 20},
+			},
+			stream = {
+				{0.06, 0.9, 40, 10},
+			},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "BurnSmoke",
+			texture = "kk_smoke_04",
+			shape = {
+				type = "Box",
+				size = {12, 22, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {4, 9},
+			drag = 1,
+			accel = {0, 8, 0},
+			lifetime = {0.7, 1},
+			size = {
+				{0, 3, 1},
+				{1, 10, 2},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 130, 50},
+				},
+				{
+					0.06,
+					{130, 74, 50},
+				},
+				{
+					0.2,
+					{78, 64, 58},
+				},
+				{
+					0.6,
+					{92, 84, 80},
+				},
+				{
+					1,
+					{112, 106, 102},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			stream = {
+				{0.15, 0.9, 12, 4},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "HitFlash",
+			texture = "fx_glow",
+			emit = {
+				{0.05, 1},
+			},
+			lifetime = {0.16, 0.18},
+			size = {
+				{0, 6, 0},
+				{0.3, 24, 0},
+				{1, 26.4, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 200},
+				},
+				{
+					1,
+					{255, 140, 50},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.9,
+			zoffset = 6,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitStar",
+			texture = "kk_star_06",
+			emit = {
+				{0.05, 1},
+			},
+			lifetime = {0.14, 0.14},
+			size = {
+				{0, 10, 0},
+				{0.4, 22.8, 0},
+				{1, 14.4, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 240},
+				},
+				{
+					0.3,
+					{255, 212, 120},
+				},
+				{
+					0.65,
+					{255, 140, 45},
+				},
+				{
+					1,
+					{220, 70, 20},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			zoffset = 7,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitRing",
+			texture = "kz_beam_ring",
+			emit = {
+				{0.05, 1},
+			},
+			lifetime = {0.22, 0.24},
+			size = {
+				{0, 6, 0},
+				{1, 34, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.5, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 200},
+				},
+				{
+					1,
+					{255, 140, 50},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			zoffset = 3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "SparksRight",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {14, 22, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Right",
+			spread = {25, 35},
+			speed = {70, 140},
+			drag = 5,
+			accel = {0, -40, 0},
+			lifetime = {0.16, 0.3},
+			emit = {
+				{0.04, 16},
+				{0.07, 8},
+			},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.5,
+					{255, 170, 60},
+				},
+				{
+					1,
+					{240, 90, 20},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "SparksLeft",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {14, 22, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Left",
+			spread = {25, 35},
+			speed = {70, 140},
+			drag = 5,
+			accel = {0, -40, 0},
+			lifetime = {0.16, 0.3},
+			emit = {
+				{0.04, 16},
+				{0.07, 8},
+			},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 240, 180},
+				},
+				{
+					0.5,
+					{255, 170, 60},
+				},
+				{
+					1,
+					{240, 90, 20},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+	},
+	shakes = {
+		{0.05, 0.55, 0.25},
+	},
+	light = {
+		color = {255, 140, 50},
+		brightness = 5,
+		range = 26,
+		time = 0.6,
+		delay = 0.05,
+	},
+	hit = {
+		lift = 3,
+		ref = 22,
+		angle = 35,
+		angled = true,
+		impact = 0.05,
+	},
+}
+
+-- CORTE QUEMADO: el zarpazo sale al rojo vivo y sus marcas quedan encendidas ardiendo un momento, con llamas, brasas, gotas de lava y humo.
+-- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
+-- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
+-- angle = inclinación del corte en grados (por defecto 35: en diagonal, de arriba a la izquierda
+-- a abajo a la derecha). 0 = vertical, -35 = la otra diagonal (de arriba a la derecha a abajo a la
+-- izquierda), 90 = horizontal.
+function KaijuFireVFX.BurningSlashHit(target: any, scale: number?, shake: number?, angle: number?): Part
+	return playHit(SPEC_BurningSlashHit, target, scale, shake, angle)
+end
+-- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
+KaijuFireVFX.BurningSlashHitImpact = 0.05
+
+local SPEC_BiteHit = {
+	name = "BiteHit",
+	duration = 0.6,
+	cleanup = 1.14,
+	layers = {
+		{
+			name = "Jaws",
+			texture = "kz_bite_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 30,
+				startRandom = false,
+			},
+			emit = {
+				{0, 1},
+			},
+			lifetime = {0.36, 0.36},
+			size = {
+				{0, 25, 0},
+				{1, 26, 0},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.06, 0, 0},
+				{0.62, 0, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 246, 236},
+				},
+			},
+			light_emission = 0.08,
+			brightness = 1.1,
+			zoffset = 5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitFlash",
+			texture = "fx_glow",
+			emit = {
+				{0.14, 1},
+			},
+			lifetime = {0.16, 0.18},
+			size = {
+				{0, 6, 0},
+				{0.3, 12, 0},
+				{1, 13.2, 0},
+			},
+			transparency = {
+				{0, 0.65, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 246, 236},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.45,
+			zoffset = 6,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitStar",
+			texture = "kk_star_06",
+			emit = {
+				{0.14, 1},
+			},
+			lifetime = {0.14, 0.14},
+			size = {
+				{0, 10, 0},
+				{0.4, 11.4, 0},
+				{1, 7.2, 0},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.75,
+			rotation = {0, 360},
+			zoffset = 7,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitRing",
+			texture = "kz_beam_ring",
+			emit = {
+				{0.14, 1},
+			},
+			lifetime = {0.22, 0.24},
+			size = {
+				{0, 6, 0},
+				{1, 34, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.5, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 246, 236},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			zoffset = 3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ChompBurst",
+			texture = "fx_burst_a",
+			emit = {
+				{0.14, 1},
+			},
+			lifetime = {0.1, 0.12},
+			size = {
+				{0, 6, 0},
+				{0.4, 15, 0},
+				{1, 17, 0},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 0.9,
+			rotation = {0, 360},
+			zoffset = 5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "FangSparks",
+			texture = "fx_spark4",
+			shape = {
+				type = "Box",
+				size = {18, 2, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			emit = {
+				{0.14, 10},
+			},
+			direction = "Back",
+			spread = {70, 70},
+			speed = {10, 24},
+			drag = 2,
+			lifetime = {0.2, 0.35},
+			size = {
+				{0, 0, 0},
+				{0.2, 1.8, 0.5},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 360},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "SparksRight",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {18, 2, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Right",
+			spread = {25, 35},
+			speed = {70, 140},
+			drag = 5,
+			accel = {0, -40, 0},
+			lifetime = {0.16, 0.3},
+			emit = {
+				{0.13, 10},
+				{0.16, 6},
+			},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "SparksLeft",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Box",
+				size = {18, 2, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Left",
+			spread = {25, 35},
+			speed = {70, 140},
+			drag = 5,
+			accel = {0, -40, 0},
+			lifetime = {0.16, 0.3},
+			emit = {
+				{0.13, 10},
+				{0.16, 6},
+			},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 252, 244},
+				},
+				{
+					0.5,
+					{255, 226, 186},
+				},
+				{
+					1,
+					{255, 180, 110},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Chips",
+			texture = "kz_debris_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0.14, 8},
+			},
+			direction = "Back",
+			spread = {55, 55},
+			speed = {25, 50},
+			drag = 0.5,
+			accel = {0, -90, 0},
+			lifetime = {0.45, 0.7},
+			size = {
+				{0, 1, 0.3},
+				{1, 0.9, 0.3},
+			},
+			color = {
+				{
+					0,
+					{150, 120, 100},
+				},
+				{
+					1,
+					{100, 88, 80},
+				},
+			},
+			light_emission = 0.05,
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DustPuff",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.15, 3},
+			},
+			direction = "Back",
+			spread = {60, 60},
+			speed = {4, 10},
+			drag = 2,
+			accel = {0, 4, 0},
+			lifetime = {0.45, 0.6},
+			size = {
+				{0, 4, 1},
+				{1, 11, 2},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{170, 160, 150},
+				},
+				{
+					1,
+					{130, 124, 120},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -2,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+	},
+	shakes = {
+		{0.14, 0.55, 0.25},
+	},
+	light = {
+		color = {255, 240, 220},
+		brightness = 1.2,
+		range = 18,
+		time = 0.18,
+		delay = 0.14,
+	},
+	hit = {
+		lift = 3,
+		ref = 22,
+		angle = 0,
+		angled = false,
+		impact = 0.14,
+	},
+}
+
+-- MORDISCO: dos mandíbulas de colmillos se cierran de golpe sobre el rival; al chocar hay un destello corto y chispas.
+-- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
+-- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
+function KaijuFireVFX.BiteHit(target: any, scale: number?, shake: number?): Part
+	return playHit(SPEC_BiteHit, target, scale, shake, 0)
+end
+-- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
+KaijuFireVFX.BiteHitImpact = 0.14
 
 return KaijuFireVFX

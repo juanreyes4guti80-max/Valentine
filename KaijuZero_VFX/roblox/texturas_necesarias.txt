@@ -36,6 +36,10 @@ kz_beam_core.png
 kz_beam_flow.png
 kz_beam_glow.png
 kz_beam_ring.png
+kz_bite_4x4.png
+kz_claw.png
+kz_claw_4x4.png
+kz_claw_glow.png
 kz_debris_2x2.png
 kz_lava_cracks.png
 kz_lava_drop.png

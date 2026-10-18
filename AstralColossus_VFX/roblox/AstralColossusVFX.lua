@@ -802,7 +802,8 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 		for i = 1, n do
 			local u = if len > 0 then (i - 0.5) / n else 0
 			local lp = if len > 0 then linePos(u, 0, 4, s, len) else Vector3.zero
-			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = (spec.light and spec.light.sweep or 0) * u })
+			local t0 = if spec.light then (spec.light.delay or 0) + (spec.light.sweep or 0) * u else 0
+			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = t0 })
 		end
 	end
 	finish(spec, holder, s, shake, lights)
@@ -1074,6 +1075,52 @@ local function _playBeam(spec: Layer, origin: any, target: any, scale: number?, 
 		end
 	end
 	return holder
+end
+
+-- ---------------------------------------------------------------- golpe que recibe el rival
+-- el efecto mira a la cámara (X = derecha de la pantalla, Y = arriba, +Z = hacia la cámara) y sale delante de la
+-- superficie del rival que se ve; con un Model o una Part su tamaño se adapta al alto del rival
+local function _playHit(spec: Layer, target: any, scale: number?, shake: number?, angle: number?): Part
+	local H = spec.hit
+	local C: Vector3
+	local inst: Instance? = nil
+	local height: number? = nil
+	if typeof(target) == "Vector3" then
+		C = target
+	elseif typeof(target) == "CFrame" then
+		C = target.Position
+	elseif typeof(target) == "Instance" and target:IsA("Model") then
+		C = (target :: Model):GetPivot().Position
+		height = (target :: Model):GetExtentsSize().Y
+		inst = target
+	else
+		C = (target :: BasePart).Position
+		height = (target :: BasePart).Size.Y
+		inst = target
+	end
+	local k = if height and (AstralColossusVFX :: any).HitAutoSize then math.clamp(height / H.ref, 0.5, 4) else 1
+	local sc = (scale or 1) * k
+	local s = sc * (spec.scale_mult or 1)
+	local cam = workspace.CurrentCamera
+	local camPos = if cam then cam.CFrame.Position else C + Vector3.new(0, 0, 60)
+	local toCam = camPos - C
+	if toCam.Magnitude < 1e-3 then
+		toCam = Vector3.zAxis
+	end
+	local P = C
+	if inst then
+		-- la superficie del rival que ve la cámara
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = { inst :: Instance }
+		local hit = workspace:Raycast(camPos, C - camPos, params)
+		if hit then
+			P = hit.Position
+		end
+	end
+	P += toCam.Unit * H.lift * s
+	local cf = CFrame.lookAt(P, P - toCam.Unit) * CFrame.Angles(0, 0, math.rad(angle or H.angle))
+	return play(spec, cf, sc, nil, shake)
 end
 
 -- escala de tamaños de una capa: con el radio ("r"), con la altura del pilar ("h") o con la escala
