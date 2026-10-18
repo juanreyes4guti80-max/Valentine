@@ -167,10 +167,10 @@ LAYERS = [
          zoffset=1, stream=[(HIT, ON, 10, 10)], **ALONG),
     # ---------------- el impacto: lo que revienta cada vez que empieza a pegar ----------------
     dict(name="ImpactFlash", texture="fx_glow", emit=[(0, 1)], on_hit=True, lifetime=(0.3, 0.3),
-         size=[(0, 16), (0.25, 48), (1, 52)], transparency=[(0, 0.25), (0.5, 0.6), (1, 1)], color=FLASH,
-         light_emission=1.0, brightness=0.85, zoffset=4, **IMPACT),
+         size=[(0, 14), (0.25, 40), (1, 44)], transparency=[(0, 0.3), (0.5, 0.65), (1, 1)], color=FLASH,
+         light_emission=1.0, brightness=0.75, zoffset=4, **IMPACT),
     dict(name="ImpactStarBurst", texture="kk_star_09", emit=[(0, 2)], on_hit=True, lifetime=(0.28, 0.32),
-         size=[(0, 20), (0.15, 54), (1, 14)], color=FLASH, light_emission=1.0, brightness=1.0, rotation=(0, 90),
+         size=[(0, 18), (0.15, 46), (1, 12)], color=FLASH, light_emission=1.0, brightness=1.0, rotation=(0, 90),
          zoffset=5, **IMPACT),
     dict(name="ImpactHalo", texture="fx_halo", emit=[(0, 1), (0.05, 1)], on_hit=True, lifetime=(0.36, 0.4),
          size=[(0, 10), (1, 80)], transparency=[(0, 0.3), (0.5, 0.6), (1, 1)], color=SHOCK, light_emission=1.0,

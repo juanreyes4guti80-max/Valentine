@@ -24,7 +24,7 @@
 | `SlashHit(rival, escala, sacudida, ángulo)` | **Corte** (el golpe que recibe el rival): un **zarpazo de garra**, tres marcas rasgadas como la garra del logo de Monster. Va **en diagonal** y se desgarra sobre el rival en un instante, con chispas que saltan a los lados, un destello y un anillo. | 0.6 s |
 | `BurningSlashHit(rival, escala, sacudida, ángulo)` | **Corte quemado**: el mismo zarpazo al rojo vivo. Las tres marcas quedan **encendidas ardiendo** un momento, con llamas, brasas, gotas de lava y humo. | 1 s |
 | `BiteHit(rival, escala, sacudida)` | **Mordisco**: dos **mandíbulas de colmillos** aparecen sobre el rival y se cierran de golpe. Al chocar hay un destello corto (alumbra poco), chispas y un anillo. | 0.6 s |
-| `UltimateBeam(origen, rival, escala, sacudida, ignorar)` | **ULTIMATE**: un **rayo carmesí de 3 s** con el núcleo al rojo blanco. Lo envuelve energía con **vetas de lava** que corre hacia el rival. La boca junta energía un instante (chispas y aros que se cierran) y dispara. En la boca queda un **estallido de destellos con aros** que se abren, y a lo largo del rayo pasan **aros finos**, brasas, gotas de lava y **humo rojo**. Donde pega revienta un **impacto**: destellos, ondas, chispas, lava, escombros de roca y **rocas fundidas** que salen volando. El suelo debajo se quema y se agrieta en carmesí. Al final el rayo se corta, se adelgaza y se apaga. | 3.6 s (lo último se apaga hacia los 4.7 s) |
+| `UltimateBeam(origen, objetivo, escala, sacudida, ignorar)` | **ULTIMATE**: un **rayo carmesí de 3 s que se puede apuntar** mientras dura. Tiene el núcleo al rojo blanco y lo envuelve energía con **vetas de lava** que corre hacia la punta. La boca junta energía un instante (chispas y aros que se cierran) y dispara. En la boca queda un **estallido de destellos con aros** que se abren, y a lo largo del rayo pasan **aros finos**, brasas, gotas de lava y **humo rojo**. Se corta en la **primera superficie que toca** y, si no toca nada, llega a su **largo máximo de 186 studs** × escala; al moverlo se acorta o se alarga solo. Donde pega revienta un **impacto**: destellos, ondas, chispas, lava, escombros de roca y **rocas fundidas** que salen volando. El suelo debajo se quema y se agrieta en carmesí, y si **barres el suelo** con el rayo deja una estela de quemaduras. Al final el rayo se corta, se adelgaza y se apaga. | 3.6 s (las marcas del suelo se borran unos 4 s después de hechas) |
 
 ### Otros efectos
 
@@ -131,14 +131,31 @@ Si las rocas ya existen en el cliente, también puedes pasar las Parts tal cual,
 - **Escala**: con `1`, los pilares de la H3 miden unos 30 studs (hasta unos 42 los más altos), y el pilar gigante unos 63. Para un kaiju más grande prueba de `1.5` a `2`.
 - **Sacudida**: `0` o `nil` la desactiva, `1` es normal y `2` es fuerte. La H1 Ignition ya sacude 1.5 veces más que la normal.
 
-### ULTIMATE (el rayo)
+### ULTIMATE (el rayo que se apunta)
 
-Como el juego es por turnos, el rayo **siempre apunta al rival**: le pasas de dónde sale y a quién va, y el módulo hace el resto.
+La función devuelve un **control** con el que mueves el rayo mientras dura. Cada cuadro el módulo lanza un Raycast desde la boca: el rayo **se corta en la primera superficie que toca** (el rival, una pared, el suelo) y, si apunta al aire, llega a su **largo máximo: 186 studs × escala** (1.5 veces más largo que la primera versión, con el mismo grosor). Al apuntarlo a otro lado se acorta o se alarga solo.
 
-- **`origen`**: de dónde sale el rayo, la **boca** de Kaiju Zero. Puede ser un `Vector3` o un `CFrame`. Lo más cómodo es poner un `Attachment` en la boca del modelo y pasar su `WorldPosition`.
-- **`rival`**: a quién apunta. Puede ser el **Model** del rival (apunta a su pivote, normalmente el `HumanoidRootPart`), una **Part** o un `Vector3`.
-- **`ignorar`** (opcional): lo que el rayo debe atravesar. Pasa siempre `{ modeloDeKaijuZero }`, así el rayo no choca con la cabeza del propio Kaiju Zero.
-- **Dónde pega**: el módulo lanza un rayo (Raycast) hacia el rival y el impacto sale en la **primera superficie** que encuentra. Normalmente es el cuerpo del rival; si hay una pared o el suelo en medio, pega ahí. Las marcas del suelo (quemadura y grietas carmesí) salen en el suelo justo debajo del impacto.
+- **`origen`**: de dónde sale. Lo mejor es un **`Attachment` en la boca** del modelo: el rayo lo sigue solo si el kaiju se mueve o gira la cabeza. También acepta una Part, un `Vector3` o un `CFrame`.
+- **`objetivo`**: hacia dónde apunta al salir. Un **Model** o una **Part** (si se mueve, el rayo lo sigue) o un punto (`Vector3` o `CFrame`). Si pasas `nil` y el origen es un `CFrame`, sale hacia donde mira ese CFrame.
+- **`ignorar`** (opcional): lo que el rayo atraviesa. Pasa siempre `{ modeloDeKaijuZero }`, así no choca con su propia cabeza.
+
+Lo que devuelve:
+
+| | Para qué sirve |
+|---|---|
+| `rayo:AimAt(objetivo)` | Apunta a otro lado: un Model, una Part, un `Vector3` o un `CFrame`. Si es un Model o una Part, lo sigue. |
+| `rayo:SetDirection(dir)` | Apunta en una dirección (`Vector3`), por ejemplo la de la cámara. |
+| `rayo:SetOrigin(origen)` | Cambia de dónde sale (Attachment, Part, `Vector3` o `CFrame`). |
+| `rayo:Stop()` | Lo corta antes de tiempo: se adelgaza y se apaga igual que al final. |
+| `rayo.MaxLength` | El largo máximo (186 × escala). Lo puedes cambiar mientras dura. |
+| `rayo.Length` | Cuánto mide en este momento. |
+| `rayo.HitPosition`, `rayo.HitInstance` | Dónde pega y qué toca (`nil` si apunta al aire). |
+| `rayo.Active` | `true` mientras el rayo se ve. |
+| `rayo.Holder` | La Part que contiene todo el efecto. |
+
+El impacto sigue a la punta. Cada vez que el rayo **empieza a pegar en algo** después de pasar por el aire, revientan otra vez el destello, la onda, la lava y las marcas grandes del suelo (como mucho una vez cada 0.3 s). Si **barre el suelo**, va dejando una **estela de quemaduras y grietas de lava** que se borra en unos 2 s.
+
+**En el combate por turnos** (apunta al rival y lo sigue):
 
 ```lua
 -- Server: evento:FireAllClients("ULT", { kaiju = modeloDeKaijuZero, rival = modeloDelRival })
@@ -147,7 +164,51 @@ Como el juego es por turnos, el rayo **siempre apunta al rival**: le pasas de d�
 evento.OnClientEvent:Connect(function(habilidad: string, datos: any)
 	if habilidad == "ULT" then
 		local boca = datos.kaiju.Head.Boca -- un Attachment en la boca del modelo
-		KaijuFireVFX.UltimateBeam(boca.WorldPosition, datos.rival, 1, 1, { datos.kaiju })
+		KaijuFireVFX.UltimateBeam(boca, datos.rival, 1, 1, { datos.kaiju })
+	end
+end)
+```
+
+**Apuntado con el mouse** por el jugador que lo lanza:
+
+```lua
+-- LocalScript del jugador que lanza la ULTIMATE
+local RunService = game:GetService("RunService")
+local mouse = game:GetService("Players").LocalPlayer:GetMouse()
+-- boca = el Attachment de la boca; kaiju = el modelo de Kaiju Zero
+
+local rayo = KaijuFireVFX.UltimateBeam(boca, mouse.Hit.Position, 1, 1, { kaiju })
+local conexion
+conexion = RunService.RenderStepped:Connect(function()
+	if not rayo.Active then
+		conexion:Disconnect()
+		return
+	end
+	rayo:AimAt(mouse.Hit.Position) -- sigue al mouse; se acorta o se alarga solo
+end)
+```
+
+Para que los demás jugadores lo vean moverse, el que lo lanza manda a dónde apunta unas 20 veces por segundo (un `UnreliableRemoteEvent` va bien) y el servidor lo reenvía a los demás. Cada cliente guarda el rayo que creó y le llama `rayo:AimAt(punto)` con lo que llega.
+
+**El daño** va en el servidor. Haz el mismo Raycast que el módulo, desde la boca, con el mismo largo máximo y hacia el último punto al que apuntó el jugador:
+
+```lua
+-- Server: daño por tics mientras el rayo pega (de 0.4 a 3.3 s).
+-- puntoApuntado = el último punto que mandó el jugador (al principio, la posición del rival)
+local LARGO = 186 -- × la escala que uses en UltimateBeam
+local params = RaycastParams.new()
+params.FilterType = Enum.RaycastFilterType.Exclude
+params.FilterDescendantsInstances = { modeloDeKaijuZero }
+local fin = os.clock() + KaijuFireVFX.UltimateBeamStop
+task.delay(KaijuFireVFX.UltimateBeamStart, function()
+	while os.clock() < fin do
+		local desde = boca.WorldPosition
+		local hit = workspace:Raycast(desde, (puntoApuntado - desde).Unit * LARGO, params)
+		local modelo = hit and hit.Instance:FindFirstAncestorOfClass("Model")
+		if modelo and modelo:FindFirstChildOfClass("Humanoid") then
+			hacerDanio(modelo, 5) -- tu función y tus valores
+		end
+		task.wait(0.2)
 	end
 end)
 ```
@@ -157,21 +218,14 @@ end)
 | Momento | Qué pasa |
 |---|---|
 | 0 – 0.3 s | La boca junta energía: chispas y aros que se cierran sobre ella. **Llama la función cuando la animación abre la boca.** |
-| 0.3 s | Dispara: destello en la boca y el rayo sale disparado hacia el rival. |
-| 0.4 s | El rayo **pega**: destello, onda y el impacto queda activo. Es `KaijuFireVFX.UltimateBeamStart`. |
-| 0.4 – 3.3 s | El rayo se sostiene: aros, brasas, humo rojo, chispas, lava y rocas fundidas en el impacto. |
-| 3.3 s | Se **corta**: se adelgaza y se apaga en 0.3 s, con un último resoplido de humo. Es `KaijuFireVFX.UltimateBeamStop`. |
-| hasta 4.7 s | Se disipan el humo y las brasas, y se borran las marcas del suelo. |
+| 0.3 s | Dispara: destello en la boca y la punta sale disparada. |
+| 0.4 s | La punta llega a donde pega (o a su largo máximo): destello, onda y el impacto queda activo. Es `KaijuFireVFX.UltimateBeamStart`. |
+| 0.4 – 3.3 s | El rayo se sostiene y lo puedes mover: aros, brasas, humo rojo, chispas, lava y rocas fundidas donde pega. |
+| 3.3 s | Se **corta** solo (o antes, si llamas `rayo:Stop()`): se adelgaza y se apaga en 0.3 s. Es `KaijuFireVFX.UltimateBeamStop`. |
+| después | Se disipan el humo y las brasas. Las marcas del suelo se borran solas unos 4 s después de hechas. |
 
-Para el daño puedes usar esas dos constantes. Por ejemplo, en el servidor:
-
-```lua
-task.delay(KaijuFireVFX.UltimateBeamStart, aplicarDanio) -- el golpe, cuando el rayo llega
--- o daño por tics mientras el rayo pega (de 0.4 a 3.3 s)
-```
-
-- **Escala**: con `1`, el rayo mide unos 22 studs de ancho (el núcleo blanco unos 6.5) y el resplandor llega a unos 42. El largo no depende de la escala: siempre llega hasta el rival. Para un kaiju más grande prueba de `1.5` a `2`.
-- **Sacudida**: tiembla sin parar mientras dura el rayo y da un golpe al pegar. `0` o `nil` la desactiva.
+- **Escala**: con `1`, el rayo mide unos 22 studs de ancho (el núcleo blanco unos 6.5), el resplandor llega a unos 42 y el largo máximo es de 186 studs. Para un kaiju más grande prueba de `1.5` a `2` (el largo máximo crece igual; si lo quieres fijo, cambia `rayo.MaxLength`).
+- **Sacudida**: tiembla sin parar mientras dura el rayo, da un golpe cuando llega (0.4 s) y otro suave al cortarse (también si lo cortas antes). `0` o `nil` la desactiva.
 
 ### Golpes en el rival (corte y mordisco)
 
@@ -206,7 +260,7 @@ end)
 
 ### Rendimiento
 
-En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a unas 1900 partículas y 24 rocas. La H3 y la H3 Ignition llegan a unas 1600 partículas (con 7 rocas). La ULTIMATE se mantiene en unas 400 partículas, con 5 Beams y 8 rocas fundidas en total. Los golpes son livianos: unas 80 partículas el corte y el mordisco, y unas 110 el corte quemado. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
+En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a unas 1900 partículas y 24 rocas. La H3 y la H3 Ignition llegan a unas 1600 partículas (con 7 rocas). La ULTIMATE se mantiene en unas 400 partículas, con 5 Beams y 8 rocas fundidas en total; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. Los golpes son livianos: unas 80 partículas el corte y el mordisco, y unas 110 el corte quemado. `KaijuFireVFX.Quality = 0.6` reduce las partículas, por ejemplo en celulares.
 
 ## Para que se vea como en el video
 
@@ -216,7 +270,8 @@ En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a u
 - Las **rocas fundidas** de la H1 son Parts reales con el material **CrackedLava** de Roblox (roca oscura con grietas de lava). Cada una lleva pegado un resplandor naranja (un ParticleEmitter con `LockedToPart`) y una estela de gotas de lava, brasas y humo. Al caer dejan una salpicadura encendida y arden unos segundos.
 - Las rocas en llamas de la H1 clásica y de la H3 son Parts de Slate oscuro que dejan estela. Al caer levantan polvo y dejan fuego unos segundos.
 - Todas las rocas se mueven por código: no chocan con nada, no empujan a los jugadores y no detectan toques.
-- El cuerpo del **rayo** de la ULTIMATE son 5 **Beams** de Roblox entre la boca y el impacto: resplandor, lenguas de energía, la envoltura con vetas de lava, el interior y el núcleo blanco. Usan `FaceCamera`, así que siempre se ven de frente, y su textura corre hacia el rival (`TextureSpeed`). El ancho late un poco mientras dura.
+- El cuerpo del **rayo** de la ULTIMATE son 5 **Beams** de Roblox entre la boca y la punta: resplandor, lenguas de energía, la envoltura con vetas de lava, el interior y el núcleo blanco. Usan `FaceCamera`, así que siempre se ven de frente, y su textura corre hacia la punta (`TextureSpeed`). El ancho late un poco mientras dura. Cada cuadro, un Raycast desde la boca decide hasta dónde llega la punta; las piezas del efecto tienen `CanQuery` apagado, así que ni ese Raycast ni el mouse las tocan.
+- En el video, el rayo sigue un recorrido de prueba: pega en el rival, baja y barre el suelo (se acorta), sube al cielo (llega a su máximo) y vuelve al rival. Abajo a la izquierda se ve cuánto mide en cada momento.
 - El zarpazo y el mordisco son **flipbooks** de 16 cuadros (`Grid4x4`, modo `OneShot`): la animación de la garra que se desgarra y de las mandíbulas que se cierran va dentro de la textura, así se ve igual en cualquier equipo. La garra usa la orientación `VelocityParallel`, así sigue el ángulo del corte.
 - El carmesí se lee mejor con cielos no muy claros. Sobre un cielo azul muy brillante el resplandor tira un poco a rosa; en el video está la versión de día y la de noche para comparar.
 
@@ -232,7 +287,7 @@ En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a u
 - **H1** (explosión de lava): `tools/vfx_lava.py`. Sus texturas propias (`kz_lava_*`) salen de `tools/gen_lava_textures.py`. La Ignition se genera desde ella con `ignitionize`, en `tools/vfx_specs.py`. Ahí puedes cambiar el tamaño, la intensidad y el brillo del carmesí: `bright_k` sube el brillo y `_G_MAP_HOT` decide cuánto se blanquean los tonos más calientes. El núcleo de magma que nace blanco está en `IGNITION_CORE`, en `tools/vfx_lava.py`.
 - **H1 clásica** (la de fuego): `GIANT` en `tools/vfx_specs.py`.
 - **Golpes** (corte en garra, corte quemado y mordisco): `tools/vfx_hits.py`. Ahí están el ángulo por defecto del corte (`"angle"`), los colores y el brillo de cada golpe. Sus texturas (`kz_claw_*` y `kz_bite_4x4`) salen de `tools/gen_hit_textures.py`.
-- **ULTIMATE** (el rayo): `tools/vfx_beam.py`. Arriba están los tiempos (`START`, `GROW`, `STOP`, `FADE`) y los colores, y en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo. Sus texturas (`kz_beam_*` y `kz_lava_rock_2x2`) salen de `tools/gen_beam_textures.py`.
+- **ULTIMATE** (el rayo): `tools/vfx_beam.py`. Arriba están los tiempos (`START`, `GROW`, `STOP`, `FADE`) y los colores, y en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo. Al final, en `"beam"`, están el largo máximo (`max_len`: 186), cada cuánto deja marcas al barrer el suelo (`trail_every`, `trail_move`) y el tiempo mínimo entre impactos (`rehit`). Sus texturas (`kz_beam_*` y `kz_lava_rock_2x2`) salen de `tools/gen_beam_textures.py`.
 
 Después de editarlos se regenera el módulo con:
 
@@ -243,5 +298,5 @@ python tools/gen_luau.py roblox
 El mismo comando regenera también los módulos de Astral Colossus (`AstralColossus_VFX/roblox`) y Omnívora (`Omnivora_VFX/roblox`), que usan el mismo motor.
 
 Las pruebas que validan el módulo son estas:
-- `tools/test_luau/run_runtime.py`: ejecuta cada efecto contra un Roblox simulado. Comprueba que se limpie todo y, en la H3, que cada roca reciba su explosión y que el remate quede en la última. En la ULTIMATE comprueba que el rayo llegue al rival (o se corte en el suelo si está en medio), que el impacto salga donde pega, que el suelo de debajo quede marcado y que los Beams se apaguen. En los golpes comprueba que salgan delante del rival y que su tamaño siga el alto del rival.
+- `tools/test_luau/run_runtime.py`: ejecuta cada efecto contra un Roblox simulado. Comprueba que se limpie todo y, en la H3, que cada roca reciba su explosión y que el remate quede en la última. En la ULTIMATE comprueba que sin nada delante llegue a su largo máximo, que se corte en el suelo, que se acorte y deje marcas al barrer el suelo, que vuelva a su máximo al apuntar al cielo, que siga a un objetivo que se mueve y a un origen nuevo, y que `Stop()` lo apague y se limpie todo. En los golpes comprueba que salgan delante del rival y que su tamaño siga el alto del rival.
 - `luau-lsp analyze` con las definiciones de Roblox: verifica que todas las propiedades y métodos existan en la API.
