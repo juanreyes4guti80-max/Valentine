@@ -6,6 +6,8 @@ mock = open(os.path.join(d, "runtime_mock.luau")).read()
 mod = open(os.path.join(d, "..", "..", "roblox", "KaijuFireVFX.lua")).read().replace("--!nonstrict", "")
 astral = open(os.path.join(d, "..", "..", "..", "AstralColossus_VFX", "roblox", "AstralColossusVFX.lua")).read() \
     .replace("--!nonstrict", "")
+omni = open(os.path.join(d, "..", "..", "..", "Omnivora_VFX", "roblox", "OmnivoraVFX.lua")).read() \
+    .replace("--!nonstrict", "")
 G = ["Vector3", "Vector2", "CFrame", "Color3", "NumberRange", "NumberSequence", "NumberSequenceKeypoint",
      "ColorSequence", "ColorSequenceKeypoint", "TweenInfo", "Random", "Enum", "Instance", "workspace", "game", "task", "time",
      "typeof", "RaycastParams"]
@@ -112,13 +114,41 @@ end
 runCone("AstralClash", function() return AST.AstralClash(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 4.5, 70, 55)
 runCone("Astral 100/35 x1", function() return AST.AstralClash(R.CFrame.new(0, 0, 0), 100, 35, 1, 0) end, 4.5, 100, 35)
 runCone("Astral 60/90 x1.5", function() return AST.AstralClash(R.CFrame.new(0, 0, 0), 60, 90, 1.5, 2) end, 4.5, 60, 90)
+
+-- OMNÍVORA: todo lo de la zona cae dentro del cilindro (con cualquier radio/altura); los cubos salen del suelo,
+-- toman su color y salen despedidos fuera de la zona
+local OMNI = loadOmnivora()
+OMNI.Parent = R.workspace
+local function runZone(name, call, seconds, rad, hgt)
+	run(name, call, seconds)
+	local fuera, n = 0, 0
+	for i, p in R.stats.emitPos do
+		if R.stats.emitNames[i] == "CubeDissolve" then continue end
+		n += 1
+		local r = math.sqrt(p.X * p.X + p.Z * p.Z)
+		if r > rad * 1.35 + 0.6 or p.Y < -0.1 or p.Y > hgt * 1.02 + 1 then fuera += 1 end
+	end
+	local st = R.stats
+	print(("%-17s   zona: %d emisiones, fuera del cilindro: %d (radio %d, altura %d) | cubos=%d (color del suelo: %d) más lejano a %.0f studs | Clear=%d"):format(
+		"", n, fuera, rad, hgt, st.cubes, st.cubeGreen, st.cubeMaxR, st.clears))
+	assert(n > 300, name .. ": casi no emitió")
+	assert(fuera == 0, name .. ": hay emisiones fuera del cilindro")
+	assert(st.cubes > 40, name .. ": casi no hubo cubos")
+	assert(st.cubeGreen > st.cubes * 0.5, name .. ": los cubos no tomaron el color del suelo")
+	assert(st.cubeMaxR > rad * 1.3, name .. ": los cubos no salieron despedidos")
+	assert(st.clears > 0, name .. ": la galaxia interna no se borró en el colapso")
+end
+runZone("CosmicPillar", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 5, 18, 120)
+runZone("Pillar 30/80", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), 30, 80, 1, 0) end, 5, 30, 80)
+runZone("Pillar 10/200 x1.5", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), 10, 200, 1.5, 2) end, 5, 10, 200)
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"
 for k in G:
     b += f"local {k} = R.{k}\n"
 b += "local function loadModule()\n" + mod + "\nend\n"
-b += "local function loadAstral()\n" + astral + "\nend\n" + test
+b += "local function loadAstral()\n" + astral + "\nend\n"
+b += "local function loadOmnivora()\n" + omni + "\nend\n" + test
 with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as f:
     f.write(b)
 sys.exit(subprocess.run([luau, f.name]).returncode)

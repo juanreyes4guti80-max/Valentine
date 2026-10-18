@@ -229,9 +229,10 @@ local function buildEmitter(L: Layer, holder: BasePart, scale: number, localPos:
 end
 
 -- emisión continua: Rate interpolado por ventanas {t0, t1, rate0, rate1}
-local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?)
+local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?, windows: { any }?, mul: number?)
+	local W = windows or L.stream
 	local tEnd = 0
-	for _, w in L.stream do
+	for _, w in W do
 		tEnd = math.max(tEnd, w[2])
 	end
 	task.spawn(function()
@@ -245,11 +246,12 @@ local function runStream(L: Layer, e: ParticleEmitter, delayStart: number?)
 				break
 			end
 			local rate = 0
-			for _, w in L.stream do
+			for _, w in W do
 				if t >= w[1] and t <= w[2] then
 					rate += w[3] + (w[4] - w[3]) * (t - w[1]) / math.max(w[2] - w[1], 1e-3)
 				end
 			end
+			rate *= mul or 1
 			e.Rate = rate * AstralColossusVFX.Quality
 			e.Enabled = rate > 0.05
 			task.wait(0.05)
@@ -278,6 +280,7 @@ local function playDecalAt(L: Layer, holder: BasePart, scale: number, n: number,
 	for _ = 1, n do
 		local life = rng:NextNumber(L.lifetime[1], L.lifetime[2])
 		local rot = math.rad(rng:NextNumber(L.rotation[1], L.rotation[2]))
+		local spin = math.rad(rng:NextNumber(L.rot_speed[1], L.rot_speed[2]))
 		local cf = baseCF * CFrame.Angles(0, rot, 0)
 		local p = invisiblePart(L.name, Vector3.new(0.1, 0.05, 0.1), cf, holder)
 		-- los Decals no tienen LightEmission: un Color3 mayor que 1 los hace brillar (con Bloom)
@@ -298,7 +301,7 @@ local function playDecalAt(L: Layer, holder: BasePart, scale: number, n: number,
 			end
 			local sz = math.max(evalNum(L.size, t) * scale, 0.1)
 			p.Size = Vector3.new(sz, 0.05, sz)
-			p.CFrame = cf
+			p.CFrame = if spin ~= 0 then cf * CFrame.Angles(0, spin * t * life, 0) else cf
 			d.Transparency = math.clamp(evalNum(L.transparency, t), 0, 1)
 			local c = evalColor(L.color, t)
 			d.Color3 = Color3.new(c.R * glow, c.G * glow, c.B * glow)
@@ -782,6 +785,537 @@ local function _playRocks(spec: Layer, rocks: { any }, scale: number?, shake: nu
 		end
 	end
 	finish(spec, holder, s, shake, lights)
+	return holder
+end
+
+
+-- ---------------------------------------------------------------- efectos en una zona circular (pilar)
+type Zone = {
+	holder: BasePart, R: number, H: number, s: number, kR: number, kH: number,
+	groundY: number, groundColor: Color3, groundMaterial: Enum.Material,
+}
+
+local GROUND_FALLBACK = Color3.fromRGB(112, 106, 112)
+
+-- color y material del suelo en el centro de la zona (los cubos de destrucción salen de ahí)
+local function groundLook(pos: Vector3, holder: Instance): (Color3, Enum.Material, number?)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore: { Instance } = { holder }
+	for _ = 1, 4 do
+		params.FilterDescendantsInstances = ignore
+		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), params)
+		if not hit then
+			break
+		end
+		local inst = hit.Instance
+		local model = inst:FindFirstAncestorOfClass("Model")
+		if model and model:FindFirstChildOfClass("Humanoid") then
+			table.insert(ignore, model) -- un personaje encima: se ignora y se busca el suelo debajo
+			continue
+		end
+		local mat = hit.Material
+		if mat == Enum.Material.Water or mat == Enum.Material.Air then
+			mat = Enum.Material.Slate
+		end
+		if inst:IsA("Terrain") then
+			local ok, c = pcall(function()
+				return (inst :: Terrain):GetMaterialColor(hit.Material)
+			end)
+			return if ok then c else GROUND_FALLBACK, mat, hit.Position.Y
+		end
+		return inst.Color, mat, hit.Position.Y
+	end
+	return GROUND_FALLBACK, Enum.Material.Slate, nil
+end
+
+-- escala de tamaños de una capa: con el radio ("r"), con la altura del pilar ("h") o con la escala
+local function zoneK(L: Layer, Z: Zone): number
+	if L.rel == "r" then
+		return Z.kR
+	elseif L.rel == "h" then
+		return Z.kH
+	end
+	return Z.s
+end
+
+local function zoneY(L: Layer, Z: Zone, h: number): number
+	return if L.hu == "H" then h * Z.H else h * zoneK(L, Z)
+end
+
+-- capas que cubren la superficie del pilar: más partículas si el pilar es más alto/ancho que su tamaño
+local function coverMul(L: Layer, Z: Zone): number
+	if not L.cover then
+		return 1
+	end
+	local k = zoneK(L, Z)
+	return math.clamp(Z.kR * Z.kH / (k * k), 0.5, 2.5)
+end
+
+-- marco local (respecto al centro) de un punto del círculo: a = fracción de vuelta, r = fracción del radio.
+-- El "Front" del portador mira hacia afuera, inclinado pitch grados hacia arriba.
+local function zoneLocal(Z: Zone, a: number, r: number, y: number, pitch: number?, radial: boolean?): CFrame
+	local ang = a * 2 * math.pi
+	local out = Vector3.new(math.cos(ang), 0, math.sin(ang))
+	local pos = out * (r * Z.R) + Vector3.new(0, y, 0)
+	if radial == false then
+		return CFrame.new(pos)
+	end
+	local cf = CFrame.lookAt(pos, pos + out)
+	if pitch and pitch ~= 0 then
+		cf = cf * CFrame.Angles(math.rad(pitch), 0, 0)
+	end
+	return cf
+end
+
+-- punto al azar de la zona según L.zdist = {r = {r0, r1}, h = {h0, h1}, area}
+local function zoneRandom(L: Layer, Z: Zone): CFrame
+	local d = L.zdist
+	local r = if d.area then math.sqrt(rng:NextNumber(d.r[1] ^ 2, d.r[2] ^ 2)) else rng:NextNumber(d.r[1], d.r[2])
+	return zoneLocal(Z, rng:NextNumber(), r, zoneY(L, Z, rng:NextNumber(d.h[1], d.h[2])), L.pitch, L.radial)
+end
+
+-- emisor de una capa de zona, en su propio Attachment (que se coloca con .CFrame respecto al centro)
+local function zoneEmitter(L: Layer, Z: Zone, parent: Instance): (ParticleEmitter, Attachment)
+	local a = Instance.new("Attachment")
+	a.Name = L.name
+	a.Parent = parent
+	local e = configureEmitter(L, zoneK(L, Z))
+	if L.speed_h then
+		e.Speed = NumberRange.new(L.speed_h[1] * Z.H, L.speed_h[2] * Z.H)
+	elseif L.speed_r then
+		e.Speed = NumberRange.new(L.speed_r[1] * Z.R, L.speed_r[2] * Z.R)
+	end
+	if L.ground_mix then -- del color del suelo (las esquirlas más pequeñas)
+		local kps = table.create(#L.color)
+		for i, p in L.color do
+			local c = Color3.fromRGB(p[2][1], p[2][2], p[2][3])
+			kps[i] = ColorSequenceKeypoint.new(p[1], c:Lerp(Z.groundColor, L.ground_mix))
+		end
+		e.Color = ColorSequence.new(kps)
+	end
+	if L.lit then
+		e.LightInfluence = 1
+	end
+	if L.spin then
+		e.LockedToPart = true -- las partículas giran con la pieza: suben en espiral
+	end
+	e.Parent = a
+	return e, a
+end
+
+-- emisión continua en puntos al azar de la zona: el portador se mueve antes de cada Emit
+local function runZoneStream(L: Layer, Z: Zone, e: ParticleEmitter, a: Attachment, mul: number)
+	local W = L.zstream
+	local tEnd = 0
+	for _, w in W do
+		tEnd = math.max(tEnd, w[2])
+	end
+	local acc = 0
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function(dt)
+		local t = time() - t0
+		if not e.Parent or t > tEnd then
+			conn:Disconnect()
+			return
+		end
+		local rate = 0
+		for _, w in W do
+			if t >= w[1] and t <= w[2] then
+				rate += w[3] + (w[4] - w[3]) * (t - w[1]) / math.max(w[2] - w[1], 1e-3)
+			end
+		end
+		acc += rate * mul * AstralColossusVFX.Quality * dt
+		while acc >= 1 do
+			acc -= 1
+			a.CFrame = zoneRandom(L, Z)
+			e:Emit(1)
+		end
+	end)
+end
+
+-- pieza invisible que gira sobre el eje del pilar (una por velocidad de giro)
+local function zoneSpinner(Z: Zone, spinners: { [number]: BasePart }, deg: number): BasePart
+	local found = spinners[deg]
+	if found then
+		return found
+	end
+	local part = invisiblePart("Spin", Vector3.new(0.2, 0.2, 0.2), Z.holder.CFrame, Z.holder)
+	spinners[deg] = part
+	local base = Z.holder.CFrame
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not part.Parent then
+			conn:Disconnect()
+			return
+		end
+		part.CFrame = base * CFrame.Angles(0, math.rad(deg) * (time() - t0), 0)
+	end)
+	return part
+end
+
+-- borra de golpe las partículas que quedan (tapado por un destello)
+local function clearAt(e: ParticleEmitter, t: number)
+	task.delay(t, function()
+		if e.Parent then
+			e:Clear()
+		end
+	end)
+end
+
+-- luces de la zona: suben en rise, se mantienen hold y se apagan en fall
+local function zoneLights(spec: Layer, Z: Zone)
+	if not AstralColossusVFX.UseLight or not spec.lights then
+		return
+	end
+	for _, Lt in spec.lights do
+		task.delay(Lt.t, function()
+			if not Z.holder.Parent then
+				return
+			end
+			local a = Instance.new("Attachment")
+			a.Name = "Light"
+			a.Parent = Z.holder
+			a.Position = Vector3.new(0, if Lt.hu == "H" then Lt.h * Z.H else Lt.h * Z.s, 0)
+			local li = Instance.new("PointLight")
+			li.Color = Color3.fromRGB(Lt.color[1], Lt.color[2], Lt.color[3])
+			li.Brightness = 0
+			li.Range = math.min(Lt.range * Z.s, 60)
+			li.Shadows = false
+			li.Parent = a
+			TweenService:Create(li, TweenInfo.new(math.max(Lt.rise, 0.01), Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Brightness = Lt.brightness }):Play()
+			task.delay(Lt.rise + Lt.hold, function()
+				if li.Parent then
+					TweenService:Create(li, TweenInfo.new(Lt.fall, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+						{ Brightness = 0 }):Play()
+				end
+			end)
+		end)
+	end
+end
+
+-- ---------------------------------------------------------------- cubos de destrucción (estilo Roblox)
+-- tamaño al azar con muchos pequeños y pocos grandes
+local function skewed(lo: number, hi: number, skew: number): number
+	return lo + (hi - lo) * rng:NextNumber() ^ skew
+end
+
+-- la misma orientación, girada lo mínimo para que una cara quede apoyada en el suelo
+local function flatRot(rot: CFrame): CFrame
+	local best, by = rot.RightVector, rot.RightVector.Y
+	for _, v in { rot.UpVector, -rot.LookVector } do
+		if math.abs(v.Y) > math.abs(by) then
+			best, by = v, v.Y
+		end
+	end
+	local up = if by < 0 then -best else best
+	local axis = up:Cross(Vector3.yAxis)
+	if axis.Magnitude < 1e-4 then
+		return rot
+	end
+	return CFrame.fromAxisAngle(axis.Unit, math.acos(math.clamp(up.Y, -1, 1))) * rot
+end
+
+-- distancia del centro del cubo a su punto más bajo
+local function lowOffset(rot: CFrame, size: number): number
+	return size * 0.5 * (math.abs(rot.RightVector.Y) + math.abs(rot.UpVector.Y) + math.abs(rot.LookVector.Y))
+end
+
+-- Parts anclados que se mueven por código (no empujan a nadie): saltan, rebotan, se apoyan y se
+-- desvanecen; algunos se desintegran en el aire y otros los traga el pilar en espiral
+local function playCubes(spec: Layer, Z: Zone)
+	local C = spec.cubes
+	local holder = Z.holder
+	local s = Z.s
+	local g = C.gravity * s
+	local center = holder.Position
+	local base = holder.CFrame
+	local gy = Z.groundY
+	local hardEnd = spec.cleanup - C.fade - 0.05
+	local opts = AstralColossusVFX :: any
+	local color: Color3 = opts.CubeColor or Z.groundColor
+	local material: Enum.Material = opts.CubeMaterial or Z.groundMaterial
+	local fxE: ParticleEmitter?, fxA: Attachment?
+	if C.fx then
+		fxE, fxA = zoneEmitter(C.fx, Z, holder)
+	end
+	local list: { Layer } = {}
+	for _, G in C.groups do
+		for _ = 1, quality(G.count) do
+			local ang = rng:NextNumber(0, 2 * math.pi)
+			local f = rng:NextNumber(C.color_var[1], C.color_var[2]) * (if rng:NextNumber() < C.dark then 0.6 else 1)
+			local nc = C.neon_colors[rng:NextInteger(1, #C.neon_colors)]
+			table.insert(list, {
+				G = G, state = "wait", t0 = rng:NextNumber(G.t[1], G.t[2]), size = skewed(G.size[1], G.size[2], G.skew) * s,
+				ang = ang, out = base:VectorToWorldSpace(Vector3.new(math.cos(ang), 0, -math.sin(ang))),
+				r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2)) * Z.R, pos = center, vel = Vector3.zero,
+				k = 1, bounces = 0, seed = rng:NextNumber(0, 100),
+				rot = CFrame.Angles(rng:NextNumber(0, 6.283), rng:NextNumber(0, 6.283), rng:NextNumber(0, 6.283)),
+				axis = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1) + 0.01).Unit,
+				spin = math.rad(rng:NextNumber(C.spin[1], C.spin[2])),
+				neon = rng:NextNumber() < (G.neon or 0), dissolve = rng:NextNumber() < (G.dissolve or 0),
+				color = Color3.new(math.min(color.R * f, 1), math.min(color.G * f, 1), math.min(color.B * f, 1)),
+				neonColor = Color3.fromRGB(nc[1], nc[2], nc[3]),
+			})
+		end
+	end
+	local function spawnPart(c: Layer)
+		local p = Instance.new("Part")
+		p.Name = "Cube"
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = c.size > 1.2 * s
+		p.Size = Vector3.new(c.size, c.size, c.size)
+		if c.neon then
+			p.Material = Enum.Material.Neon
+			p.Color = c.neonColor
+		else
+			p.Material = material
+			p.Color = c.color
+		end
+		p.CFrame = CFrame.new(c.pos) * c.rot
+		p.Parent = holder
+		c.part = p
+	end
+	local function launch(c: Layer, t: number)
+		local G = c.G
+		local tang = Vector3.new(-c.out.Z, 0, c.out.X)
+		c.vel = c.out * rng:NextNumber(G.out[1], G.out[2]) * s + Vector3.new(0, rng:NextNumber(G.up[1], G.up[2]) * s, 0)
+			+ tang * rng:NextNumber(-6, 6) * s
+		c.state = "fly"
+		if c.dissolve then
+			c.dissolveAt = t + rng:NextNumber(C.dissolve_time[1], C.dissolve_time[2])
+		end
+	end
+	local function startDissolve(c: Layer, t: number)
+		if c.d0 then
+			return
+		end
+		c.d0 = t
+		c.dur = rng:NextNumber(C.shrink[1], C.shrink[2])
+		c.part.Material = Enum.Material.Neon
+		c.part.Color = c.neonColor
+		c.part.CastShadow = false
+		if fxE and fxA then
+			fxA.WorldPosition = c.pos
+			fxE:Emit(quality(C.fx.emit_n or 2))
+		end
+	end
+	local t0 = time()
+	local parts: { BasePart } = {}
+	local cfs: { CFrame } = {}
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function(rawDt)
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local dt = math.min(rawDt, 1 / 20)
+		local t = time() - t0
+		table.clear(parts)
+		table.clear(cfs)
+		local alive = 0
+		for _, c in list do
+			if c.state == "dead" then
+				continue
+			end
+			alive += 1
+			if c.state == "wait" then
+				if t < c.t0 then
+					continue
+				end
+				local G = c.G
+				local cx, cz = center.X + c.out.X * c.r, center.Z + c.out.Z * c.r
+				if G.mode == "lift" then
+					c.state = "rise"
+					c.y0 = gy - c.size * 0.5
+					c.y1 = gy + c.size * 0.5 + rng:NextNumber(G.lift[1], G.lift[2]) * s
+					c.trel = rng:NextNumber(G.release[1], G.release[2])
+					c.pos = Vector3.new(cx, c.y0, cz)
+				elseif G.mode == "blast" then
+					c.pos = Vector3.new(cx, gy + c.size * 0.5, cz)
+					launch(c, t)
+				else
+					c.state = "orbit"
+					c.r0 = c.r
+					c.y = gy + c.size * 0.5
+					c.orbit = rng:NextNumber(G.orbit[1], G.orbit[2])
+					c.rise = rng:NextNumber(G.rise[1], G.rise[2]) * Z.H
+					c.top = gy + rng:NextNumber(G.top[1], G.top[2]) * Z.H
+					c.pos = Vector3.new(cx, c.y, cz)
+				end
+				spawnPart(c)
+			end
+			local st = c.state
+			local moving = st ~= "rest" and st ~= "fade"
+			if c.d0 then
+				c.k = 1 - (t - c.d0) / c.dur
+				if c.k <= 0 then
+					c.state = "dead"
+					c.part:Destroy()
+					continue
+				end
+				local sz = c.size * c.k
+				c.part.Size = Vector3.new(sz, sz, sz)
+			end
+			if st == "rise" then
+				local u = math.clamp((t - c.t0) / math.max(c.trel - c.t0, 1e-3), 0, 1)
+				local e = 1 - (1 - u) ^ 3
+				local jit = Vector3.new(math.noise(c.seed, t * 6) * 0.25, math.noise(c.seed + 7, t * 6) * 0.16,
+					math.noise(c.seed + 13, t * 6) * 0.25) * s * u
+				c.pos = Vector3.new(center.X + c.out.X * c.r, c.y0 + (c.y1 - c.y0) * e, center.Z + c.out.Z * c.r) + jit
+				c.rot = CFrame.fromAxisAngle(c.axis, c.spin * 0.15 * dt) * c.rot
+				if t >= c.trel then
+					launch(c, t)
+				end
+			elseif st == "fly" then
+				c.vel += Vector3.new(0, -g * (if c.d0 then 0.35 else 1) * dt, 0)
+				c.pos += c.vel * dt
+				c.rot = CFrame.fromAxisAngle(c.axis, c.spin * dt) * c.rot
+				if c.dissolve and not c.d0 and t >= c.dissolveAt then
+					startDissolve(c, t)
+				end
+				local low = c.pos.Y - lowOffset(c.rot, c.size * c.k)
+				if low <= gy and c.vel.Y < 0 and not c.d0 then
+					c.pos += Vector3.new(0, gy - low, 0)
+					c.vel = Vector3.new(c.vel.X * C.friction, -c.vel.Y * C.bounce, c.vel.Z * C.friction)
+					c.spin *= 0.55
+					c.bounces += 1
+					if math.abs(c.vel.Y) < 7 * s or c.bounces >= 3 then
+						c.state = "settle"
+						c.ts = t
+						c.rot0 = c.rot
+						c.rot1 = flatRot(c.rot)
+						c.vel = Vector3.zero
+					end
+				end
+			elseif st == "settle" then
+				local u = math.min(1, (t - c.ts) / C.settle)
+				c.rot = c.rot0:Lerp(c.rot1, u)
+				c.pos = Vector3.new(c.pos.X, gy + lowOffset(c.rot, c.size), c.pos.Z)
+				if u >= 1 then
+					c.state = "rest"
+					c.restEnd = math.min(t + rng:NextNumber(C.rest[1], C.rest[2]), hardEnd)
+				end
+			elseif st == "rest" then
+				if t >= c.restEnd then
+					c.state = "fade"
+					c.tf = t
+				end
+			elseif st == "fade" then
+				local a = (t - c.tf) / C.fade
+				if a >= 1 then
+					c.state = "dead"
+					c.part:Destroy()
+					continue
+				end
+				c.part.Transparency = a
+			elseif st == "orbit" then
+				c.ang += c.orbit * dt
+				c.y += c.rise * dt
+				local prog = math.clamp((c.y - gy) / math.max(c.top - gy, 1e-3), 0, 1)
+				local r = c.r0 * (1 - 0.35 * prog)
+				local dir = base:VectorToWorldSpace(Vector3.new(math.cos(c.ang), 0, -math.sin(c.ang)))
+				c.pos = Vector3.new(center.X + dir.X * r, c.y, center.Z + dir.Z * r)
+				c.rot = CFrame.fromAxisAngle(c.axis, c.spin * dt) * c.rot
+				if c.y >= c.top then
+					startDissolve(c, t)
+				end
+				if t >= c.G.release and not c.d0 then
+					-- el pilar se apagó: el cubo sale despedido y se deshace
+					local tang = base:VectorToWorldSpace(Vector3.new(-math.sin(c.ang), 0, -math.cos(c.ang)))
+					c.vel = tang * c.orbit * r + Vector3.new(0, rng:NextNumber(4, 12) * s, 0)
+					c.state = "fly"
+					c.dissolve = true
+					c.dissolveAt = t + rng:NextNumber(0.15, 0.45)
+				end
+			end
+			if moving then
+				table.insert(parts, c.part)
+				table.insert(cfs, CFrame.new(c.pos) * c.rot)
+			end
+		end
+		if #parts > 0 then
+			workspace:BulkMoveTo(parts, cfs, Enum.BulkMoveMode.FireCFrameChanged)
+		end
+		if alive == 0 then
+			conn:Disconnect()
+		end
+	end)
+end
+
+-- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
+local function _playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local R = radius or spec.zone.radius * s
+	local H = height or spec.zone.height * s
+	-- la zona queda plana (solo se usa el giro horizontal de cf) y apoyada en el suelo
+	local pos = cf.Position
+	local look = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+	local flat = if look.Magnitude > 1e-3 then CFrame.lookAt(pos, pos + look) else CFrame.new(pos)
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), flat, AstralColossusVFX.Parent)
+	local gColor, gMaterial, gy = groundLook(pos, holder)
+	if gy and math.abs(gy - pos.Y) < 8 then
+		holder.CFrame = flat + Vector3.new(0, gy - pos.Y, 0)
+	end
+	local Z: Zone = {
+		holder = holder, R = R, H = H, s = s, kR = R / spec.zone.radius, kH = H / spec.zone.height,
+		groundY = holder.Position.Y, groundColor = gColor, groundMaterial = gMaterial,
+	}
+	local spinners: { [number]: BasePart } = {}
+	for _, L in spec.layers do
+		if L.decal then
+			local k = zoneK(L, Z)
+			for _, ev in L.ring_emit or {} do
+				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false)
+				task.delay(ev[1], function()
+					if holder.Parent then
+						playDecalAt(L, holder, k, ev[2], holder.CFrame * lcf)
+					end
+				end)
+			end
+		elseif L.zstream and L.spin then
+			-- ranuras fijas en la pieza que gira, cada una con su parte de la tasa
+			local spinner = zoneSpinner(Z, spinners, L.spin)
+			local slots = L.slots or 8
+			for _ = 1, slots do
+				local e, a = zoneEmitter(L, Z, spinner)
+				a.CFrame = zoneRandom(L, Z)
+				runStream(L, e, nil, L.zstream, coverMul(L, Z) / slots)
+				if L.clear_at then
+					clearAt(e, L.clear_at)
+				end
+			end
+		else
+			local e, a = zoneEmitter(L, Z, holder)
+			for _, ev in L.ring_emit or {} do
+				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), L.pitch, L.radial)
+				local n = quality(ev[2])
+				task.delay(ev[1], function()
+					if e.Parent then
+						a.CFrame = lcf
+						e:Emit(n)
+					end
+				end)
+			end
+			if L.zstream then
+				runZoneStream(L, Z, e, a, coverMul(L, Z))
+			end
+			if L.clear_at then
+				clearAt(e, L.clear_at)
+			end
+		end
+	end
+	if spec.cubes then
+		playCubes(spec, Z)
+	end
+	zoneLights(spec, Z)
+	finish(spec, holder, s, shake, {})
 	return holder
 end
 

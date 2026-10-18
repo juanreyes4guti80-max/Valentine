@@ -10,7 +10,7 @@
 | `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 21). |
 | `preview/` | Video simulado del efecto. |
 
-Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los dos módulos.
+Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los módulos de Kaiju Zero, Astral Colossus y Omnívora.
 
 ## Efecto incluido
 
@@ -136,6 +136,6 @@ El efecto está en `KaijuZero_VFX/tools/vfx_astral.py`: colores, tiempos de las 
 python tools/gen_luau.py roblox
 ```
 
-Eso escribe `KaijuFireVFX` en `KaijuZero_VFX/roblox` y `AstralColossusVFX` en `AstralColossus_VFX/roblox`.
+Eso escribe `KaijuFireVFX` en `KaijuZero_VFX/roblox`, `AstralColossusVFX` en `AstralColossus_VFX/roblox` y `OmnivoraVFX` en `Omnivora_VFX/roblox`.
 
 La prueba `KaijuZero_VFX/tools/test_luau/run_runtime.py` ejecuta el efecto contra un Roblox simulado con varios largos y ángulos. Comprueba que se limpie todo y que todas las emisiones caigan dentro del triángulo.

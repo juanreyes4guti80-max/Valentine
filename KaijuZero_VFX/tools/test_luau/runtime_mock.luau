@@ -53,6 +53,11 @@ C.__index = function(t, k)
 	if k == "PointToWorldSpace" then return function(self, v) return self.p + mulMV(self.r, v) end end
 	if k == "PointToObjectSpace" then return function(self, v) return mulMV(transpose(self.r), v - self.p) end end
 	if k == "VectorToWorldSpace" then return function(self, v) return mulMV(self.r, v) end end
+	if k == "Lerp" then return function(self, o, u)
+		local r = {}
+		for i = 1, 9 do r[i] = self.r[i] + (o.r[i] - self.r[i]) * u end
+		return mat(r, self.p + (o.p - self.p) * u)
+	end end
 	return nil
 end
 local function rx(a) local c, s = math.cos(a), math.sin(a); return { 1, 0, 0, 0, c, -s, 0, s, c } end
@@ -98,7 +103,7 @@ M.NumberSequence = { new = function(k) checkSeq(k, "NumberSequence"); return { K
 M.ColorSequence = { new = function(k) checkSeq(k, "ColorSequence"); return { Keypoints = k } end }
 M.TweenInfo = { new = function(...) return { ... } end }
 M.Random = { new = function() return {
-	NextNumber = function(_, a, b) return a + (b - a) * math.random() end,
+	NextNumber = function(_, a, b) a = a or 0; b = b or 1; return a + (b - a) * math.random() end,
 	NextInteger = function(_, a, b) return math.random(a, b) end,
 } end }
 M.Enum = setmetatable({}, { __index = function(_, enumName)
@@ -127,8 +132,13 @@ M.task = {
 
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
-	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0 }
+	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0 }
 local live = {}
+-- lo que devuelve el rayo al tocar el suelo: una Part de pasto verde (no cuenta como instancia viva)
+local groundFake = setmetatable({}, { __index = {
+	IsA = function(_, c) return c == "BasePart" or c == "Part" end,
+	FindFirstAncestorOfClass = function() return nil end,
+} })
 local function isDestroyed(o)
 	while o do
 		if rawget(o, "__destroyed") then return true end
@@ -161,17 +171,28 @@ function Inst.new(class)
 			end end
 			if k == "Destroy" then return function() rawset(self, "__destroyed", true); props.Parent = nil; M.stats.destroyed += 1 end end
 			if k == "IsA" then return function(_, c) return c == class or (c == "BasePart" and class == "Part") end end
+			if k == "Clear" then return function() M.stats.clears += 1 end end
+			if k == "FindFirstAncestorOfClass" or k == "FindFirstChildOfClass" then return function() return nil end end
+			if k == "BulkMoveTo" then return function(_, ps, cs, mode)
+				assert(#ps == #cs, "BulkMoveTo: listas de distinto largo")
+				for i, part in ps do
+					assert(part.Parent ~= nil, "BulkMoveTo de una Part destruida")
+					part.CFrame = cs[i]
+				end
+			end end
 			if k == "Raycast" then return function(_, origin, dirv, params)
 				M.stats.raycasts += 1
 				-- suelo plano en y = 0 (si el rayo lo cruza)
 				if origin.Y >= 0 and origin.Y + dirv.Y <= 0 then
-					return { Position = v3(origin.X, 0, origin.Z) }
+					groundFake.Color = groundFake.Color or M.Color3.fromRGB(90, 140, 70)
+					return { Position = v3(origin.X, 0, origin.Z), Instance = groundFake, Material = M.Enum.Material.Grass }
 				end
 				return nil
 			end end
 			if k == "Position" and class == "Part" then return props.CFrame and props.CFrame.p end
 			if k == "Parent" then
-				if rawget(self, "__destroyed") then return nil end
+				-- como en Roblox: al destruir algo, todos sus descendientes quedan con Parent = nil
+				if isDestroyed(self) then return nil end
 				return props.Parent
 			end
 			return props[k]
@@ -179,6 +200,16 @@ function Inst.new(class)
 		__newindex = function(self, k, v)
 			if k == "Rate" then M.stats.maxRate = math.max(M.stats.maxRate, v) end
 			if k == "Name" and v == "Rock" then M.stats.rocks += 1 end
+			if k == "Name" and v == "Cube" then M.stats.cubes += 1 end
+			if props.Name == "Cube" and k == "Color" and v.G > v.R and v.G > v.B then M.stats.cubeGreen += 1 end
+			if props.Name == "Cube" and k == "CFrame" then
+				M.stats.cubeMaxR = math.max(M.stats.cubeMaxR, math.sqrt(v.p.X ^ 2 + v.p.Z ^ 2))
+			end
+			-- un Attachment colocado con .CFrame: su posición en el mundo según la Part que lo contiene
+			if class == "Attachment" and k == "CFrame" then
+				local par = props.Parent
+				props.WorldPosition = if par and par.CFrame then (par.CFrame * v).p else v.p
+			end
 			if k == "CFrame" and type(v) == "table" and v.p then
 				M.stats.partMinZ = math.min(M.stats.partMinZ, v.p.Z)
 				M.stats.partMaxZ = math.max(M.stats.partMaxZ, v.p.Z)

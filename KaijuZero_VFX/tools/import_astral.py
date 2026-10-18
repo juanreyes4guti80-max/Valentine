@@ -7,8 +7,6 @@ import sys
 import numpy as np
 from PIL import Image
 
-KEN, EFF, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
-os.makedirs(OUT, exist_ok=True)
 KENNEY = ["star_06", "star_08", "star_09", "spark_02", "spark_05", "spark_06", "trace_01", "trace_07",
           "circle_03", "smoke_07", "smoke_04"]
 EFFEKSEER = {
@@ -54,13 +52,19 @@ def effekseer(src, dst):
     img.save(dst)
 
 
-for n in KENNEY:
-    kenney(os.path.join(KEN, n + ".png"), os.path.join(OUT, "kk_" + n + ".png"))
-    print("OK kk_" + n)
-for name, rel in EFFEKSEER.items():
-    effekseer(os.path.join(EFF, rel), os.path.join(OUT, name + ".png"))
-    print("OK", name)
-for name in OWN:
-    shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "textures", name + ".png"),
-                os.path.join(OUT, name + ".png"))
-    print("OK", name)
+def main(KEN, EFF, OUT):
+    os.makedirs(OUT, exist_ok=True)
+    for n in KENNEY:
+        kenney(os.path.join(KEN, n + ".png"), os.path.join(OUT, "kk_" + n + ".png"))
+        print("OK kk_" + n)
+    for name, rel in EFFEKSEER.items():
+        effekseer(os.path.join(EFF, rel), os.path.join(OUT, name + ".png"))
+        print("OK", name)
+    for name in OWN:
+        shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "textures", name + ".png"),
+                    os.path.join(OUT, name + ".png"))
+        print("OK", name)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1], sys.argv[2], sys.argv[3])

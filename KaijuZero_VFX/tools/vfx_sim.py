@@ -145,14 +145,17 @@ def rand_unit(rng):
 
 
 class P:
-    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "r_size", "r_tr", "frame0", "L", "seed")
+    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "r_size", "r_tr", "frame0", "L", "seed", "ks", "spin")
 
 
-def spawn(L, origin, rng, scale, Rf=None, length=0.0):
+def spawn(L, origin, rng, scale, Rf=None, length=0.0, zone=None):
     """Rf: rotación (3x3) del contenedor: lleva ejes locales del emisor a mundo.
-    Ojo: Acceleration en Roblox es en espacio mundo (no se rota)."""
+    Ojo: Acceleration en Roblox es en espacio mundo (no se rota).
+    zone: {"R", "H"} del pilar (velocidades speed_r / speed_h relativas al radio y a la altura)."""
     Rf = np.eye(3) if Rf is None else Rf
     p = P()
+    p.ks = scale
+    p.spin = 0.0
     sh = L.get("shape")
     off = np.zeros(3)
     normal = None
@@ -181,6 +184,10 @@ def spawn(L, origin, rng, scale, Rf=None, length=0.0):
     d /= np.linalg.norm(d)
     if L.get("speed_len"):          # velocidad proporcional al largo del efecto (la ola cruza el triángulo)
         spd = rng.uniform(*L["speed_len"]) * length
+    elif L.get("speed_h"):          # fracción de la altura del pilar por segundo
+        spd = rng.uniform(*L["speed_h"]) * zone["H"]
+    elif L.get("speed_r"):          # fracción del radio de la zona por segundo
+        spd = rng.uniform(*L["speed_r"]) * zone["R"]
     else:
         spd = rng.uniform(*L.get("speed", (0, 0))) * scale
     p.vel = d * spd
@@ -259,9 +266,10 @@ def spawn_meteor(L, origin, rng, scale, Rf):
 
 def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration=None, seed=7,
            ground_y=0.0, background=None, extra_draw=None, frame_rot=None, length=0.0, bloom=None,
-           only_frames=None, cone_angle=60.0):
+           only_frames=None, cone_angle=60.0, zone=None):
     """frame_rot: rotación del contenedor (local->mundo). Emisiones (t, n, u, side, up):
-    u = fracción a lo largo de la línea (adelante = -Z local), side = +X local, up = +Y."""
+    u = fracción a lo largo de la línea (adelante = -Z local), side = +X local, up = +Y.
+    zone = {"R": radio, "H": altura} para los efectos en una zona circular (pilar)."""
     rng = random.Random(seed)
     tb = TexBank(tex_folder)
     duration = duration or spec["duration"] + 0.15
@@ -269,7 +277,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
     os.makedirs(out_dir, exist_ok=True)
     bg = background if background is not None else make_background(cam, ground_y)
     parts = []
-    events = []
+    events = []      # (t, n, capa, posición, rotación del portador o None, escala de la capa o None)
     Rf = np.eye(3) if frame_rot is None else np.asarray(frame_rot, float)
     o0 = np.asarray(origin, float)
     meteors = []
@@ -284,10 +292,10 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             if len(ev) > 2:
                 u, side, up = ev[2], ev[3], ev[4]
                 pos = o0 + Rf @ np.array([side * scale, up * scale, -u * length])
-            events.append((t, n, L, pos, None))
+            events.append((t, n, L, pos, None, None))
         for ev in L.get("points", []):   # (t, n, x, y, z): posición local absoluta
             t, n, x, y, z = ev
-            events.append((t, n, L, o0 + Rf @ (np.array([x, y, z], float) * scale), None))
+            events.append((t, n, L, o0 + Rf @ (np.array([x, y, z], float) * scale), None, None))
         # cono/triángulo hacia adelante: (t, n, u, s, alto); u = fracción del largo, s = fracción del
         # medio ancho en esa distancia. El portador mira desde el vértice hacia ese punto.
         tan_h = math.tan(math.radians(cone_angle / 2))
@@ -298,21 +306,27 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             pos = o0 + Rf @ np.array([sfrac * u * length * tan_h, up * scale, -u * length])
             phi = -math.atan(sfrac * tan_h)
             Ry = np.array([[math.cos(phi), 0, math.sin(phi)], [0, 1, 0], [-math.sin(phi), 0, math.cos(phi)]])
-            events.append((t, n, L, pos, Rf @ Ry @ Rx))
+            events.append((t, n, L, pos, Rf @ Ry @ Rx, None))
+    zst, cubes = [], None
+    if spec.get("zone"):
+        zone = zone or {"R": spec["zone"]["radius"] * scale, "H": spec["zone"]["height"] * scale}
+        zev, zst, cubes = zone_setup(spec, zone, o0, scale, rng, ground_y)
+        events += zev
     events.sort(key=lambda e: e[0])
+    clears = sorted(((L["clear_at"], L) for L in spec["layers"] if L.get("clear_at") is not None), key=lambda c: c[0])
     ei = 0
     dt = 1.0 / FPS
     stats = []
     for fi in range(nframes):
         t = fi * dt
         while ei < len(events) and events[ei][0] <= t + 1e-9:
-            _, n, L, o, Re = events[ei]
+            _, n, L, o, Re, kk = events[ei]
             Rv = Rf if Re is None else Re
             for _ in range(n):
                 if L.get("type") == "meteor":
                     meteors.append(spawn_meteor(L, o, rng, scale, Rv))
                 else:
-                    parts.append(spawn(L, o, rng, scale, Rv, length))
+                    parts.append(spawn(L, o, rng, scale if kk is None else kk, Rv, length, zone))
             ei += 1
         # emisión continua
         for st_ in streams:
@@ -327,6 +341,20 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 acc -= 1.0
                 parts.append(spawn(L, o, rng, scale, Rf))
             st_[3] = acc
+        # emisión continua dentro de la zona (puntos al azar o ranuras que giran con el pilar)
+        for z in zst:
+            parts += zone_stream_step(z, t, dt, rng, zone, o0)
+        # capas que se borran de golpe (Emitter:Clear())
+        if clears and clears[0][0] <= t + 1e-9:
+            gone = set()
+            while clears and clears[0][0] <= t + 1e-9:
+                gone.add(id(clears.pop(0)[1]))
+            parts = [p for p in parts if id(p.L) not in gone]
+        # cubos de destrucción
+        if cubes is not None:
+            for (Lfx, k, pos) in cubes.step(t, dt):
+                for _ in range(Lfx.get("emit_n", 2)):
+                    parts.append(spawn(Lfx, pos, rng, k, None, 0.0, zone))
         # meteoros: estelas (por tasa) + aterrizaje
         for m in meteors:
             if m.dead:
@@ -361,16 +389,33 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         else:
             draw = True
         buf = bg.copy() if draw else None
-        # ordenar atrás -> adelante
+        if draw and cubes is not None:
+            cubes.draw_shadows(buf, cam)
+        # ordenar atrás -> adelante (partículas y cubos)
         items = []
         for p in (parts if draw else []):
-            d = cam.to_cam(p.pos)
+            wp = p.pos if not p.spin else spin_world(p, t, o0)
+            d = cam.to_cam(wp)
             if d[2] <= 0.5:
                 continue
-            items.append((d[2] - p.L.get("zoffset", 0.0), p, d))
+            items.append((d[2] - p.L.get("zoffset", 0.0) * p.ks, 0, p, d, wp))
+        if draw and cubes is not None:
+            for c in cubes.visible():
+                d = cam.to_cam(c.pos)
+                if d[2] > 0.5:
+                    items.append((d[2], 1, c, d, None))
         items.sort(key=lambda x: -x[0])
-        for _, p, d in items:
-            draw_particle(buf, tb, cam, p, d, scale, ground_y)
+        for _, kind, obj, d, wp in items:
+            if kind == 1:
+                cubes.draw_cube(buf, cam, obj, t)
+                continue
+            if obj.spin:
+                pos0 = obj.pos
+                obj.pos = wp
+                draw_particle(buf, tb, cam, obj, d, scale, ground_y)
+                obj.pos = pos0
+            else:
+                draw_particle(buf, tb, cam, obj, d, scale, ground_y)
         for m in (meteors if draw else []):
             if m.dead:
                 continue
@@ -403,7 +448,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         for p in parts:
             L = p.L
             drag = L.get("drag", 0.0)
-            acc = np.asarray(L.get("accel", (0, 0, 0)), float) * scale
+            acc = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
             p.vel = p.vel * (2.0 ** (-drag * dt)) + acc * dt
             p.pos = p.pos + p.vel * dt
             p.rot += p.rots * dt
@@ -419,7 +464,7 @@ def decal_glow(L):
 def draw_particle(buf, tb, cam, p, d, scale, ground_y):
     L = p.L
     tl = min(p.age / p.life, 1.0)
-    size = max(eval_seq(L["size"], tl, p.r_size) * scale, 0.0)
+    size = max(eval_seq(L["size"], tl, p.r_size) * p.ks, 0.0)
     if size <= 0.01:
         return
     tr = eval_seq(L.get("transparency", [(0, 0), (1, 0)]), tl, p.r_tr)
@@ -594,3 +639,374 @@ def make_background_dark(cam, ground_y=0.0):
     ground = np.where(line, np.array([0.32, 0.33, 0.35]), np.array([0.07, 0.07, 0.08]))
     img = np.where((dy < 0)[:, None], ground, sky)
     return img.reshape(H, W, 3).astype(np.float32)
+
+
+# --------------------------------------------------------------- zona circular (pilar de Omnívora)
+def radial_frame(theta, pitch_deg=0.0):
+    """Rotación del portador en un punto del círculo: su Front (-Z) mira hacia afuera, inclinado
+    `pitch` grados hacia arriba (igual que CFrame.lookAt(pos, pos + afuera) * CFrame.Angles(pitch, 0, 0))."""
+    f = np.array([math.cos(theta), 0.0, math.sin(theta)])
+    R = np.stack([np.array([-f[2], 0.0, f[0]]), np.array([0.0, 1.0, 0.0]), -f], axis=1)
+    if pitch_deg:
+        pt = math.radians(pitch_deg)
+        R = R @ np.array([[1, 0, 0], [0, math.cos(pt), -math.sin(pt)], [0, math.sin(pt), math.cos(pt)]])
+    return R
+
+
+def layer_k(L, scale, zone, Z0):
+    """Escala de tamaños de una capa: con el radio ("r"), con la altura ("h") o con la escala."""
+    rel = L.get("rel")
+    if rel == "r":
+        return zone["R"] / Z0["radius"]
+    if rel == "h":
+        return zone["H"] / Z0["height"]
+    return scale
+
+
+def zone_y(L, h, k, zone):
+    return h * zone["H"] if L.get("hu") == "H" else h * k
+
+
+def zone_point(L, rng, zone, k, o0, local=False):
+    """Punto al azar según L["zdist"] = {"r": (r0, r1), "h": (h0, h1), "area": bool} y la rotación del portador."""
+    d = L["zdist"]
+    r0, r1 = d["r"]
+    r = math.sqrt(rng.uniform(r0 * r0, r1 * r1)) if d.get("area") else rng.uniform(r0, r1)
+    th = rng.uniform(0, 2 * math.pi)
+    y = zone_y(L, rng.uniform(*d["h"]), k, zone)
+    pos = np.array([math.cos(th) * r * zone["R"], y, math.sin(th) * r * zone["R"]])
+    Rv = radial_frame(th, L.get("pitch", 0.0)) if L.get("radial", True) else np.eye(3)
+    return (pos if local else o0 + pos), Rv
+
+
+def cover_mul(L, k, kR, kH):
+    """Capas que cubren la superficie del pilar: más partículas si el pilar es más alto/ancho que su tamaño."""
+    if not L.get("cover"):
+        return 1.0
+    return min(2.5, max(0.5, kR * kH / (k * k)))
+
+
+def zone_setup(spec, zone, o0, scale, rng, ground_y):
+    Z0 = spec["zone"]
+    kR, kH = zone["R"] / Z0["radius"], zone["H"] / Z0["height"]
+    events, zst = [], []
+    for L in spec["layers"]:
+        k = layer_k(L, scale, zone, Z0)
+        for (t, n, a, r, h) in L.get("ring_emit", []):
+            th = 2 * math.pi * a
+            pos = o0 + np.array([math.cos(th) * r * zone["R"], zone_y(L, h, k, zone), math.sin(th) * r * zone["R"]])
+            Rv = radial_frame(th, L.get("pitch", 0.0)) if L.get("radial", True) else np.eye(3)
+            events.append((t, n, L, pos, Rv, k))
+        if L.get("zstream"):
+            z = {"L": L, "k": k, "acc": 0.0, "mul": cover_mul(L, k, kR, kH)}
+            if L.get("spin"):
+                z["slots"] = [zone_point(L, rng, zone, k, o0, local=True) for _ in range(L.get("slots", 8))]
+            zst.append(z)
+    cubes = CubeSim(spec, zone, o0, scale, ground_y, random.Random(rng.random())) if spec.get("cubes") else None
+    return events, zst, cubes
+
+
+def zone_stream_step(z, t, dt, rng, zone, o0):
+    L = z["L"]
+    rate = 0.0
+    for (a0, a1, r0, r1) in L["zstream"]:
+        if a0 <= t <= a1:
+            rate += r0 + (r1 - r0) * (t - a0) / max(a1 - a0, 1e-6)
+    z["acc"] += rate * z["mul"] * dt
+    out = []
+    while z["acc"] >= 1.0:
+        z["acc"] -= 1.0
+        if L.get("spin"):
+            pos, Rv = z["slots"][rng.randrange(len(z["slots"]))]
+            p = spawn(L, pos, rng, z["k"], Rv, 0.0, zone)
+            p.spin = L["spin"]
+        else:
+            pos, Rv = zone_point(L, rng, zone, z["k"], o0)
+            p = spawn(L, pos, rng, z["k"], Rv, 0.0, zone)
+        out.append(p)
+    return out
+
+
+def spin_world(p, t, o0):
+    """Partícula pegada a la pieza que gira (LockedToPart): local -> mundo con el giro actual."""
+    th = math.radians(p.spin) * t
+    c, s = math.cos(th), math.sin(th)
+    x, y, z = p.pos
+    return o0 + np.array([c * x + s * z, y, -s * x + c * z])
+
+
+def axis_angle(axis, ang):
+    a = np.asarray(axis, float)
+    a = a / np.linalg.norm(a)
+    K = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+    return np.eye(3) + math.sin(ang) * K + (1 - math.cos(ang)) * (K @ K)
+
+
+def flat_rot(rot):
+    """La misma orientación, girada lo mínimo para que una cara quede apoyada en el suelo."""
+    j = int(np.argmax(np.abs(rot[1])))
+    up = rot[:, j] * (1 if rot[1, j] >= 0 else -1)
+    axis = np.cross(up, [0, 1.0, 0])
+    if np.linalg.norm(axis) < 1e-4:
+        return rot.copy()
+    return axis_angle(axis, math.acos(max(-1.0, min(1.0, up[1])))) @ rot
+
+
+def orthonormal(m):
+    u, _, vt = np.linalg.svd(m)
+    return u @ vt
+
+
+def light_at(Lt, t):
+    """Intensidad de una luz de la zona: sube en `rise`, se mantiene `hold` y baja en `fall`."""
+    tt = t - Lt["t"]
+    if tt < 0:
+        return 0.0
+    if tt < Lt["rise"]:
+        return Lt["brightness"] * tt / max(Lt["rise"], 1e-6)
+    tt -= Lt["rise"]
+    if tt < Lt["hold"]:
+        return Lt["brightness"]
+    tt -= Lt["hold"]
+    return Lt["brightness"] * max(0.0, 1 - tt / max(Lt["fall"], 1e-6))
+
+
+class Cube:
+    pass
+
+
+class CubeSim:
+    """Cubos de destrucción (Parts en Roblox): la misma lógica que playCubes del módulo Luau."""
+    FACES = [((1, -1, -1), (1, 1, -1), (1, 1, 1), (1, -1, 1)), ((-1, -1, -1), (-1, -1, 1), (-1, 1, 1), (-1, 1, -1)),
+             ((-1, 1, -1), (-1, 1, 1), (1, 1, 1), (1, 1, -1)), ((-1, -1, -1), (1, -1, -1), (1, -1, 1), (-1, -1, 1)),
+             ((-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)), ((-1, -1, -1), (-1, 1, -1), (1, 1, -1), (1, -1, -1))]
+    NORMALS = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+    SUN = np.array([-0.4, 1.0, -0.3]) / np.linalg.norm([-0.4, 1.0, -0.3])
+
+    def __init__(self, spec, zone, o0, scale, ground_y, rng):
+        self.C = C = spec["cubes"]
+        self.spec, self.zone, self.o0, self.s, self.gy, self.rng = spec, zone, o0, scale, ground_y, rng
+        self.cleanup = spec.get("_cleanup", 99.0)
+        self.lights = spec.get("lights", [])
+        base = np.array(C.get("preview_color", (112, 106, 112)), float) / 255
+        self.list = []
+        for G in C["groups"]:
+            for _ in range(G["count"]):
+                c = Cube()
+                c.G, c.mode = G, G["mode"]
+                c.ang = rng.uniform(0, 2 * math.pi)
+                c.out = np.array([math.cos(c.ang), 0.0, -math.sin(c.ang)])
+                c.r = math.sqrt(rng.uniform(G["r"][0] ** 2, G["r"][1] ** 2)) * zone["R"]
+                c.size = (G["size"][0] + (G["size"][1] - G["size"][0]) * rng.random() ** G["skew"]) * scale
+                c.t0 = rng.uniform(*G["t"])
+                c.pos = o0 + c.out * c.r + np.array([0, ground_y + c.size * 0.5, 0])
+                c.vel = np.zeros(3)
+                c.rot = orthonormal(np.array([[rng.uniform(-1, 1) for _ in range(3)] for _ in range(3)]))
+                c.axis = np.array([rng.uniform(-1, 1) for _ in range(3)])
+                c.spin = math.radians(rng.uniform(*C["spin"]))
+                c.state, c.bounces, c.k, c.alpha = "wait", 0, 1.0, 1.0
+                c.neon = rng.random() < G.get("neon", 0.0)
+                c.dissolve = rng.random() < G.get("dissolve", 0.0)
+                c.ncol = np.array(C["neon_colors"][rng.randrange(len(C["neon_colors"]))], float) / 255
+                f = rng.uniform(*C["color_var"]) * (0.6 if rng.random() < C.get("dark", 0.0) else 1.0)
+                c.col = np.clip(base * f, 0, 1)
+                c.d0 = None
+                c.ph = [rng.uniform(0, 6.28) for _ in range(3)]
+                self.list.append(c)
+
+    def h_low(self, c):
+        return c.size * c.k * 0.5 * float(np.abs(c.rot[1]).sum())
+
+    def launch(self, c, t):
+        G, rng, s = c.G, self.rng, self.s
+        tang = np.array([-c.out[2], 0.0, c.out[0]])
+        c.vel = c.out * rng.uniform(*G["out"]) * s + np.array([0, rng.uniform(*G["up"]) * s, 0]) + tang * rng.uniform(-6, 6) * s
+        c.state = "fly"
+        if c.dissolve:
+            c.dissolve_at = t + rng.uniform(*self.C["dissolve_time"])
+
+    def start_dissolve(self, c, t, fx):
+        if c.d0 is None:
+            c.d0 = t
+            c.dur = self.rng.uniform(*self.C["shrink"])
+            fx.append(c.pos.copy())
+
+    def step(self, t, dt):
+        C, rng, s, gy = self.C, self.rng, self.s, self.gy
+        g = C["gravity"] * s
+        fxpos = []
+        for c in self.list:
+            if c.state == "dead":
+                continue
+            if c.state == "wait":
+                if t < c.t0:
+                    continue
+                if c.mode == "lift":
+                    c.state = "rise"
+                    c.y0 = gy - c.size * 0.5
+                    c.y1 = gy + c.size * 0.5 + rng.uniform(*c.G["lift"]) * s
+                    c.trel = rng.uniform(*c.G["release"])
+                elif c.mode == "blast":
+                    self.launch(c, t)
+                else:
+                    c.state = "orbit"
+                    c.r0, c.y = c.r, gy + c.size * 0.5
+                    c.orbit = rng.uniform(*c.G["orbit"])
+                    c.rise = rng.uniform(*c.G["rise"]) * self.zone["H"]
+                    c.top = gy + rng.uniform(*c.G["top"]) * self.zone["H"]
+            if c.d0 is not None:
+                c.k = 1 - (t - c.d0) / c.dur
+                if c.k <= 0:
+                    c.state = "dead"
+                    continue
+            if c.state == "rise":
+                u = min(1.0, max(0.0, (t - c.t0) / max(c.trel - c.t0, 1e-3)))
+                e = 1 - (1 - u) ** 3
+                jit = np.array([math.sin(37 * t + c.ph[0]) * 0.12, math.sin(29 * t + c.ph[1]) * 0.08,
+                                math.sin(41 * t + c.ph[2]) * 0.12]) * s * u
+                c.pos = self.o0 + c.out * c.r + np.array([0, c.y0 + (c.y1 - c.y0) * e, 0]) + jit
+                c.rot = axis_angle(c.axis, c.spin * 0.15 * dt) @ c.rot
+                if t >= c.trel:
+                    self.launch(c, t)
+            elif c.state == "fly":
+                c.vel = c.vel + np.array([0, -g * (0.35 if c.d0 is not None else 1.0) * dt, 0])
+                c.pos = c.pos + c.vel * dt
+                c.rot = orthonormal(axis_angle(c.axis, c.spin * dt) @ c.rot)
+                if c.dissolve and c.d0 is None and t >= c.dissolve_at:
+                    self.start_dissolve(c, t, fxpos)
+                low = c.pos[1] - self.h_low(c)
+                if low <= gy and c.vel[1] < 0 and c.d0 is None:
+                    c.pos[1] += gy - low
+                    c.vel[1] = -c.vel[1] * C["bounce"]
+                    c.vel[0] *= C["friction"]
+                    c.vel[2] *= C["friction"]
+                    c.spin *= 0.55
+                    c.bounces += 1
+                    if abs(c.vel[1]) < 7 * s or c.bounces >= 3:
+                        c.state, c.ts, c.rot0, c.rot1 = "settle", t, c.rot.copy(), flat_rot(c.rot)
+                        c.vel = np.zeros(3)
+            elif c.state == "settle":
+                u = min(1.0, (t - c.ts) / C["settle"])
+                c.rot = orthonormal(c.rot0 * (1 - u) + c.rot1 * u)
+                c.pos[1] = gy + self.h_low(c)
+                if u >= 1:
+                    c.state = "rest"
+                    c.rest_end = min(t + rng.uniform(*C["rest"]), self.cleanup - C["fade"] - 0.05)
+            elif c.state == "rest":
+                if t >= c.rest_end:
+                    c.state, c.tf = "fade", t
+            elif c.state == "fade":
+                c.alpha = 1 - (t - c.tf) / C["fade"]
+                if c.alpha <= 0:
+                    c.state = "dead"
+            elif c.state == "orbit":
+                c.ang += c.orbit * dt
+                c.y += c.rise * dt
+                prog = min(1.0, max(0.0, (c.y - gy) / max(c.top - gy, 1e-3)))
+                r = c.r0 * (1 - 0.35 * prog)
+                c.pos = self.o0 + np.array([math.cos(c.ang) * r, c.y, -math.sin(c.ang) * r])
+                c.rot = orthonormal(axis_angle(c.axis, c.spin * dt) @ c.rot)
+                if c.y >= c.top:
+                    self.start_dissolve(c, t, fxpos)
+                if t >= c.G["release"] and c.d0 is None:
+                    tang = np.array([-math.sin(c.ang), 0.0, -math.cos(c.ang)])
+                    c.vel = tang * c.orbit * r + np.array([0, rng.uniform(4, 12) * s, 0])
+                    c.state, c.dissolve = "fly", True
+                    c.dissolve_at = t + rng.uniform(0.15, 0.45)
+        fx = self.C.get("fx")
+        return [(fx, self.s, p) for p in fxpos] if fx else []
+
+    def visible(self):
+        return [c for c in self.list if c.state not in ("wait", "dead")]
+
+    def draw_shadows(self, buf, cam):
+        from PIL import ImageDraw, ImageFilter
+        H, W = buf.shape[:2]
+        for c in self.visible():
+            sz = c.size * c.k
+            h = c.pos[1] - self.gy - sz * 0.5
+            a = 0.35 * max(0.0, 1 - h / (4 + 3 * sz)) * c.alpha
+            if a < 0.02:
+                continue
+            rr = 0.62 * sz * (1 + 0.1 * max(h, 0))
+            pts = [cam.project(np.array([c.pos[0] + rr * math.cos(q), self.gy + 0.02, c.pos[2] + rr * math.sin(q)]))
+                   for q in np.linspace(0, 2 * math.pi, 14, endpoint=False)]
+            if any(p is None for p in pts):
+                continue
+            xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+            x0, y0 = int(math.floor(min(xs))) - 2, int(math.floor(min(ys))) - 2
+            x1, y1 = int(math.ceil(max(xs))) + 2, int(math.ceil(max(ys))) + 2
+            if x1 <= 0 or y1 <= 0 or x0 >= W or y0 >= H or x1 - x0 > 400:
+                continue
+            m = Image.new("L", (x1 - x0, y1 - y0), 0)
+            ImageDraw.Draw(m).polygon([(x - x0, y - y0) for x, y in zip(xs, ys)], fill=255)
+            m = m.filter(ImageFilter.GaussianBlur(1.2))
+            mm = np.asarray(m, np.float32)[..., None] / 255 * a
+            xa, ya, xb, yb = max(0, x0), max(0, y0), min(W, x1), min(H, y1)
+            sub = mm[ya - y0:yb - y0, xa - x0:xb - x0]
+            buf[ya:yb, xa:xb] *= (1 - sub)
+
+    def draw_cube(self, buf, cam, c, t):
+        from PIL import ImageDraw
+        sz = c.size * c.k
+        if sz < 0.02 or c.alpha <= 0:
+            return
+        corners = {}
+        for f in self.FACES:
+            for q in f:
+                if q not in corners:
+                    w = c.pos + c.rot @ (np.array(q, float) * sz * 0.5)
+                    pr = cam.project(w)
+                    if pr is None:
+                        return
+                    corners[q] = (pr[0], pr[1], w)
+        xs = [v[0] for v in corners.values()]
+        ys = [v[1] for v in corners.values()]
+        H, W = buf.shape[:2]
+        x0, y0 = int(math.floor(min(xs))) - 1, int(math.floor(min(ys))) - 1
+        x1, y1 = int(math.ceil(max(xs))) + 1, int(math.ceil(max(ys))) + 1
+        if x1 <= 0 or y1 <= 0 or x0 >= W or y0 >= H or (x1 - x0) * (y1 - y0) > 250000:
+            return
+        ss = 4 if (x1 - x0) < 60 else 2
+        pw, ph = (x1 - x0), (y1 - y0)
+        rgb = np.zeros((ph, pw, 3), np.float32)
+        acc = np.zeros((ph, pw, 1), np.float32)
+        neon_u = 0.0
+        if c.neon:
+            neon_u = 1.0
+        elif c.d0 is not None:
+            neon_u = min(1.0, (t - c.d0) / 0.06)
+        for f, nrm in zip(self.FACES, self.NORMALS):
+            n = c.rot @ np.array(nrm, float)
+            fc = c.pos + n * sz * 0.5
+            if n @ (cam.C - fc) <= 0:
+                continue
+            shade = 0.42 + 0.58 * max(0.0, float(n @ self.SUN))
+            col = c.col * shade
+            for Lt in self.lights:
+                inten = light_at(Lt, t)
+                if inten <= 0:
+                    continue
+                lp = self.o0 + np.array([0, Lt["h"] * (self.zone["H"] if Lt.get("hu") == "H" else self.s), 0])
+                dv = lp - c.pos
+                d = np.linalg.norm(dv)
+                rng_ = Lt["range"] * self.s
+                if d >= rng_:
+                    continue
+                fall = (1 - d / rng_) ** 2
+                col = col + c.col * (np.array(Lt["color"], float) / 255) * inten * 0.16 * max(0.0, float(n @ dv) / d) * fall
+            if neon_u > 0:
+                col = col * (1 - neon_u) + c.ncol * 1.3 * neon_u
+            m = Image.new("L", (pw * ss, ph * ss), 0)
+            ImageDraw.Draw(m).polygon([((corners[q][0] - x0) * ss, (corners[q][1] - y0) * ss) for q in f], fill=255)
+            mm = np.asarray(m.resize((pw, ph), Image.BOX), np.float32)[..., None] / 255
+            mm = np.minimum(mm, 1 - acc)
+            rgb += mm * col
+            acc += mm
+        a = acc * c.alpha
+        xa, ya, xb, yb = max(0, x0), max(0, y0), min(W, x1), min(H, y1)
+        dst = buf[ya:yb, xa:xb]
+        sa = a[ya - y0:yb - y0, xa - x0:xb - x0]
+        srgb = rgb[ya - y0:yb - y0, xa - x0:xb - x0] * c.alpha
+        dst *= (1 - sa)
+        dst += srgb
