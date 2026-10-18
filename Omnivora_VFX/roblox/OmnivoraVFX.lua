@@ -640,58 +640,93 @@ local function runMultiStream(L: Layer, e: ParticleEmitter, carrier: Instance, h
 	end)
 end
 
--- Sacudida de cámara (solo cliente). intensity ~ 0.5 (suave) .. 2 (fuerte)
-function OmnivoraVFX.Shake(intensity: number, duration: number?)
+-- Sacudidas de cámara (solo cliente). Todas se suman en un solo desplazamiento que se deshace al empezar el cuadro
+-- siguiente (antes de los scripts de cámara): la cámara nunca se corre, ni con la cámara normal ni con una cámara
+-- fija (Scriptable). Cada fuente devuelve su intensidad de ahora, o nil cuando terminó.
+type ShakeMixer = { sources: { () -> number? }, offset: CFrame, bound: boolean, seed: number }
+
+-- un solo mezclador para todos los módulos de VFX (Kaiju Zero, Omnívora, Astral Colossus): así los desplazamientos
+-- se deshacen en el mismo orden en que se aplican
+local function shakeMixer(): ShakeMixer
+	local g = shared :: any
+	local m = g.KZShakeMixer
+	if not m then
+		m = { sources = {}, offset = CFrame.identity, bound = false, seed = rng:NextNumber(0, 1000) }
+		g.KZShakeMixer = m
+	end
+	return m
+end
+
+local function addShakeSource(fn: () -> number?)
 	if not RunService:IsClient() then
 		return
 	end
-	local cam = workspace.CurrentCamera
-	if not cam then
+	local m = shakeMixer()
+	table.insert(m.sources, fn)
+	if m.bound then
 		return
 	end
-	local dur = duration or 0.9
+	m.bound = true
 	local t0 = time()
-	local name = "KZShake" .. tostring(rng:NextInteger(1, 1000000000))
-	local seed = rng:NextNumber(0, 1000)
-	RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
-		local t = time() - t0
-		if t > dur then
-			RunService:UnbindFromRenderStep(name)
+	RunService:BindToRenderStep("KZShakeUndo", Enum.RenderPriority.First.Value, function()
+		local cam = workspace.CurrentCamera
+		if cam and m.offset ~= CFrame.identity then
+			cam.CFrame = cam.CFrame * m.offset:Inverse()
+		end
+		m.offset = CFrame.identity
+		if #m.sources == 0 then
+			RunService:UnbindFromRenderStep("KZShakeUndo")
+			RunService:UnbindFromRenderStep("KZShakeApply")
+			m.bound = false
+		end
+	end)
+	RunService:BindToRenderStep("KZShakeApply", Enum.RenderPriority.Camera.Value + 1, function()
+		local a = 0
+		local i = 1
+		while i <= #m.sources do
+			local v = m.sources[i]()
+			if v == nil then
+				table.remove(m.sources, i)
+			else
+				a += v
+				i += 1
+			end
+		end
+		local cam = workspace.CurrentCamera
+		if not cam or a <= 0 then
 			return
 		end
-		local a = intensity * math.exp(-t / (dur * 0.35))
-		local rx = math.noise(seed, t * 24) * a * 0.03
-		local ry = math.noise(seed + 17, t * 24) * a * 0.03
-		local rz = math.noise(seed + 31, t * 16) * a * 0.015
-		cam.CFrame = cam.CFrame * CFrame.Angles(rx, ry, rz)
+		local t = time() - t0
+		m.offset = CFrame.Angles(math.noise(m.seed, t * 24) * a * 0.03, math.noise(m.seed + 17, t * 24) * a * 0.03,
+			math.noise(m.seed + 31, t * 16) * a * 0.015)
+		cam.CFrame = cam.CFrame * m.offset
 	end)
 end
 
--- Sacudida continua que crece de i0 a i1 durante `duration` y se detiene al final (solo cliente).
+-- Sacudida corta: intensity ~ 0.5 (suave) .. 2 (fuerte)
+function OmnivoraVFX.Shake(intensity: number, duration: number?)
+	local dur = duration or 0.9
+	local t0 = time()
+	addShakeSource(function()
+		local t = time() - t0
+		if t > dur then
+			return nil
+		end
+		return intensity * math.exp(-t / (dur * 0.35))
+	end)
+end
+
+-- Sacudida continua que crece de i0 a i1 durante `duration` y se detiene al final.
 -- power > 1 hace que crezca más hacia el final.
 function OmnivoraVFX.ShakeRamp(i0: number, i1: number, duration: number, power: number?)
-	if not RunService:IsClient() then
-		return
-	end
-	local cam = workspace.CurrentCamera
-	if not cam then
-		return
-	end
 	local t0 = time()
 	local pw = power or 1
-	local name = "KZShakeRamp" .. tostring(rng:NextInteger(1, 1000000000))
-	local seed = rng:NextNumber(0, 1000)
-	RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
+	addShakeSource(function()
 		local t = time() - t0
 		if t > duration then
-			RunService:UnbindFromRenderStep(name)
-			return
+			return nil
 		end
-		local a = i0 + (i1 - i0) * (t / duration) ^ pw
-		local rx = math.noise(seed, t * 24) * a * 0.03
-		local ry = math.noise(seed + 17, t * 24) * a * 0.03
-		local rz = math.noise(seed + 31, t * 16) * a * 0.015
-		cam.CFrame = cam.CFrame * CFrame.Angles(rx, ry, rz)
+		return i0 + (i1 - i0) * (t / duration) ^ pw
 	end)
 end
 
@@ -1180,22 +1215,16 @@ local function playBeam(spec: Layer, origin: any, target: any, scale: number?, s
 			end)
 		end
 		local r = spec.shake_ramp
-		local cam = workspace.CurrentCamera
-		if r and cam then
-			local seed = rng:NextNumber(0, 1000)
-			local name = "KZBeamShake" .. tostring(rng:NextInteger(1, 1000000000))
-			RunService:BindToRenderStep(name, Enum.RenderPriority.Camera.Value + 1, function()
+		if r then
+			addShakeSource(function()
 				local tt = time() - t0
 				if tt > math.min(r[2], stopAt or r[2]) or not holder.Parent then
-					RunService:UnbindFromRenderStep(name)
-					return
+					return nil
 				end
 				if tt < r[1] then
-					return
+					return 0
 				end
-				local k = shake * (r[3] + (r[4] - r[3]) * ((tt - r[1]) / (r[2] - r[1])) ^ r[5])
-				cam.CFrame = cam.CFrame * CFrame.Angles(math.noise(seed, tt * 24) * k * 0.03,
-					math.noise(seed + 17, tt * 24) * k * 0.03, math.noise(seed + 31, tt * 16) * k * 0.015)
+				return shake * (r[3] + (r[4] - r[3]) * ((tt - r[1]) / (r[2] - r[1])) ^ r[5])
 			end)
 		end
 	end

@@ -45,6 +45,11 @@ end
 local function transpose(r) return { r[1], r[4], r[7], r[2], r[5], r[8], r[3], r[6], r[9] } end
 local I = { 1, 0, 0, 0, 1, 0, 0, 0, 1 }
 C.__add = function(a, b) return mat(a.r, a.p + b) end
+C.__sub = function(a, b) return mat(a.r, a.p - b) end
+C.__eq = function(a, b)
+	for i = 1, 9 do if math.abs(a.r[i] - b.r[i]) > 1e-9 then return false end end
+	return (a.p - b.p).Magnitude < 1e-9
+end
 C.__mul = function(a, b)
 	if getmetatable(b) == C then return mat(mulMM(a.r, b.r), a.p + mulMV(a.r, b.p)) end
 	return a.p + mulMV(a.r, b)
@@ -56,6 +61,13 @@ C.__index = function(t, k)
 	if k == "LookVector" then return mulMV(t.r, v3(0, 0, -1)) end
 	if k == "RightVector" then return mulMV(t.r, v3(1, 0, 0)) end
 	if k == "PointToWorldSpace" then return function(self, v) return self.p + mulMV(self.r, v) end end
+	if k == "Inverse" then return function(self)
+		local rt = transpose(self.r)
+		return mat(rt, -mulMV(rt, self.p))
+	end end
+	if k == "X" then return t.p.X end
+	if k == "Y" then return t.p.Y end
+	if k == "Z" then return t.p.Z end
 	if k == "PointToObjectSpace" then return function(self, v) return mulMV(transpose(self.r), v - self.p) end end
 	if k == "VectorToWorldSpace" then return function(self, v) return mulMV(self.r, v) end end
 	if k == "Lerp" then return function(self, o, u)
@@ -80,6 +92,7 @@ M.CFrame = {
 		local u = r:Cross(f)                          -- UpVector = Y
 		return mat({ r.X, u.X, -f.X, r.Y, u.Y, -f.Y, r.Z, u.Z, -f.Z }, at)
 	end,
+	identity = mat(I, v3()),
 	fromAxisAngle = function(ax, ang)
 		local u = ax.Unit; local c, s = math.cos(ang), math.sin(ang); local t = 1 - c
 		return mat({ t * u.X * u.X + c, t * u.X * u.Y - s * u.Z, t * u.X * u.Z + s * u.Y,
@@ -118,7 +131,10 @@ M.Random = { new = function() return {
 } end }
 M.Enum = setmetatable({}, { __index = function(_, enumName)
 	return setmetatable({}, { __index = function(_, item)
-		if enumName == "RenderPriority" then return { Value = 200, Name = item } end
+		if enumName == "RenderPriority" then
+			local v = ({ First = 0, Input = 100, Camera = 200, Character = 300, Last = 2000 })[item] or 200
+			return { Value = v, Name = item }
+		end
 		return { Name = item, EnumType = enumName }
 	end })
 end })
@@ -281,10 +297,14 @@ local RunService = {
 		return c
 	end },
 	IsClient = function() return true end,
-	BindToRenderStep = function(_, name, prio, fn) renders[name] = fn end,
+	BindToRenderStep = function(_, name, prio, fn) renders[name] = { prio = prio, fn = fn } end,
 	UnbindFromRenderStep = function(_, name) renders[name] = nil end,
 }
+M.lighting = Inst.new("Lighting")
+M.playerGui = Inst.new("PlayerGui")
 local services = {
+	Lighting = M.lighting,
+	Players = { LocalPlayer = { PlayerGui = M.playerGui } },
 	Debris = { AddItem = function(_, item, t) M.task.delay(t, function() item:Destroy() end) end },
 	TweenService = { Create = function() return { Play = function() end } end },
 	RunService = RunService,
@@ -310,7 +330,11 @@ function M.step(dt)
 		end
 	end
 	for _, c in heart do if c.on then c.fn(dt) end end
-	for _, fn in renders do fn() end
+	-- como en Roblox: en orden de prioridad (First antes que Camera)
+	local order = {}
+	for _, r in renders do table.insert(order, r) end
+	table.sort(order, function(a, b) return a.prio < b.prio end)
+	for _, r in order do r.fn() end
 end
 function M.pending()
 	local h = 0

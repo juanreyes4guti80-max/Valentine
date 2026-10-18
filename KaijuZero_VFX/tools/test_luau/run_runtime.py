@@ -368,11 +368,32 @@ local function runAura(name, mod, fnName)
 	stepFor(0.1)
 	assert(R.isDestroyed(a3.Holder) and select(3, R.pending()) == 0, name .. ": quedó viva sin el modelo")
 end
+-- las sacudidas nunca corren la cámara: con una cámara fija (que nadie vuelve a poner en su sitio) queda igual
+do
+	R.reset()
+	local cam = workspace.CurrentCamera
+	local base = cam.CFrame
+	VFX.Shake(2, 0.5)
+	VFX.ShakeRamp(0.2, 1.5, 0.8, 2)
+	OMNI.Shake(1, 0.3)
+	local moved = false
+	for _ = 1, 30 do
+		R.step(1 / 60)
+		if not (cam.CFrame == base) then moved = true end
+	end
+	stepFor(1.0)
+	local _, _, _, rs = R.pending()
+	print(("%-17s   la cámara se movió durante la sacudida: %s | al terminar quedó en su sitio: %s | render=%d"):format(
+		"Sacudida", tostring(moved), tostring(cam.CFrame == base), rs))
+	assert(moved, "la sacudida no movió la cámara")
+	assert(cam.CFrame == base and rs == 0, "la cámara quedó corrida después de la sacudida")
+end
 runAura("CrimsonAura", VFX, "CrimsonAura")
 runAura("CosmicAura", OMNI, "CosmicAura")
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"
+b += "local shared = {}\n"   # en Roblox es una tabla global compartida entre scripts
 for k in G:
     b += f"local {k} = R.{k}\n"
 b += "local function loadModule()\n" + mod + "\nend\n"
