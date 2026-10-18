@@ -469,3 +469,7 @@ def cosmic_pillar_spec():
 
 COSMIC_PILLAR = cosmic_pillar_spec()
 SPECS = {"CosmicPillar": COSMIC_PILLAR}
+
+# el agujero negro usa los colores de este archivo: se importa al final
+import vfx_blackhole as _BH  # noqa: E402
+SPECS["BlackHole"] = _BH.BLACK_HOLE

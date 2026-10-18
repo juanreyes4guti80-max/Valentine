@@ -16,6 +16,10 @@ V.__mul = function(a, b)
 	if type(b) == "number" then return v3(a.X * b, a.Y * b, a.Z * b) end
 	return v3(a.X * b.X, a.Y * b.Y, a.Z * b.Z)
 end
+V.__div = function(a, b)
+	if type(b) == "number" then return v3(a.X / b, a.Y / b, a.Z / b) end
+	return v3(a.X / b.X, a.Y / b.Y, a.Z / b.Z)
+end
 V.__index = function(t, k)
 	if k == "Magnitude" then return math.sqrt(t.X ^ 2 + t.Y ^ 2 + t.Z ^ 2) end
 	if k == "Unit" then local m = math.sqrt(t.X ^ 2 + t.Y ^ 2 + t.Z ^ 2); return v3(t.X / m, t.Y / m, t.Z / m) end
@@ -23,6 +27,7 @@ V.__index = function(t, k)
 end
 function V.Dot(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end
 function V.Cross(a, b) return v3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X) end
+function V.Lerp(a, b, u) return v3(a.X + (b.X - a.X) * u, a.Y + (b.Y - a.Y) * u, a.Z + (b.Z - a.Z) * u) end
 M.Vector3 = { new = v3, xAxis = v3(1, 0, 0), yAxis = v3(0, 1, 0), zAxis = v3(0, 0, 1), zero = v3(0, 0, 0) }
 M.Vector2 = { new = function(x, y) return { X = x, Y = y } end }
 
@@ -132,7 +137,9 @@ M.task = {
 
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
-	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0 }
+	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0,
+	lensMax = 0 }
+M.orbPath = {}
 local live = {}
 -- lo que devuelve el rayo al tocar el suelo: una Part de pasto verde (no cuenta como instancia viva)
 local groundFake = setmetatable({}, { __index = {
@@ -202,6 +209,9 @@ function Inst.new(class)
 			if k == "Name" and v == "Rock" then M.stats.rocks += 1 end
 			if k == "Name" and v == "Cube" then M.stats.cubes += 1 end
 			if props.Name == "Cube" and k == "Color" and v.G > v.R and v.G > v.B then M.stats.cubeGreen += 1 end
+			-- recorrido del agujero negro y tamaño de su lente
+			if props.Name == "Orb" and k == "CFrame" then table.insert(M.orbPath, v.p) end
+			if props.Name == "Lens" and k == "Size" then M.stats.lensMax = math.max(M.stats.lensMax, v.X) end
 			if props.Name == "Cube" and k == "CFrame" then
 				M.stats.cubeMaxR = math.max(M.stats.cubeMaxR, math.sqrt(v.p.X ^ 2 + v.p.Z ^ 2))
 			end
@@ -224,6 +234,7 @@ M.Instance = Inst
 M.RaycastParams = { new = function() return {} end }
 M.typeof = function(v)
 	if getmetatable(v) == V then return "Vector3" end
+	if getmetatable(v) == C then return "CFrame" end
 	if type(v) == "table" and rawget(v, "__props") then return "Instance" end
 	return typeof(v)
 end
@@ -282,6 +293,7 @@ function M.reset()
 	for k in M.stats do M.stats[k] = 0 end
 	M.stats.emitPos = {}
 	M.stats.emitNames = {}
+	M.orbPath = {}
 end
 function M.liveCount()
 	local n = 0

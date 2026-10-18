@@ -1,8 +1,9 @@
 """Texturas para los VFX cósmicos de OMNÍVORA: Kenney Particle Pack + muestras de Effekseer (CC0),
-normalizadas igual que las de Astral Colossus (escala de grises + alfa real), y dos propias:
+normalizadas igual que las de Astral Colossus (escala de grises + alfa real), y estas propias:
   om_cubes_2x2  cubitos sombreados (4 orientaciones) para las esquirlas más pequeñas
   om_cracks     grietas que salen del centro de la zona (para un Decal del suelo)
   om_nebula_2x2 el cuerpo cósmico del pilar, ya coloreado: bordes ondulados, nebulosa azul y púrpura, estrellas
+  om_hole       el núcleo del agujero negro: disco lleno de borde suave (se tiñe de azul casi negro)
 Las que vienen alargadas (rayos de 64x256, 64x512) se centran en un cuadrado: Roblox dibuja las
 partículas cuadradas y así el rayo queda fino.
 uso: python -I import_omnivora.py <carpeta_kenney> <carpeta Effekseer Release/Sample> <outdir>"""
@@ -222,6 +223,15 @@ def nebula_2x2(dst, cell=256, seed=11):
     Image.fromarray((out * 255).astype(np.uint8), "RGBA").save(dst)
 
 
+def hole(dst, n=256):
+    """Núcleo del agujero negro: disco lleno de borde suave (el color oscuro lo pone la capa)."""
+    yy, xx = np.mgrid[0:n, 0:n]
+    r = np.hypot((xx + 0.5) / n - 0.5, (yy + 0.5) / n - 0.5)
+    alpha = np.clip((0.46 - r) / 0.035, 0, 1)
+    img = np.stack([np.full((n, n), 255.0)] * 3 + [alpha * 255], -1).astype(np.uint8)
+    Image.fromarray(img, "RGBA").save(dst)
+
+
 def main(KEN, EFF, OUT):
     os.makedirs(OUT, exist_ok=True)
     for n in KENNEY:
@@ -246,7 +256,8 @@ def main(KEN, EFF, OUT):
     cubes_2x2(os.path.join(OUT, "om_cubes_2x2.png"))
     cracks(os.path.join(OUT, "om_cracks.png"))
     nebula_2x2(os.path.join(OUT, "om_nebula_2x2.png"))
-    print("OK om_cubes_2x2, om_cracks, om_nebula_2x2")
+    hole(os.path.join(OUT, "om_hole.png"))
+    print("OK om_cubes_2x2, om_cracks, om_nebula_2x2, om_hole")
     here = os.path.dirname(os.path.abspath(__file__))
     for lic in ("KENNEY_LICENSE.txt", "EFFEKSEER_SAMPLES_LICENSE_CC0.txt"):
         shutil.copy(os.path.join(here, "..", "textures", lic), os.path.join(OUT, lic))

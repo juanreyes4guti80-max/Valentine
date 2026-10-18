@@ -32,4 +32,5 @@ kk_twirl_02.png
 kz_scorch.png
 om_cracks.png
 om_cubes_2x2.png
+om_hole.png
 om_nebula_2x2.png

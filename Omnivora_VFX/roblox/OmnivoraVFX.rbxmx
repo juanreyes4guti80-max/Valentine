@@ -4,13 +4,15 @@
 			<string name="Name">OmnivoraVFX</string>
 			<ProtectedString name="Source"><![CDATA[--!nonstrict
 --[[
-	OmnivoraVFX — VFX cósmicos (el vacío: violeta profundo, azul índigo y negro estelar) para OMNÍVORA
-	(generado automáticamente desde vfx_omnivora.py; edita allí y regenera)
+	OmnivoraVFX — VFX cósmicos (azul muy oscuro, celeste y blanco, con el púrpura de su boca) para OMNÍVORA
+	(generado automáticamente desde vfx_omnivora.py y vfx_blackhole.py; edita allí y regenera)
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local OmnivoraVFX = require(ReplicatedStorage.OmnivoraVFX)
 		-- cf = centro de la zona en el SUELO; radio y altura del pilar en studs; escala; sacudida
 		OmnivoraVFX.CosmicPillar(CFrame.new(centroEnElSuelo), 18, 120, 1, 1)
+		-- agujero negro desde la boca hasta dos enemigos (detona a los OmnivoraVFX.BlackHoleImpact s)
+		OmnivoraVFX.BlackHole(bocaDeOmnivora, { enemigo1, enemigo2 }, 1, 1)
 
 	ANTES DE USARLO:
 	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
@@ -64,6 +66,7 @@ OmnivoraVFX.TEXTURES = {
 	kz_scorch = "rbxassetid://0",
 	om_cracks = "rbxassetid://0",
 	om_cubes_2x2 = "rbxassetid://0",
+	om_hole = "rbxassetid://0",
 	om_nebula_2x2 = "rbxassetid://0",
 }
 
@@ -73,6 +76,8 @@ OmnivoraVFX.Parent = workspace :: Instance
 OmnivoraVFX.Quality = 1
 -- Luz breve en el impacto (del color del efecto)
 OmnivoraVFX.UseLight = true
+-- Lente de vidrio que distorsiona el fondo detrás del agujero negro (solo con gráficos altos)
+OmnivoraVFX.Lens = true
 -- Color y material de los cubos de destrucción (nil = los del suelo donde sale el efecto)
 OmnivoraVFX.CubeColor = nil :: Color3?
 OmnivoraVFX.CubeMaterial = nil :: Enum.Material?
@@ -915,7 +920,12 @@ local function zoneK(L: Layer, Z: Zone): number
 end
 
 local function zoneY(L: Layer, Z: Zone, h: number): number
-	return if L.hu == "H" then h * Z.H else h * zoneK(L, Z)
+	if L.hu == "H" then
+		return h * Z.H
+	elseif L.hu == "s" then
+		return h * Z.s
+	end
+	return h * zoneK(L, Z)
 end
 
 -- capas que cubren la superficie del pilar: más partículas si el pilar es más alto/ancho que su tamaño
@@ -1352,18 +1362,16 @@ local function playCubes(spec: Layer, Z: Zone)
 	end)
 end
 
--- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
-local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
-	local s = (scale or 1) * (spec.scale_mult or 1)
-	local R = radius or spec.zone.radius * s
-	local H = height or spec.zone.height * s
+-- arranca las capas de una zona circular (+ cubos de destrucción y luces); snap = hasta cuántos studs
+-- se baja o se sube el centro para apoyarlo en el suelo
+local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: number, snap: number): (Part, Zone)
 	-- la zona queda plana (solo se usa el giro horizontal de cf) y apoyada en el suelo
 	local pos = cf.Position
 	local look = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
 	local flat = if look.Magnitude > 1e-3 then CFrame.lookAt(pos, pos + look) else CFrame.new(pos)
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), flat, OmnivoraVFX.Parent)
 	local gColor, gMaterial, gy = groundLook(pos, holder)
-	if gy and math.abs(gy - pos.Y) < 8 then
+	if gy and math.abs(gy - pos.Y) < snap then
 		holder.CFrame = flat + Vector3.new(0, gy - pos.Y, 0)
 	end
 	local Z: Zone = {
@@ -1372,7 +1380,9 @@ local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?
 	}
 	local spinners: { [number]: BasePart } = {}
 	for _, L in spec.layers do
-		if L.decal then
+		if L.orb then
+			continue -- van pegadas al proyectil (runOrb)
+		elseif L.decal then
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
 				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false)
@@ -1424,6 +1434,217 @@ local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?
 		playCubes(spec, Z)
 	end
 	zoneLights(spec, Z)
+	return holder, Z
+end
+
+-- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
+local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local holder = startZone(spec, cf, s, radius or spec.zone.radius * s, height or spec.zone.height * s, 8)
+	finish(spec, holder, s, shake, {})
+	return holder
+end
+
+-- ---------------------------------------------------------------- proyectil que crece (agujero negro)
+-- posición y radio del proyectil en el segundo t: se forma en A, viaja a B creciendo y colapsa en B
+local function orbAt(O: Layer, t: number, A: Vector3, B: Vector3, s: number): (Vector3, number)
+	local S = O.size
+	if t < O.travel[1] then
+		local u = math.clamp((t - O.form[1]) / math.max(O.form[2] - O.form[1], 1e-3), 0, 1)
+		return A, S[2] * (1 - (1 - u) ^ 2) * s
+	elseif t < O.travel[2] then
+		local u = (t - O.travel[1]) / math.max(O.travel[2] - O.travel[1], 1e-3)
+		local e = u * u * (3 - 2 * u)
+		return A:Lerp(B, e) + Vector3.new(0, O.arc * s * math.sin(math.pi * u), 0), (S[2] + (S[3] - S[2]) * u ^ 0.9) * s
+	elseif t < O.collapse[1] then
+		return B, S[3] * s
+	end
+	local u = math.clamp((t - O.collapse[1]) / math.max(O.collapse[2] - O.collapse[1], 1e-3), 0, 1)
+	return B, (S[3] + (S[4] - S[3]) * u * u) * s
+end
+
+-- orientación del proyectil: mira hacia donde va y su "Top" (el eje del disco) se inclina tilt grados
+-- hacia la cámara, para que el disco se vea abierto desde donde se mire
+local function orbFrame(O: Layer, A: Vector3, B: Vector3): CFrame
+	local dir = Vector3.new(B.X - A.X, 0, B.Z - A.Z)
+	dir = if dir.Magnitude > 1e-3 then dir.Unit else Vector3.new(0, 0, -1)
+	local up = Vector3.yAxis
+	local cam = workspace.CurrentCamera
+	if cam then
+		local side = cam.CFrame.Position - (A + B) * 0.5
+		side = Vector3.new(side.X, 0, side.Z)
+		if side.Magnitude > 1e-3 then
+			up = (Vector3.yAxis * math.cos(math.rad(O.tilt)) + side.Unit * math.sin(math.rad(O.tilt))).Unit
+		end
+	end
+	local look = dir - up * dir:Dot(up)
+	if look.Magnitude < 1e-3 then
+		return CFrame.lookAt(Vector3.zero, dir)
+	end
+	return CFrame.lookAt(Vector3.zero, look.Unit, up)
+end
+
+-- capas pegadas al proyectil (orb = "sprite", "shell", "trail", "ground" o "burst"):
+--   sprite/burst: en su centro; shell: salen de una esfera de radio shell × r y caen hacia el centro;
+--   trail: estela que se queda atrás; ground: en el suelo, debajo del proyectil.
+--   grow: los tamaños van en radios del proyectil (crecen con él); locked: LockedToPart.
+local function runOrb(spec: Layer, Z: Zone, A: Vector3, B: Vector3)
+	local O = spec.orb
+	local s = Z.s
+	local holder = Z.holder
+	local rot = orbFrame(O, A, B)
+	local carrier = invisiblePart("Orb", Vector3.new(0.2, 0.2, 0.2), CFrame.new(A) * rot, holder)
+	local center = Instance.new("Attachment")
+	center.Name = "Center"
+	center.Parent = carrier
+	local ground = Instance.new("Attachment")
+	ground.Name = "OrbGround"
+	ground.Parent = holder
+	ground.WorldPosition = Vector3.new(A.X, Z.groundY, A.Z)
+	local items: { { L: Layer, e: ParticleEmitter, shell: BasePart? } } = {}
+	for _, L in spec.layers do
+		if not L.orb then
+			continue
+		end
+		local e = configureEmitter(L, s)
+		local shell: BasePart? = nil
+		if L.shell or L.shell_abs then
+			local d = if L.shell_abs then 2 * L.shell_abs * s else 0.2
+			local part = invisiblePart(L.name .. "_Shell", Vector3.new(d, d, d), CFrame.new(A), holder)
+			part.Shape = Enum.PartType.Ball
+			e.Shape = Enum.ParticleEmitterShape.Sphere
+			e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+			e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Inward
+			e.LockedToPart = true
+			e.Parent = part
+			shell = part
+		elseif L.orb == "ground" then
+			e.Parent = ground
+		else
+			e.LockedToPart = L.locked == true
+			e.Parent = center
+		end
+		for _, ev in L.emit do
+			local n = quality(ev[2])
+			task.delay(ev[1], function()
+				if e.Parent then
+					e:Emit(n)
+				end
+			end)
+		end
+		if L.stream then
+			runStream(L, e)
+		end
+		if L.clear_at then
+			clearAt(e, L.clear_at)
+		end
+		table.insert(items, { L = L, e = e, shell = shell })
+	end
+	-- lente de vidrio detrás del agujero (del lado contrario a la cámara): dobla la luz del fondo. Roblox
+	-- solo dibuja la refracción con gráficos altos, y a través del vidrio no se ven partículas: por eso va
+	-- detrás y las partículas del agujero quedan por delante
+	local lens: Part? = nil
+	if (OmnivoraVFX :: any).Lens and O.lens then
+		local lp = invisiblePart("Lens", Vector3.new(0.2, 0.2, 0.2), CFrame.new(A), holder)
+		lp.Shape = Enum.PartType.Ball
+		lp.Material = Enum.Material.Glass
+		lp.Color = Color3.fromRGB(O.lens_color[1], O.lens_color[2], O.lens_color[3])
+		lens = lp
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = time() - t0
+		local pos, r = orbAt(O, t, A, B, s)
+		local done = t >= O.collapse[2]
+		local rr = math.max(r, 0.02 * s)
+		carrier.CFrame = CFrame.new(pos) * rot
+		ground.WorldPosition = Vector3.new(pos.X, Z.groundY, pos.Z)
+		for _, it in items do
+			local L = it.L
+			if L.grow then
+				it.e.Size = numberSeq(L.size, rr)
+			end
+			local sh = it.shell
+			if sh then
+				sh.CFrame = CFrame.new(pos)
+				if L.shell then
+					local d = 2 * L.shell * rr
+					sh.Size = Vector3.new(d, d, d)
+					it.e.Speed = NumberRange.new(L.speed[1] * rr, L.speed[2] * rr)
+				end
+			end
+		end
+		if lens then
+			local cam = workspace.CurrentCamera
+			if done or r < 0.1 * s or not cam then
+				lens.Transparency = 1
+			else
+				local lr = O.lens * r
+				lens.Size = Vector3.new(2 * lr, 2 * lr, 2 * lr)
+				lens.CFrame = CFrame.new(pos + (pos - cam.CFrame.Position).Unit * lr * 1.05)
+				lens.Transparency = O.lens_transparency
+			end
+		end
+		if done then
+			conn:Disconnect()
+			for _, it in items do
+				it.e.Enabled = false
+			end
+			if lens then
+				lens:Destroy()
+			end
+		end
+	end)
+end
+
+-- proyectil (agujero negro) desde la boca hasta los enemigos, y la detonación en la zona que los cubre
+local function playOrb(spec: Layer, mouth: any, targets: any, scale: number?, shake: number?, radius: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local O = spec.orb
+	local A: Vector3 = if typeof(mouth) == "CFrame" then mouth.Position else mouth
+	local list = if typeof(targets) == "table" then targets else { targets }
+	local pts: { Vector3 } = {}
+	for _, it in list do
+		if typeof(it) == "Vector3" then
+			table.insert(pts, it)
+		elseif typeof(it) == "CFrame" then
+			table.insert(pts, it.Position)
+		elseif typeof(it) == "Instance" then
+			if it:IsA("Model") then
+				table.insert(pts, (it :: Model):GetPivot().Position)
+			elseif it:IsA("BasePart") then
+				table.insert(pts, (it :: BasePart).Position)
+			end
+		end
+	end
+	local c: Vector3
+	if #pts > 0 then
+		c = Vector3.zero
+		for _, p in pts do
+			c += p
+		end
+		c /= #pts
+	else -- sin enemigos: hacia adelante de la boca
+		local fwd = if typeof(mouth) == "CFrame" then mouth.LookVector else Vector3.new(0, 0, -1)
+		fwd = Vector3.new(fwd.X, 0, fwd.Z)
+		fwd = if fwd.Magnitude > 1e-3 then fwd.Unit else Vector3.new(0, 0, -1)
+		c = A + fwd * O.reach * s
+	end
+	-- la detonación cubre a todos los enemigos: radio hasta el más lejano del centro + margen
+	local far = 0
+	for _, p in pts do
+		far = math.max(far, Vector3.new(p.X - c.X, 0, p.Z - c.Z).Magnitude)
+	end
+	local R = radius or math.max(O.min_radius * s, far + O.margin * s)
+	local look = Vector3.new(c.X - A.X, 0, c.Z - A.Z)
+	local cf = if look.Magnitude > 1e-3 then CFrame.lookAt(c, c + look) else CFrame.new(c)
+	local holder, Z = startZone(spec, cf, s, R, spec.zone.height * s, 60)
+	runOrb(spec, Z, A, Vector3.new(c.X, Z.groundY + O.height * s, c.Z))
 	finish(spec, holder, s, shake, {})
 	return holder
 end
@@ -5896,6 +6117,2413 @@ local SPEC_CosmicPillar = {
 function OmnivoraVFX.CosmicPillar(cf: CFrame, radius: number?, height: number?, scale: number?, shake: number?): Part
 	return playZone(SPEC_CosmicPillar, cf, scale, radius, height, shake)
 end
+
+local SPEC_BlackHole = {
+	name = "BlackHole",
+	duration = 3.5,
+	cleanup = 5.94,
+	layers = {
+		{
+			name = "HoleAura",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 5.5, 0},
+				{1, 5.5, 0},
+			},
+			color = {
+				{
+					0,
+					{10, 14, 40},
+				},
+				{
+					1,
+					{6, 8, 26},
+				},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.08, 0.3, 0},
+				{0.9, 0.25, 0},
+				{1, 0.6, 0},
+			},
+			light_emission = 0,
+			zoffset = -1,
+			clear_at = 2.1,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DiskSwirl",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "fx_swirl_rings",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 6.8, 0},
+				{1, 6.8, 0},
+			},
+			color = {
+				{
+					0,
+					{130, 200, 255},
+				},
+				{
+					0.5,
+					{90, 160, 255},
+				},
+				{
+					1,
+					{120, 190, 255},
+				},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.1, 0.35, 0},
+				{0.88, 0.3, 0},
+				{0.95, 0.1, 0},
+				{1, 0.5, 0},
+			},
+			light_emission = 0.7,
+			zoffset = 0.5,
+			clear_at = 2.1,
+			brightness = 1,
+			rotation = {0, 360},
+			rot_speed = {-260, -260},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DiskWind",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "fx_wind_swirl",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 8, 0},
+				{1, 8, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 70, 250},
+				},
+				{
+					1,
+					{150, 55, 235},
+				},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.12, 0.3, 0},
+				{0.9, 0.28, 0},
+				{1, 0.6, 0},
+			},
+			light_emission = 0.6,
+			zoffset = 0.4,
+			clear_at = 2.1,
+			brightness = 1.1,
+			rotation = {0, 360},
+			rot_speed = {170, 170},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DiskTilt",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "kk_light_03",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 7, 0},
+				{1, 7, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 210, 255},
+				},
+				{
+					1,
+					{100, 170, 255},
+				},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.1, 0.45, 0},
+				{0.9, 0.4, 0},
+				{1, 0.65, 0},
+			},
+			light_emission = 0.7,
+			zoffset = 0.6,
+			clear_at = 2.1,
+			brightness = 1,
+			rotation = {0, 360},
+			rot_speed = {-200, -200},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DiskTiltPurple",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "fx_swirl_rings",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 9, 0},
+				{1, 9, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 100, 255},
+				},
+				{
+					1,
+					{150, 60, 235},
+				},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.12, 0.4, 0},
+				{0.9, 0.38, 0},
+				{1, 0.7, 0},
+			},
+			light_emission = 0.6,
+			zoffset = 0.3,
+			clear_at = 2.1,
+			brightness = 1.05,
+			rotation = {0, 360},
+			rot_speed = {120, 120},
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HoleCore",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "om_hole",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 2.15, 0},
+				{1, 2.15, 0},
+			},
+			color = {
+				{
+					0,
+					{4, 6, 20},
+				},
+				{
+					1,
+					{4, 6, 20},
+				},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			zoffset = 1.5,
+			clear_at = 2.1,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "PhotonRing",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "kk_circle_02",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 3.85, 0},
+				{1, 3.85, 0},
+			},
+			color = {
+				{
+					0,
+					{240, 248, 255},
+				},
+				{
+					1,
+					{190, 230, 255},
+				},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.06, 0.15, 0},
+				{0.86, 0.1, 0},
+				{0.93, 0, 0},
+				{1, 0.3, 0},
+			},
+			light_emission = 1,
+			zoffset = 2,
+			clear_at = 2.1,
+			brightness = 1.45,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "PhotonPurple",
+			orb = "sprite",
+			locked = true,
+			grow = true,
+			texture = "kk_circle_02",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {2.1, 2.1},
+			size = {
+				{0, 4.5, 0},
+				{1, 4.5, 0},
+			},
+			color = {
+				{
+					0,
+					{232, 160, 255},
+				},
+				{
+					1,
+					{190, 90, 250},
+				},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.08, 0.4, 0},
+				{0.9, 0.35, 0},
+				{1, 0.6, 0},
+			},
+			light_emission = 1,
+			zoffset = 1.9,
+			clear_at = 2.1,
+			brightness = 1.4,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Inflow",
+			orb = "shell",
+			shell = 3.4,
+			grow = true,
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			speed = {8.5, 10.5},
+			lifetime = {0.3, 0.36},
+			size = {
+				{0, 0.25, 0},
+				{0.4, 1.3, 0},
+				{1, 0.5, 0},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.25, 0.1, 0},
+				{1, 0.4, 0},
+			},
+			color = {
+				{
+					0,
+					{40, 90, 230},
+				},
+				{
+					0.6,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{240, 248, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			stream = {
+				{0.15, 0.55, 20, 45},
+				{0.55, 1.95, 45, 85},
+				{1.95, 2.08, 85, 0},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "InflowPurple",
+			orb = "shell",
+			shell = 3.8,
+			grow = true,
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			speed = {8.5, 10.5},
+			lifetime = {0.34, 0.4},
+			size = {
+				{0, 0.25, 0},
+				{0.4, 1.3, 0},
+				{1, 0.5, 0},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.25, 0.1, 0},
+				{1, 0.4, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			stream = {
+				{0.15, 0.55, 10, 22.5},
+				{0.55, 1.95, 22.5, 42.5},
+				{1.95, 2.08, 42.5, 0},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "InflowStars",
+			orb = "shell",
+			shell = 3,
+			grow = true,
+			texture = "fx_spark002",
+			speed = {6, 8},
+			lifetime = {0.38, 0.48},
+			size = {
+				{0, 0, 0},
+				{0.25, 0.32, 0},
+				{1, 0.12, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			stream = {
+				{0.2, 1.95, 25, 50},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FormGather",
+			orb = "shell",
+			shell_abs = 10,
+			texture = "kk_trace_06",
+			orientation = "VelocityParallel",
+			speed = {26, 30},
+			lifetime = {0.32, 0.38},
+			size = {
+				{0, 1, 0},
+				{0.3, 4.5, 0},
+				{1, 1.5, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.2, 0.2, 0},
+				{0.85, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{40, 90, 230},
+				},
+				{
+					0.6,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{240, 248, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			stream = {
+				{0, 0.5, 90, 60},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FormGatherPurple",
+			orb = "shell",
+			shell_abs = 8,
+			texture = "kk_trace_06",
+			orientation = "VelocityParallel",
+			speed = {21, 25},
+			lifetime = {0.32, 0.38},
+			size = {
+				{0, 1, 0},
+				{0.3, 4, 0},
+				{1, 1.5, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{0.2, 0.1, 0},
+				{0.85, 0.25, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			stream = {
+				{0, 0.5, 45, 30},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FormMotes",
+			orb = "shell",
+			shell_abs = 7,
+			texture = "fx_particle02",
+			speed = {16, 20},
+			lifetime = {0.38, 0.45},
+			size = {
+				{0, 0, 0},
+				{0.2, 1, 0},
+				{1, 0.4, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			stream = {
+				{0, 0.5, 60, 40},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FormGlow",
+			orb = "sprite",
+			locked = true,
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {0.65, 0.65},
+			size = {
+				{0, 1.5, 0},
+				{0.8, 13, 0},
+				{1, 6, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 60, 240},
+				},
+				{
+					1,
+					{90, 40, 200},
+				},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.7, 0.35, 0},
+				{1, 1, 0},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "LaunchPop",
+			orb = "burst",
+			texture = "kk_circle_02",
+			emit = {
+				{0.55, 1},
+			},
+			lifetime = {0.35, 0.35},
+			size = {
+				{0, 4, 0},
+				{1, 30, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.6, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{170, 220, 255},
+				},
+				{
+					0.5,
+					{90, 160, 255},
+				},
+				{
+					1,
+					{30, 70, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "LaunchFlash",
+			orb = "burst",
+			texture = "fx_halo",
+			emit = {
+				{0.55, 1},
+			},
+			lifetime = {0.22, 0.22},
+			size = {
+				{0, 6, 0},
+				{1, 22, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rotation = {0, 360},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Ripples",
+			orb = "burst",
+			locked = true,
+			grow = true,
+			texture = "kk_circle_02",
+			emit = {
+				{0.8, 1},
+				{1.05, 1},
+				{1.3, 1},
+				{1.55, 1},
+				{1.8, 1},
+			},
+			lifetime = {0.5, 0.5},
+			size = {
+				{0, 3.8, 0},
+				{1, 11, 0},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.5, 0.75, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{90, 150, 255},
+				},
+				{
+					0.5,
+					{50, 100, 230},
+				},
+				{
+					1,
+					{25, 50, 170},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.1,
+			zoffset = -0.5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Trail",
+			orb = "trail",
+			grow = true,
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			speed = {0, 1.5},
+			spread = {180, 180},
+			drag = 1,
+			lifetime = {0.55, 0.85},
+			size = {
+				{0, 1.6, 0},
+				{0.4, 2.4, 0},
+				{1, 2.8, 0},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.35, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.15,
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -2,
+			stream = {
+				{0.6, 1.95, 30, 34},
+			},
+			direction = "Top",
+			accel = {0, 0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "TrailDark",
+			orb = "trail",
+			grow = true,
+			texture = "kk_smoke_04",
+			speed = {0, 1},
+			spread = {180, 180},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 1.4, 0},
+				{1, 2.6, 0},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.4, 0.62, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{10, 16, 52},
+				},
+				{
+					0.5,
+					{6, 10, 40},
+				},
+				{
+					1,
+					{4, 6, 26},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2.5,
+			stream = {
+				{0.6, 1.95, 16, 20},
+			},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "TrailStars",
+			orb = "trail",
+			texture = "fx_particle02",
+			speed = {1, 4},
+			spread = {180, 180},
+			drag = 1.5,
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.1, 1.4, 0},
+				{0.3, 0.6, 0},
+				{0.5, 1.3, 0},
+				{0.75, 0.5, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			stream = {
+				{0.6, 1.95, 40, 50},
+			},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundPull",
+			orb = "ground",
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			shape = {
+				type = "Box",
+				size = {14, 1, 14},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {12, 26},
+			accel = {0, 25, 0},
+			lifetime = {0.55, 0.85},
+			size = {
+				{0, 0.55, 0.3},
+				{1, 0.35, 0.2},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					1,
+					{120, 124, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-300, 300},
+			stream = {
+				{0.75, 1.95, 30, 70},
+			},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundDust",
+			orb = "ground",
+			texture = "kk_smoke_04",
+			shape = {
+				type = "Box",
+				size = {16, 1, 16},
+				style = "Volume",
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {4, 10},
+			accel = {0, 6, 0},
+			lifetime = {0.8, 1.2},
+			size = {
+				{0, 3, 1},
+				{1, 9, 2},
+			},
+			transparency = {
+				{0, 0.65, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					0.5,
+					{128, 132, 146},
+				},
+				{
+					1,
+					{110, 114, 128},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			stream = {
+				{0.75, 1.95, 8, 16},
+			},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Implode",
+			orb = "shell",
+			shell_abs = 16,
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{1.95, 46},
+			},
+			speed = {70, 90},
+			lifetime = {0.15, 0.2},
+			size = {
+				{0, 2, 0},
+				{0.4, 9, 0},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ImplodePurple",
+			orb = "shell",
+			shell_abs = 14,
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{1.95, 26},
+			},
+			speed = {62, 80},
+			lifetime = {0.15, 0.2},
+			size = {
+				{0, 2, 0},
+				{0.4, 8, 0},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "CollapseFlare",
+			orb = "burst",
+			locked = true,
+			texture = "fx_glow",
+			emit = {
+				{1.95, 1},
+			},
+			lifetime = {0.16, 0.16},
+			size = {
+				{0, 6, 0},
+				{1, 18, 0},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DetFlash",
+			texture = "fx_glow",
+			lifetime = {0.26, 0.26},
+			size = {
+				{0, 10, 0},
+				{0.25, 28.8, 0},
+				{1, 32, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.4, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.1,
+			zoffset = 4,
+			ring_emit = {
+				{2.1, 1, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetStar",
+			texture = "kk_star_09",
+			lifetime = {0.32, 0.32},
+			size = {
+				{0, 14, 0},
+				{0.15, 48, 0},
+				{1, 10, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rotation = {0, 90},
+			zoffset = 5,
+			ring_emit = {
+				{2.1, 1, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetHalo",
+			texture = "fx_halo",
+			lifetime = {0.38, 0.42},
+			size = {
+				{0, 8, 0},
+				{1, 67.2, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.5, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{180, 225, 255},
+				},
+				{
+					0.5,
+					{90, 150, 255},
+				},
+				{
+					1,
+					{30, 70, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.1,
+			rotation = {0, 360},
+			zoffset = 3,
+			ring_emit = {
+				{2.1, 1, 0, 0, 8},
+				{2.15, 1, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetNebula",
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed_r = {0.7, 1.6},
+			drag = 2,
+			lifetime = {1, 1.4},
+			size = {
+				{0, 8, 0},
+				{0.3, 20, 0},
+				{1, 27.2, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.06, 0.25, 0},
+				{0.6, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.12,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -3,
+			ring_emit = {
+				{2.1, 16, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			accel = {0, 0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetShell",
+			texture = "kk_circle_02",
+			lifetime = {0.45, 0.45},
+			size = {
+				{0, 13.56, 0},
+				{1, 92.208, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{170, 220, 255},
+				},
+				{
+					0.5,
+					{90, 160, 255},
+				},
+				{
+					1,
+					{30, 70, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			zoffset = 4,
+			ring_emit = {
+				{2.1, 1, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetShellPurple",
+			texture = "kk_circle_02",
+			lifetime = {0.45, 0.45},
+			size = {
+				{0, 13.56, 0},
+				{1, 75.936, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			zoffset = 3.8,
+			ring_emit = {
+				{2.16, 1, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetStreaks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Top",
+			spread = {180, 180},
+			speed_r = {2.6, 4.2},
+			lifetime = {0.28, 0.42},
+			size = {
+				{0, 4, 0},
+				{0.3, 20, 0},
+				{1, 8, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.1,
+			ring_emit = {
+				{2.1, 54, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetPurple",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Top",
+			spread = {180, 180},
+			speed_r = {2.4, 3.8},
+			lifetime = {0.28, 0.42},
+			size = {
+				{0, 4, 0},
+				{0.3, 20, 0},
+				{1, 8, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.15,
+			ring_emit = {
+				{2.1, 30, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetStars",
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {180, 180},
+			speed_r = {0.9, 2.6},
+			drag = 2.2,
+			lifetime = {0.9, 1.5},
+			size = {
+				{0, 0, 0},
+				{0.08, 2.6, 0},
+				{0.3, 1.2, 0},
+				{0.5, 2.4, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			ring_emit = {
+				{2.1, 70, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetBolts",
+			texture = "fx_thunder",
+			lifetime = {0.08, 0.12},
+			size = {
+				{0, 14.4, 0},
+				{1, 17.6, 0},
+			},
+			color = {
+				{
+					0,
+					{240, 248, 255},
+				},
+				{
+					0.5,
+					{150, 210, 255},
+				},
+				{
+					1,
+					{60, 120, 235},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			ring_emit = {
+				{2.105, 1, 0.4029, 0.153, 10.639},
+				{2.128, 1, 0.6839, 0.055, 7.357},
+				{2.128, 1, 0.7576, 0.186, 6.391},
+				{2.154, 1, 0.5474, 0.229, 8.509},
+				{2.183, 1, 0.9551, 0.223, 7.189},
+				{2.212, 1, 0.9963, 0.366, 7.475},
+				{2.285, 1, 0.1366, 0.192, 8.973},
+				{2.31, 1, 0.2039, 0.488, 7.133},
+			},
+			rel = "r",
+			hu = "s",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetShock",
+			texture = "kk_circle_02",
+			rel = "r",
+			lifetime = {0.55, 0.55},
+			size = {
+				{0, 16.272, 0},
+				{1, 130.176, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.5, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{180, 225, 255},
+				},
+				{
+					0.5,
+					{90, 150, 255},
+				},
+				{
+					1,
+					{30, 70, 200},
+				},
+			},
+			light_emission = 0.35,
+			ring_emit = {
+				{2.1, 1, 0, 0, 0.2},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetShockSharp",
+			texture = "kk_circle_02",
+			rel = "r",
+			lifetime = {0.35, 0.35},
+			size = {
+				{0, 16.272, 0},
+				{1, 162.72, 0},
+			},
+			transparency = {
+				{0, 0.25, 0},
+				{0.6, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{180, 225, 255},
+				},
+				{
+					0.5,
+					{90, 150, 255},
+				},
+				{
+					1,
+					{30, 70, 200},
+				},
+			},
+			light_emission = 0.5,
+			ring_emit = {
+				{2.1, 1, 0, 0, 0.21},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetVoid",
+			texture = "fx_glow",
+			rel = "r",
+			lifetime = {1.8, 1.8},
+			size = {
+				{0, 10, 0},
+				{0.15, 35.2, 0},
+				{1, 36.8, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.1, 0.4, 0},
+				{0.8, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{10, 16, 52},
+				},
+				{
+					0.5,
+					{6, 10, 40},
+				},
+				{
+					1,
+					{4, 6, 26},
+				},
+			},
+			light_emission = 0,
+			ring_emit = {
+				{2.1, 1, 0, 0, 0.1},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetCracks",
+			texture = "om_cracks",
+			rel = "r",
+			lifetime = {1.8, 1.8},
+			rotation = {0, 360},
+			size = {
+				{0, 12, 0},
+				{0.12, 38, 0},
+				{1, 41.6, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.05, 0.25, 0},
+				{0.12, 0.02, 0},
+				{0.3, 0.15, 0},
+				{0.8, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{90, 160, 255},
+				},
+				{
+					0.15,
+					{190, 230, 255},
+				},
+				{
+					0.3,
+					{80, 150, 255},
+				},
+				{
+					1,
+					{30, 60, 180},
+				},
+			},
+			light_emission = 0.8,
+			ring_emit = {
+				{2.1, 1, 0, 0, 0.16},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetScorch",
+			texture = "kz_scorch",
+			rel = "r",
+			lifetime = {2, 2},
+			rotation = {0, 360},
+			size = {
+				{0, 8, 0},
+				{0.05, 36.8, 0},
+				{1, 38.4, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.05, 0.35, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{8, 12, 36},
+				},
+				{
+					1,
+					{14, 20, 50},
+				},
+			},
+			light_emission = 0,
+			zoffset = -1,
+			ring_emit = {
+				{2.1, 1, 0, 0, 0.08},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetDust",
+			texture = "kk_smoke_07",
+			rel = "r",
+			direction = "Front",
+			spread = {15, 8},
+			pitch = 8,
+			speed_r = {1.6, 2.6},
+			drag = 3,
+			accel = {0, 4, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 8, 2},
+				{0.3, 18, 3},
+				{1, 26, 4},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.2, 0.32, 0},
+				{0.6, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					0.5,
+					{128, 132, 146},
+				},
+				{
+					1,
+					{110, 114, 128},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -3,
+			ring_emit = {
+				{2.12, 1, 0, 0.5, 1.5},
+				{2.12, 1, 0.0714, 0.5, 1.5},
+				{2.12, 1, 0.1429, 0.5, 1.5},
+				{2.12, 1, 0.2143, 0.5, 1.5},
+				{2.12, 1, 0.2857, 0.5, 1.5},
+				{2.12, 1, 0.3571, 0.5, 1.5},
+				{2.12, 1, 0.4286, 0.5, 1.5},
+				{2.12, 1, 0.5, 0.5, 1.5},
+				{2.12, 1, 0.5714, 0.5, 1.5},
+				{2.12, 1, 0.6429, 0.5, 1.5},
+				{2.12, 1, 0.7143, 0.5, 1.5},
+				{2.12, 1, 0.7857, 0.5, 1.5},
+				{2.12, 1, 0.8571, 0.5, 1.5},
+				{2.12, 1, 0.9286, 0.5, 1.5},
+			},
+			speed = {0, 0},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CubeBits",
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Front",
+			pitch = 55,
+			spread = {30, 30},
+			speed_r = {1.6, 3.6},
+			accel = {0, -160, 0},
+			lifetime = {0.6, 1.1},
+			size = {
+				{0, 0.6, 0.3},
+				{1, 0.5, 0.25},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					1,
+					{120, 124, 140},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			ring_emit = {
+				{2.1, 1, 0.0002, 0.703, 0.6},
+				{2.102, 1, 0.112, 0.807, 0.6},
+				{2.102, 1, 0.1249, 0.457, 0.6},
+				{2.102, 1, 0.614, 0.933, 0.6},
+				{2.103, 1, 0.249, 0.883, 0.6},
+				{2.105, 1, 0.0989, 0.761, 0.6},
+				{2.105, 1, 0.1941, 0.992, 0.6},
+				{2.105, 1, 0.7831, 0.41, 0.6},
+				{2.107, 1, 0.4549, 0.572, 0.6},
+				{2.107, 1, 0.8531, 0.772, 0.6},
+				{2.108, 1, 0.2144, 0.639, 0.6},
+				{2.108, 1, 0.4548, 0.996, 0.6},
+				{2.108, 1, 0.8139, 0.537, 0.6},
+				{2.108, 1, 0.8207, 0.488, 0.6},
+				{2.108, 1, 0.921, 0.36, 0.6},
+				{2.111, 1, 0.1816, 0.969, 0.6},
+				{2.112, 1, 0.1763, 0.893, 0.6},
+				{2.112, 1, 0.4255, 0.637, 0.6},
+				{2.113, 1, 0.3343, 0.282, 0.6},
+				{2.115, 1, 0.2825, 0.225, 0.6},
+				{2.115, 1, 0.6127, 0.554, 0.6},
+				{2.116, 1, 0.8176, 0.624, 0.6},
+				{2.117, 1, 0.1406, 0.393, 0.6},
+				{2.118, 1, 0.7889, 0.899, 0.6},
+				{2.119, 1, 0.2971, 0.269, 0.6},
+				{2.119, 1, 0.4998, 0.8, 0.6},
+				{2.12, 1, 0.7884, 0.705, 0.6},
+				{2.121, 1, 0.7171, 0.652, 0.6},
+				{2.121, 1, 0.8597, 0.841, 0.6},
+				{2.122, 1, 0.2427, 0.85, 0.6},
+				{2.122, 1, 0.6745, 0.799, 0.6},
+				{2.123, 1, 0.4034, 0.957, 0.6},
+				{2.125, 1, 0.8954, 0.268, 0.6},
+				{2.126, 1, 0.2192, 0.475, 0.6},
+				{2.126, 1, 0.8362, 0.648, 0.6},
+				{2.128, 1, 0.0956, 0.786, 0.6},
+				{2.128, 1, 0.3683, 0.61, 0.6},
+				{2.129, 1, 0.4669, 0.695, 0.6},
+				{2.129, 1, 0.6929, 0.415, 0.6},
+				{2.129, 1, 0.8272, 0.888, 0.6},
+				{2.129, 1, 0.8541, 0.602, 0.6},
+				{2.13, 1, 0.3005, 0.636, 0.6},
+				{2.131, 1, 0.2548, 0.987, 0.6},
+				{2.132, 1, 0.7298, 0.5, 0.6},
+				{2.135, 1, 0.6512, 0.864, 0.6},
+				{2.136, 1, 0.6493, 0.651, 0.6},
+				{2.138, 1, 0.6901, 0.869, 0.6},
+				{2.139, 1, 0.3487, 0.88, 0.6},
+				{2.139, 1, 0.9935, 0.981, 0.6},
+				{2.14, 1, 0.0304, 0.918, 0.6},
+			},
+			speed = {0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AfterNebula",
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {2, 6},
+			drag = 1,
+			lifetime = {1, 1.4},
+			size = {
+				{0, 16, 0},
+				{1, 24, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.15, 0.55, 0},
+				{0.7, 0.65, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.1,
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -4,
+			ring_emit = {
+				{2.25, 6, 0, 0, 8},
+			},
+			rel = "r",
+			hu = "s",
+			accel = {0, 0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AfterStars",
+			texture = "kk_star_06",
+			direction = "Top",
+			spread = {180, 180},
+			speed = {1, 3},
+			lifetime = {0.7, 1.1},
+			size = {
+				{0, 0, 0},
+				{0.1, 3.2, 0},
+				{0.3, 1.4, 0},
+				{0.5, 3, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			ring_emit = {
+				{2.236, 1, 0.5385, 0.615, 7.134},
+				{2.272, 1, 0.0569, 0.452, 13.886},
+				{2.3, 1, 0.2286, 1.026, 6.716},
+				{2.31, 1, 0.8712, 0.741, 9.782},
+				{2.313, 1, 0.8029, 0.73, 1.347},
+				{2.381, 1, 0.9062, 0.475, 4.899},
+				{2.387, 1, 0.8465, 0.97, 10.078},
+				{2.456, 1, 0.5741, 0.809, 2.44},
+				{2.499, 1, 0.9411, 0.476, 9.137},
+				{2.543, 1, 0.7848, 1.049, 9.342},
+				{2.552, 1, 0.3426, 0.574, 11.046},
+				{2.584, 1, 0.6857, 0.73, 8.171},
+				{2.615, 1, 0.3086, 0.903, 13.875},
+				{2.742, 1, 0.2216, 0.685, 9.314},
+				{2.784, 1, 0.4015, 0.217, 7.765},
+				{2.788, 1, 0.7385, 0.994, 14.657},
+				{2.803, 1, 0.7859, 0.453, 2.623},
+				{2.824, 1, 0.0782, 0.567, 7.482},
+				{2.837, 1, 0.2483, 1.091, 1.925},
+				{2.859, 1, 0.7058, 0.705, 4.635},
+				{2.862, 1, 0.3389, 1.044, 11.908},
+				{2.928, 1, 0.3891, 0.83, 5.834},
+				{2.956, 1, 0.8388, 0.711, 11.262},
+				{2.964, 1, 0.3237, 0.241, 11.261},
+				{2.968, 1, 0.3132, 0.642, 7.316},
+				{2.999, 1, 0.0477, 0.771, 3.11},
+			},
+			rel = "r",
+			hu = "s",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+	},
+	shakes = {
+		{2.1, 1.6, 0.9},
+	},
+	shake_ramp = {0.3, 2.1, 0.08, 0.5, 1.6},
+	zone = {
+		radius = 16,
+		height = 40,
+	},
+	lights = {
+		{
+			t = 1.3,
+			h = 8,
+			color = {60, 100, 255},
+			brightness = 2,
+			range = 40,
+			rise = 0.6,
+			hold = 0.1,
+			fall = 0.1,
+		},
+		{
+			t = 2.1,
+			h = 8,
+			color = {140, 200, 255},
+			brightness = 10,
+			range = 60,
+			rise = 0.02,
+			hold = 0.06,
+			fall = 0.6,
+		},
+		{
+			t = 2.1,
+			h = 3,
+			color = {170, 80, 255},
+			brightness = 5,
+			range = 50,
+			rise = 0.05,
+			hold = 0.25,
+			fall = 0.9,
+		},
+	},
+	orb = {
+		form = {0, 0.55},
+		travel = {0.55, 1.95},
+		collapse = {1.95, 2.1},
+		size = {0, 1.3, 5, 0.7},
+		height = 8,
+		arc = 6,
+		tilt = 24,
+		lens = 4.2,
+		lens_transparency = 0.62,
+		lens_color = {24, 30, 80},
+		min_radius = 14,
+		margin = 7,
+		reach = 70,
+	},
+	cubes = {
+		gravity = 160,
+		bounce = 0.32,
+		friction = 0.55,
+		spin = {240, 820},
+		rest = {0.5, 1.3},
+		fade = 0.35,
+		settle = 0.12,
+		shrink = {0.16, 0.26},
+		dissolve_time = {0.18, 0.6},
+		color_var = {0.72, 1.08},
+		dark = 0.15,
+		neon_colors = {
+			{110, 185, 255},
+			{50, 110, 255},
+			{170, 220, 255},
+			{190, 80, 235},
+		},
+		groups = {
+			{
+				name = "Pulled",
+				mode = "lift",
+				count = 30,
+				t = {1.25, 1.75},
+				r = {0.1, 0.95},
+				size = {0.25, 1.2},
+				skew = 1.8,
+				lift = {2.5, 8},
+				release = {2.1, 2.13},
+				out = {20, 56},
+				up = {40, 85},
+				dissolve = 0.35,
+			},
+			{
+				name = "Blast",
+				mode = "blast",
+				count = 150,
+				t = {2.1, 2.16},
+				r = {0.2, 1.05},
+				size = {0.12, 1.3},
+				skew = 2.8,
+				out = {20, 66},
+				up = {30, 85},
+				dissolve = 0.35,
+				neon = 0.1,
+			},
+		},
+		fx = {
+			name = "CubeDissolve",
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {180, 180},
+			speed = {4, 12},
+			lifetime = {0.25, 0.4},
+			size = {
+				{0, 0, 0},
+				{0.2, 1.8, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.7,
+			rotation = {0, 45},
+			emit_n = 2,
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+	},
+}
+
+-- OMNÍVORA: un AGUJERO NEGRO se forma frente a su boca, avanza creciendo y distorsionando el entorno, y detona en medio de los enemigos (la explosión los cubre a todos) con destrucción de cubos. Para el combate por turnos: golpea a dos enemigos a la vez.
+-- mouth = la boca (Vector3 o CFrame): ahí se forma. targets = un enemigo o una lista (Vector3, BasePart
+-- o Model): detona en medio de ellos y la explosión los cubre a todos. radius = radio de la detonación
+-- (si no, se calcula con los enemigos: mínimo 14 × escala). Detona a los 2.1 s (ver BlackHoleImpact).
+function OmnivoraVFX.BlackHole(mouth: Vector3 | CFrame, targets: any, scale: number?, shake: number?, radius: number?): Part
+	return playOrb(SPEC_BlackHole, mouth, targets, scale, shake, radius)
+end
+-- segundo (desde la llamada) en que detona: para sincronizar el daño
+OmnivoraVFX.BlackHoleImpact = 2.1
 
 return OmnivoraVFX
 ]]></ProtectedString>

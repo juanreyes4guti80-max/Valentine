@@ -142,6 +142,40 @@ end
 runZone("CosmicPillar", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 5, 18, 120)
 runZone("Pillar 30/80", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), 30, 80, 1, 0) end, 5, 30, 80)
 runZone("Pillar 10/200 x1.5", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), 10, 200, 1.5, 2) end, 5, 10, 200)
+-- agujero negro: nace en la boca, llega sobre el centro de los enemigos y detona ahí
+local function runOrb(name, call, seconds, cx, cz, rad)
+	run(name, call, seconds)
+	local path, st = R.orbPath, R.stats
+	assert(#path > 20, name .. ": el agujero no se movió")
+	local a, b = path[1], path[#path]
+	print(("%-17s   agujero: de (%.0f, %.0f, %.0f) a (%.0f, %.0f, %.0f) | lente hasta %.0f studs | cubos=%d (color del suelo: %d) más lejano a %.0f studs | Clear=%d"):format(
+		"", a.X, a.Y, a.Z, b.X, b.Y, b.Z, st.lensMax, st.cubes, st.cubeGreen, st.cubeMaxR, st.clears))
+	assert(math.abs(b.X - cx) < 0.5 and math.abs(b.Z - cz) < 0.5, name .. ": no llegó sobre el centro de los enemigos")
+	assert(b.Y > 4, name .. ": llegó enterrado")
+	assert(st.lensMax > 10, name .. ": la lente no creció con el agujero")
+	assert(st.cubes > 40, name .. ": casi no hubo cubos")
+	assert(st.cubeGreen > st.cubes * 0.5, name .. ": los cubos no tomaron el color del suelo")
+	assert(st.clears > 0, name .. ": el agujero no se borró al detonar")
+	if rad then
+		assert(st.cubeMaxR > rad * 1.3, name .. ": los cubos no salieron despedidos")
+	end
+end
+runOrb("BlackHole x2", function()
+	return OMNI.BlackHole(R.Vector3.new(-90, 16, 0), { R.Vector3.new(0, 0, -12), R.Vector3.new(0, 0, 12) }, 1, 1)
+end, 6, 0, 0, 19)
+local enemy1 = R.Instance.new("Part")
+enemy1.CFrame = R.CFrame.new(10, 5, -15)
+local enemy2 = R.Instance.new("Model")
+enemy2.GetPivot = function() return R.CFrame.new(10, 5, 15) end
+runOrb("BlackHole Parts1.5", function()
+	return OMNI.BlackHole(R.CFrame.new(-60, 20, 30), { enemy1, enemy2 }, 1.5, 0)
+end, 6, 10, 0)
+runOrb("BlackHole 1 enemy", function()
+	return OMNI.BlackHole(R.CFrame.new(0, 14, 80), R.Vector3.new(0, 0, 0), 1, 2)
+end, 6, 0, 0, 14)
+runOrb("BlackHole sin obj", function()
+	return OMNI.BlackHole(R.CFrame.lookAt(R.Vector3.new(0, 14, 70), R.Vector3.new(0, 14, 0)), {}, 1, 1)
+end, 6, 0, 0, 14)
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"

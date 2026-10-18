@@ -170,13 +170,15 @@ DOC_KAIJU = """	KaijuFireVFX — VFX de fuego y lava para KAIJU ZERO
 		-- cf = punto del SUELO bajo la explosión; 1 = escala; 1 = intensidad de la sacudida de cámara
 		KaijuFireVFX.GiantExplosion(CFrame.new(puntoEnElSuelo), 1, 1)"""
 
-DOC_OMNIVORA = """	OmnivoraVFX — VFX cósmicos (el vacío: violeta profundo, azul índigo y negro estelar) para OMNÍVORA
-	(generado automáticamente desde vfx_omnivora.py; edita allí y regenera)
+DOC_OMNIVORA = """	OmnivoraVFX — VFX cósmicos (azul muy oscuro, celeste y blanco, con el púrpura de su boca) para OMNÍVORA
+	(generado automáticamente desde vfx_omnivora.py y vfx_blackhole.py; edita allí y regenera)
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local OmnivoraVFX = require(ReplicatedStorage.OmnivoraVFX)
 		-- cf = centro de la zona en el SUELO; radio y altura del pilar en studs; escala; sacudida
-		OmnivoraVFX.CosmicPillar(CFrame.new(centroEnElSuelo), 18, 120, 1, 1)"""
+		OmnivoraVFX.CosmicPillar(CFrame.new(centroEnElSuelo), 18, 120, 1, 1)
+		-- agujero negro desde la boca hasta dos enemigos (detona a los OmnivoraVFX.BlackHoleImpact s)
+		OmnivoraVFX.BlackHole(bocaDeOmnivora, { enemigo1, enemigo2 }, 1, 1)"""
 
 DOC_ASTRAL = """	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
 	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
@@ -1057,7 +1059,12 @@ local function zoneK(L: Layer, Z: Zone): number
 end
 
 local function zoneY(L: Layer, Z: Zone, h: number): number
-	return if L.hu == "H" then h * Z.H else h * zoneK(L, Z)
+	if L.hu == "H" then
+		return h * Z.H
+	elseif L.hu == "s" then
+		return h * Z.s
+	end
+	return h * zoneK(L, Z)
 end
 
 -- capas que cubren la superficie del pilar: más partículas si el pilar es más alto/ancho que su tamaño
@@ -1494,18 +1501,16 @@ local function playCubes(spec: Layer, Z: Zone)
 	end)
 end
 
--- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
-local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
-	local s = (scale or 1) * (spec.scale_mult or 1)
-	local R = radius or spec.zone.radius * s
-	local H = height or spec.zone.height * s
+-- arranca las capas de una zona circular (+ cubos de destrucción y luces); snap = hasta cuántos studs
+-- se baja o se sube el centro para apoyarlo en el suelo
+local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: number, snap: number): (Part, Zone)
 	-- la zona queda plana (solo se usa el giro horizontal de cf) y apoyada en el suelo
 	local pos = cf.Position
 	local look = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
 	local flat = if look.Magnitude > 1e-3 then CFrame.lookAt(pos, pos + look) else CFrame.new(pos)
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), flat, KaijuFireVFX.Parent)
 	local gColor, gMaterial, gy = groundLook(pos, holder)
-	if gy and math.abs(gy - pos.Y) < 8 then
+	if gy and math.abs(gy - pos.Y) < snap then
 		holder.CFrame = flat + Vector3.new(0, gy - pos.Y, 0)
 	end
 	local Z: Zone = {
@@ -1514,7 +1519,9 @@ local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?
 	}
 	local spinners: { [number]: BasePart } = {}
 	for _, L in spec.layers do
-		if L.decal then
+		if L.orb then
+			continue -- van pegadas al proyectil (runOrb)
+		elseif L.decal then
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
 				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false)
@@ -1566,6 +1573,217 @@ local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?
 		playCubes(spec, Z)
 	end
 	zoneLights(spec, Z)
+	return holder, Z
+end
+
+-- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
+local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local holder = startZone(spec, cf, s, radius or spec.zone.radius * s, height or spec.zone.height * s, 8)
+	finish(spec, holder, s, shake, {})
+	return holder
+end
+
+-- ---------------------------------------------------------------- proyectil que crece (agujero negro)
+-- posición y radio del proyectil en el segundo t: se forma en A, viaja a B creciendo y colapsa en B
+local function orbAt(O: Layer, t: number, A: Vector3, B: Vector3, s: number): (Vector3, number)
+	local S = O.size
+	if t < O.travel[1] then
+		local u = math.clamp((t - O.form[1]) / math.max(O.form[2] - O.form[1], 1e-3), 0, 1)
+		return A, S[2] * (1 - (1 - u) ^ 2) * s
+	elseif t < O.travel[2] then
+		local u = (t - O.travel[1]) / math.max(O.travel[2] - O.travel[1], 1e-3)
+		local e = u * u * (3 - 2 * u)
+		return A:Lerp(B, e) + Vector3.new(0, O.arc * s * math.sin(math.pi * u), 0), (S[2] + (S[3] - S[2]) * u ^ 0.9) * s
+	elseif t < O.collapse[1] then
+		return B, S[3] * s
+	end
+	local u = math.clamp((t - O.collapse[1]) / math.max(O.collapse[2] - O.collapse[1], 1e-3), 0, 1)
+	return B, (S[3] + (S[4] - S[3]) * u * u) * s
+end
+
+-- orientación del proyectil: mira hacia donde va y su "Top" (el eje del disco) se inclina tilt grados
+-- hacia la cámara, para que el disco se vea abierto desde donde se mire
+local function orbFrame(O: Layer, A: Vector3, B: Vector3): CFrame
+	local dir = Vector3.new(B.X - A.X, 0, B.Z - A.Z)
+	dir = if dir.Magnitude > 1e-3 then dir.Unit else Vector3.new(0, 0, -1)
+	local up = Vector3.yAxis
+	local cam = workspace.CurrentCamera
+	if cam then
+		local side = cam.CFrame.Position - (A + B) * 0.5
+		side = Vector3.new(side.X, 0, side.Z)
+		if side.Magnitude > 1e-3 then
+			up = (Vector3.yAxis * math.cos(math.rad(O.tilt)) + side.Unit * math.sin(math.rad(O.tilt))).Unit
+		end
+	end
+	local look = dir - up * dir:Dot(up)
+	if look.Magnitude < 1e-3 then
+		return CFrame.lookAt(Vector3.zero, dir)
+	end
+	return CFrame.lookAt(Vector3.zero, look.Unit, up)
+end
+
+-- capas pegadas al proyectil (orb = "sprite", "shell", "trail", "ground" o "burst"):
+--   sprite/burst: en su centro; shell: salen de una esfera de radio shell × r y caen hacia el centro;
+--   trail: estela que se queda atrás; ground: en el suelo, debajo del proyectil.
+--   grow: los tamaños van en radios del proyectil (crecen con él); locked: LockedToPart.
+local function runOrb(spec: Layer, Z: Zone, A: Vector3, B: Vector3)
+	local O = spec.orb
+	local s = Z.s
+	local holder = Z.holder
+	local rot = orbFrame(O, A, B)
+	local carrier = invisiblePart("Orb", Vector3.new(0.2, 0.2, 0.2), CFrame.new(A) * rot, holder)
+	local center = Instance.new("Attachment")
+	center.Name = "Center"
+	center.Parent = carrier
+	local ground = Instance.new("Attachment")
+	ground.Name = "OrbGround"
+	ground.Parent = holder
+	ground.WorldPosition = Vector3.new(A.X, Z.groundY, A.Z)
+	local items: { { L: Layer, e: ParticleEmitter, shell: BasePart? } } = {}
+	for _, L in spec.layers do
+		if not L.orb then
+			continue
+		end
+		local e = configureEmitter(L, s)
+		local shell: BasePart? = nil
+		if L.shell or L.shell_abs then
+			local d = if L.shell_abs then 2 * L.shell_abs * s else 0.2
+			local part = invisiblePart(L.name .. "_Shell", Vector3.new(d, d, d), CFrame.new(A), holder)
+			part.Shape = Enum.PartType.Ball
+			e.Shape = Enum.ParticleEmitterShape.Sphere
+			e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+			e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Inward
+			e.LockedToPart = true
+			e.Parent = part
+			shell = part
+		elseif L.orb == "ground" then
+			e.Parent = ground
+		else
+			e.LockedToPart = L.locked == true
+			e.Parent = center
+		end
+		for _, ev in L.emit do
+			local n = quality(ev[2])
+			task.delay(ev[1], function()
+				if e.Parent then
+					e:Emit(n)
+				end
+			end)
+		end
+		if L.stream then
+			runStream(L, e)
+		end
+		if L.clear_at then
+			clearAt(e, L.clear_at)
+		end
+		table.insert(items, { L = L, e = e, shell = shell })
+	end
+	-- lente de vidrio detrás del agujero (del lado contrario a la cámara): dobla la luz del fondo. Roblox
+	-- solo dibuja la refracción con gráficos altos, y a través del vidrio no se ven partículas: por eso va
+	-- detrás y las partículas del agujero quedan por delante
+	local lens: Part? = nil
+	if (KaijuFireVFX :: any).Lens and O.lens then
+		local lp = invisiblePart("Lens", Vector3.new(0.2, 0.2, 0.2), CFrame.new(A), holder)
+		lp.Shape = Enum.PartType.Ball
+		lp.Material = Enum.Material.Glass
+		lp.Color = Color3.fromRGB(O.lens_color[1], O.lens_color[2], O.lens_color[3])
+		lens = lp
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = time() - t0
+		local pos, r = orbAt(O, t, A, B, s)
+		local done = t >= O.collapse[2]
+		local rr = math.max(r, 0.02 * s)
+		carrier.CFrame = CFrame.new(pos) * rot
+		ground.WorldPosition = Vector3.new(pos.X, Z.groundY, pos.Z)
+		for _, it in items do
+			local L = it.L
+			if L.grow then
+				it.e.Size = numberSeq(L.size, rr)
+			end
+			local sh = it.shell
+			if sh then
+				sh.CFrame = CFrame.new(pos)
+				if L.shell then
+					local d = 2 * L.shell * rr
+					sh.Size = Vector3.new(d, d, d)
+					it.e.Speed = NumberRange.new(L.speed[1] * rr, L.speed[2] * rr)
+				end
+			end
+		end
+		if lens then
+			local cam = workspace.CurrentCamera
+			if done or r < 0.1 * s or not cam then
+				lens.Transparency = 1
+			else
+				local lr = O.lens * r
+				lens.Size = Vector3.new(2 * lr, 2 * lr, 2 * lr)
+				lens.CFrame = CFrame.new(pos + (pos - cam.CFrame.Position).Unit * lr * 1.05)
+				lens.Transparency = O.lens_transparency
+			end
+		end
+		if done then
+			conn:Disconnect()
+			for _, it in items do
+				it.e.Enabled = false
+			end
+			if lens then
+				lens:Destroy()
+			end
+		end
+	end)
+end
+
+-- proyectil (agujero negro) desde la boca hasta los enemigos, y la detonación en la zona que los cubre
+local function playOrb(spec: Layer, mouth: any, targets: any, scale: number?, shake: number?, radius: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local O = spec.orb
+	local A: Vector3 = if typeof(mouth) == "CFrame" then mouth.Position else mouth
+	local list = if typeof(targets) == "table" then targets else { targets }
+	local pts: { Vector3 } = {}
+	for _, it in list do
+		if typeof(it) == "Vector3" then
+			table.insert(pts, it)
+		elseif typeof(it) == "CFrame" then
+			table.insert(pts, it.Position)
+		elseif typeof(it) == "Instance" then
+			if it:IsA("Model") then
+				table.insert(pts, (it :: Model):GetPivot().Position)
+			elseif it:IsA("BasePart") then
+				table.insert(pts, (it :: BasePart).Position)
+			end
+		end
+	end
+	local c: Vector3
+	if #pts > 0 then
+		c = Vector3.zero
+		for _, p in pts do
+			c += p
+		end
+		c /= #pts
+	else -- sin enemigos: hacia adelante de la boca
+		local fwd = if typeof(mouth) == "CFrame" then mouth.LookVector else Vector3.new(0, 0, -1)
+		fwd = Vector3.new(fwd.X, 0, fwd.Z)
+		fwd = if fwd.Magnitude > 1e-3 then fwd.Unit else Vector3.new(0, 0, -1)
+		c = A + fwd * O.reach * s
+	end
+	-- la detonación cubre a todos los enemigos: radio hasta el más lejano del centro + margen
+	local far = 0
+	for _, p in pts do
+		far = math.max(far, Vector3.new(p.X - c.X, 0, p.Z - c.Z).Magnitude)
+	end
+	local R = radius or math.max(O.min_radius * s, far + O.margin * s)
+	local look = Vector3.new(c.X - A.X, 0, c.Z - A.Z)
+	local cf = if look.Magnitude > 1e-3 then CFrame.lookAt(c, c + look) else CFrame.new(c)
+	local holder, Z = startZone(spec, cf, s, R, spec.zone.height * s, 60)
+	runOrb(spec, Z, A, Vector3.new(c.X, Z.groundY + O.height * s, c.Z))
 	finish(spec, holder, s, shake, {})
 	return holder
 end
@@ -1604,7 +1822,7 @@ def build(specs, name, doc):
         data = {"name": spec["name"], "duration": spec["duration"],
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
-        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights"):
+        for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb"):
             if spec.get(k):
                 data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         if spec.get("cubes"):
@@ -1625,6 +1843,18 @@ def build(specs, name, doc):
                 f"angle = apertura en grados (por defecto {c['angle']}).\n" + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, angle: number?, scale: number?, shake: number?): Part\n" \
                 f"\treturn play(SPEC_{key}, cf, scale, length or {c['length']} * (scale or 1), shake, angle or {c['angle']})\nend\n\n"
+        elif spec.get("orb"):
+            o = spec["orb"]
+            out += head + \
+                "-- mouth = la boca (Vector3 o CFrame): ahí se forma. targets = un enemigo o una lista (Vector3, BasePart\n" \
+                "-- o Model): detona en medio de ellos y la explosión los cubre a todos. radius = radio de la detonación\n" \
+                f"-- (si no, se calcula con los enemigos: mínimo {o['min_radius']:g} × escala). Detona a los " \
+                f"{o['collapse'][1]:g} s (ver {key}Impact).\n" + \
+                f"function KaijuFireVFX.{key}(mouth: Vector3 | CFrame, targets: any, scale: number?, shake: number?, " \
+                f"radius: number?): Part\n" \
+                f"\treturn playOrb(SPEC_{key}, mouth, targets, scale, shake, radius)\nend\n" \
+                f"-- segundo (desde la llamada) en que detona: para sincronizar el daño\n" \
+                f"KaijuFireVFX.{key}Impact = {o['collapse'][1]:g}\n\n"
         elif spec.get("zone"):
             z = spec["zone"]
             out += head + \
@@ -1647,6 +1877,10 @@ def build(specs, name, doc):
                           "-- Color y material de los cubos de destrucción (nil = los del suelo donde sale el efecto)\n"
                           "KaijuFireVFX.CubeColor = nil :: Color3?\n"
                           "KaijuFireVFX.CubeMaterial = nil :: Enum.Material?\n", 1)
+    if any(spec.get("orb") for spec in specs.values()):
+        out = out.replace("KaijuFireVFX.UseLight = true\n", "KaijuFireVFX.UseLight = true\n"
+                          "-- Lente de vidrio que distorsiona el fondo detrás del agujero negro (solo con gráficos altos)\n"
+                          "KaijuFireVFX.Lens = true\n", 1)
     out = prefix_unused(out)
     return out.replace("KaijuFireVFX", name), tex
 
