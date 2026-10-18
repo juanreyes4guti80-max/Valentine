@@ -245,3 +245,10 @@ def lava_explosion_spec():
 
 LAVA_EXPLOSION = lava_explosion_spec()
 
+# en la Ignition, el núcleo de magma nace blanco y pasa a rojo (como el amarillo-blanco de la normal)
+IGNITION_CORE = {
+    "MagmaCore": [(0, (255, 242, 242)), (0.35, (255, 172, 178)), (1, (220, 40, 60))],
+    "MagmaBurst": [(0, (255, 246, 246)), (0.2, (255, 202, 206)), (0.45, (255, 96, 110)), (0.75, (220, 36, 56)),
+                   (1, (170, 20, 40))],
+}
+

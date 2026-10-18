@@ -5485,11 +5485,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 103, 115},
 				},
 				{
 					0.4,
-					{255, 34, 52},
+					{255, 44, 60},
 				},
 				{
 					1,
@@ -5497,7 +5497,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.9,
+			brightness = 1.17,
 			zoffset = 10,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -5530,15 +5530,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 73, 87},
+					{255, 103, 115},
 				},
 				{
 					1,
-					{221, 17, 36},
+					{221, 20, 39},
 				},
 			},
 			light_emission = 1,
-			brightness = 1,
+			brightness = 1.3,
 			rotation = {0, 360},
 			zoffset = 11,
 			speed = {0, 0},
@@ -5571,15 +5571,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
 					{183, 12, 31},
 				},
 			},
-			light_emission = 0.24,
-			brightness = 0.9,
+			light_emission = 0.6,
+			brightness = 1.17,
 			zoffset = -12,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -5654,22 +5654,22 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.1,
-					{217, 27, 38},
+					{217, 35, 47},
 				},
 				{
 					0.6,
-					{188, 8, 20},
+					{188, 10, 21},
 				},
 				{
 					1,
 					{89, 4, 15},
 				},
 			},
-			light_emission = 0.6,
+			light_emission = 1,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -5704,15 +5704,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -5723,7 +5723,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.6,
+			light_emission = 1,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -5758,14 +5758,14 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 27, 38},
+					{217, 35, 47},
 				},
 				{
 					1,
 					{177, 8, 19},
 				},
 			},
-			light_emission = 0.24,
+			light_emission = 0.4,
 			decal = true,
 			orientation = "VelocityPerpendicular",
 			direction = "Top",
@@ -5850,19 +5850,19 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 112, 124},
+					{255, 242, 242},
 				},
 				{
-					0.3,
-					{255, 47, 63},
+					0.35,
+					{255, 172, 178},
 				},
 				{
 					1,
-					{214, 15, 34},
+					{220, 40, 60},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.2,
+			light_emission = 0.4,
+			brightness = 1.56,
 			rotation = {0, 360},
 			rot_speed = {-80, 80},
 			zoffset = 3,
@@ -5909,27 +5909,27 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 143, 152},
+					{255, 246, 246},
 				},
 				{
-					0.15,
-					{255, 73, 87},
+					0.2,
+					{255, 202, 206},
 				},
 				{
-					0.4,
-					{248, 34, 52},
+					0.45,
+					{255, 96, 110},
 				},
 				{
 					0.75,
-					{214, 15, 34},
+					{220, 36, 56},
 				},
 				{
 					1,
-					{171, 11, 30},
+					{170, 20, 40},
 				},
 			},
-			light_emission = 0.1,
-			brightness = 1.35,
+			light_emission = 0.25,
+			brightness = 1.755,
 			rotation = {0, 360},
 			rot_speed = {-60, 60},
 			zoffset = 0,
@@ -5966,15 +5966,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
@@ -5986,8 +5986,8 @@ local SPEC_GiantExplosionIgnition = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.22,
-			brightness = 1.45,
+			light_emission = 0.55,
+			brightness = 1.885,
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
 			zoffset = 0,
@@ -6022,15 +6022,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
@@ -6042,8 +6042,8 @@ local SPEC_GiantExplosionIgnition = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.22,
-			brightness = 1.45,
+			light_emission = 0.55,
+			brightness = 1.885,
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
 			zoffset = 0,
@@ -6073,19 +6073,19 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 143, 152},
+					{255, 205, 209},
 				},
 				{
 					0.15,
-					{255, 73, 87},
+					{255, 103, 115},
 				},
 				{
 					0.4,
-					{248, 34, 52},
+					{248, 44, 60},
 				},
 				{
 					0.75,
-					{214, 15, 34},
+					{214, 16, 35},
 				},
 				{
 					1,
@@ -6097,8 +6097,8 @@ local SPEC_GiantExplosionIgnition = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.24,
-			brightness = 1.5,
+			light_emission = 0.6,
+			brightness = 1.95,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
@@ -6131,7 +6131,7 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{125, 15, 34},
+					{125, 16, 35},
 				},
 				{
 					0.3,
@@ -6142,7 +6142,7 @@ local SPEC_GiantExplosionIgnition = {
 					{42, 8, 28},
 				},
 			},
-			light_emission = 0.04,
+			light_emission = 0.1,
 			rotation = {0, 360},
 			rot_speed = {-400, 400},
 			transparency = {
@@ -6182,23 +6182,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.12,
-			brightness = 1.6,
+			light_emission = 0.3,
+			brightness = 2.08,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
@@ -6239,11 +6239,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -6300,11 +6300,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -6360,11 +6360,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -6416,11 +6416,11 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 17, 36},
+							{255, 20, 39},
 						},
 						{
 							1,
-							{255, 17, 36},
+							{255, 20, 39},
 						},
 					},
 					transparency = {
@@ -6428,7 +6428,7 @@ local SPEC_GiantExplosionIgnition = {
 						{1, 0.92, 0},
 					},
 					light_emission = 1,
-					brightness = 1,
+					brightness = 1.3,
 					emit = {},
 					spread = {0, 0},
 					accel = {0, 0, 0},
@@ -6462,23 +6462,23 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 131, 141},
+							{255, 193, 198},
 						},
 						{
 							0.2,
-							{255, 54, 69},
+							{255, 70, 85},
 						},
 						{
 							0.55,
-							{234, 20, 39},
+							{234, 24, 42},
 						},
 						{
 							1,
 							{165, 10, 29},
 						},
 					},
-					light_emission = 0.16,
-					brightness = 1.5,
+					light_emission = 0.4,
+					brightness = 1.95,
 					rotation = {0, 360},
 					emit = {},
 					drag = 0,
@@ -6508,11 +6508,11 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 161, 168},
+							{255, 215, 218},
 						},
 						{
 							0.5,
-							{255, 47, 63},
+							{255, 61, 76},
 						},
 						{
 							1,
@@ -6520,7 +6520,7 @@ local SPEC_GiantExplosionIgnition = {
 						},
 					},
 					light_emission = 1,
-					brightness = 1.7,
+					brightness = 2.21,
 					emit = {},
 					accel = {0, 0, 0},
 					drag = 0,
@@ -6557,11 +6557,11 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 41, 58},
+							{255, 53, 68},
 						},
 						{
 							0.06,
-							{105, 16, 35},
+							{105, 18, 36},
 						},
 						{
 							0.2,
@@ -6608,11 +6608,11 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{217, 50, 62},
+							{217, 71, 83},
 						},
 						{
 							0.3,
-							{205, 17, 29},
+							{205, 22, 33},
 						},
 						{
 							0.75,
@@ -6623,7 +6623,7 @@ local SPEC_GiantExplosionIgnition = {
 							{49, 3, 14},
 						},
 					},
-					light_emission = 0.6,
+					light_emission = 1,
 					rotation = {0, 360},
 					decal = true,
 					orientation = "VelocityPerpendicular",
@@ -6664,23 +6664,23 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 131, 141},
+							{255, 193, 198},
 						},
 						{
 							0.2,
-							{255, 54, 69},
+							{255, 70, 85},
 						},
 						{
 							0.55,
-							{234, 20, 39},
+							{234, 24, 42},
 						},
 						{
 							1,
 							{165, 10, 29},
 						},
 					},
-					light_emission = 0.16,
-					brightness = 1.5,
+					light_emission = 0.4,
+					brightness = 1.95,
 					rotation = {0, 360},
 					transparency = {
 						{0, 0, 0},
@@ -6714,23 +6714,23 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 200, 205},
+							{255, 228, 230},
 						},
 						{
 							0.3,
-							{255, 68, 83},
+							{255, 97, 109},
 						},
 						{
 							0.7,
-							{234, 20, 39},
+							{234, 24, 42},
 						},
 						{
 							1,
 							{136, 9, 28},
 						},
 					},
-					light_emission = 0.16,
-					brightness = 1.5,
+					light_emission = 0.4,
+					brightness = 1.95,
 					stream = {
 						{0, 2.5, 12, 0},
 					},
@@ -6763,11 +6763,11 @@ local SPEC_GiantExplosionIgnition = {
 					color = {
 						{
 							0,
-							{255, 41, 58},
+							{255, 53, 68},
 						},
 						{
 							0.06,
-							{105, 16, 35},
+							{105, 18, 36},
 						},
 						{
 							0.2,
@@ -6836,11 +6836,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 50, 62},
+					{217, 71, 83},
 				},
 				{
 					0.3,
-					{205, 17, 29},
+					{205, 22, 33},
 				},
 				{
 					0.75,
@@ -6851,7 +6851,7 @@ local SPEC_GiantExplosionIgnition = {
 					{49, 3, 14},
 				},
 			},
-			light_emission = 0.6,
+			light_emission = 1,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -6896,11 +6896,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -6908,7 +6908,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.7,
+			brightness = 2.21,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -6941,19 +6941,19 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 143, 152},
+					{255, 205, 209},
 				},
 				{
 					0.5,
-					{255, 60, 75},
+					{255, 87, 100},
 				},
 				{
 					1,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.5,
+			brightness = 1.95,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -6984,15 +6984,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -7003,7 +7003,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7046,23 +7046,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -7105,23 +7105,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -7155,11 +7155,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -7167,7 +7167,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -7204,11 +7204,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -7268,15 +7268,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
@@ -7288,8 +7288,8 @@ local SPEC_GiantExplosionIgnition = {
 				{0.75, 0.05, 0},
 				{1, 1, 0},
 			},
-			light_emission = 0.22,
-			brightness = 1.45,
+			light_emission = 0.55,
+			brightness = 1.885,
 			rotation = {0, 360},
 			rot_speed = {-220, 220},
 			shape = {
@@ -7322,15 +7322,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -7341,7 +7341,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7384,23 +7384,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -7443,23 +7443,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -7493,11 +7493,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -7505,7 +7505,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -7542,11 +7542,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -7594,15 +7594,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -7613,7 +7613,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7656,23 +7656,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -7715,23 +7715,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -7765,11 +7765,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -7777,7 +7777,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -7814,11 +7814,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -7866,15 +7866,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -7885,7 +7885,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7928,23 +7928,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -7987,23 +7987,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -8037,11 +8037,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -8049,7 +8049,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -8086,11 +8086,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -8138,15 +8138,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -8157,7 +8157,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -8200,23 +8200,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -8259,23 +8259,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -8309,11 +8309,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -8321,7 +8321,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -8358,11 +8358,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -8410,15 +8410,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -8429,7 +8429,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -8472,23 +8472,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -8531,23 +8531,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -8581,11 +8581,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -8593,7 +8593,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -8630,11 +8630,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -8682,15 +8682,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -8701,7 +8701,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -8744,23 +8744,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -8803,23 +8803,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -8853,11 +8853,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -8865,7 +8865,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -8902,11 +8902,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -8954,15 +8954,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -8973,7 +8973,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -9016,23 +9016,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -9075,23 +9075,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -9125,11 +9125,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -9137,7 +9137,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -9174,11 +9174,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,
@@ -9226,15 +9226,15 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{217, 63, 75},
+					{217, 92, 105},
 				},
 				{
 					0.08,
-					{217, 30, 41},
+					{217, 44, 55},
 				},
 				{
 					0.55,
-					{194, 11, 22},
+					{194, 14, 25},
 				},
 				{
 					0.85,
@@ -9245,7 +9245,7 @@ local SPEC_GiantExplosionIgnition = {
 					{57, 3, 14},
 				},
 			},
-			light_emission = 0.54,
+			light_emission = 0.9,
 			rotation = {0, 360},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -9288,23 +9288,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 131, 141},
+					{255, 193, 198},
 				},
 				{
 					0.2,
-					{255, 54, 69},
+					{255, 70, 85},
 				},
 				{
 					0.55,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{165, 10, 29},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			rotation = {0, 360},
 			stream = {
 				{0.2, 4.9, 13.5, 4.5},
@@ -9347,23 +9347,23 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 200, 205},
+					{255, 228, 230},
 				},
 				{
 					0.3,
-					{255, 68, 83},
+					{255, 97, 109},
 				},
 				{
 					0.7,
-					{234, 20, 39},
+					{234, 24, 42},
 				},
 				{
 					1,
 					{136, 9, 28},
 				},
 			},
-			light_emission = 0.16,
-			brightness = 1.5,
+			light_emission = 0.4,
+			brightness = 1.95,
 			stream = {
 				{0.2, 4.7, 7.5, 1.5},
 			},
@@ -9397,11 +9397,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 161, 168},
+					{255, 215, 218},
 				},
 				{
 					0.5,
-					{255, 47, 63},
+					{255, 61, 76},
 				},
 				{
 					1,
@@ -9409,7 +9409,7 @@ local SPEC_GiantExplosionIgnition = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 2.08,
 			stream = {
 				{0.3, 5, 7.5, 1.5},
 			},
@@ -9446,11 +9446,11 @@ local SPEC_GiantExplosionIgnition = {
 			color = {
 				{
 					0,
-					{255, 41, 58},
+					{255, 53, 68},
 				},
 				{
 					0.06,
-					{105, 16, 35},
+					{105, 18, 36},
 				},
 				{
 					0.2,

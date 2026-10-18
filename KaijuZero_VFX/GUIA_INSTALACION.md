@@ -18,7 +18,7 @@
 | Función | Qué es | Duración |
 |---|---|---|
 | `GiantExplosion(cf, escala, sacudida)` | **H1**: la explosión gigante **de lava**, una detonación de magma. Hay destello, ola de polvo y un núcleo de magma. El suelo se abre en **grietas de lava** y brota un **charco de lava fundida**. Una **fuente de magma** lanza gotas espesas que se enfrían en el aire (amarillo, naranja, rojo) y llueven dejando **salpicaduras encendidas**. Vuelan **rocas fundidas**: rocas de material CrackedLava, con resplandor, que gotean lava y al caer salpican y quedan ardiendo. Sube **humo volcánico** y la lava **sigue viva en el suelo 5 s**: burbujea, escupe chorritos y suelta brasas. | 5.8 s (las últimas partículas se apagan a los 6.9 s) |
-| `GiantExplosionIgnition(cf, escala, sacudida)` | **H1 Ignition**: la misma explosión de lava en **rojo carmesí**, **1.5 veces más grande** y **1.5 veces más intensa**. Tiene más magma y más rocas fundidas, y la luz y la sacudida son más fuertes. La lava carmesí queda viva en el suelo 5 s. | 5.8 s |
+| `GiantExplosionIgnition(cf, escala, sacudida)` | **H1 Ignition**: la misma explosión de lava en **rojo carmesí**, con la misma iluminación que la normal: el centro nace blanco y pasa a rojo encendido. Es **1.5 veces más grande** y **1.5 veces más intensa**: tiene más magma y más rocas fundidas, y la luz y la sacudida son más fuertes. La lava carmesí queda viva en el suelo 5 s. | 5.8 s |
 | `H3_Detonation(rocas, escala, sacudida)` | **H3**: las rocas que dejó el rayo **detonan todas a la vez**. Cada una levanta su racimo de pilares de fuego y entre todas forman una pared de llamas. Los pilares brotan de golpe, se sostienen sin rebotar y se hunden. En la roca más lejana sale un **pilar gigante** de remate. | 2.8 s |
 | `H3_DetonationIgnition(rocas, escala, sacudida)` | **H3 Ignition**: lo mismo en carmesí, con pilares más altos, y deja una **marca de fuego** en cada roca unos 3 s. | 4.6 s |
 
@@ -145,7 +145,7 @@ En el pico, la H1 llega a unas 1250 partículas y 16 rocas, y la H1 Ignition a u
 ## Si quieres cambiar algo
 
 - **H3** (pilares, tiempos, colores, separación de rocas): `tools/vfx_pillars.py`.
-- **H1** (explosión de lava): `tools/vfx_lava.py`. Sus texturas propias (`kz_lava_*`) salen de `tools/gen_lava_textures.py`. La Ignition se genera desde ella con `ignitionize`, en `tools/vfx_specs.py`. Ahí puedes cambiar el tamaño, la intensidad y cuánto brilla el carmesí (`le_k`, `decal_le_k`).
+- **H1** (explosión de lava): `tools/vfx_lava.py`. Sus texturas propias (`kz_lava_*`) salen de `tools/gen_lava_textures.py`. La Ignition se genera desde ella con `ignitionize`, en `tools/vfx_specs.py`. Ahí puedes cambiar el tamaño, la intensidad y el brillo del carmesí: `bright_k` sube el brillo y `_G_MAP_HOT` decide cuánto se blanquean los tonos más calientes. El núcleo de magma que nace blanco está en `IGNITION_CORE`, en `tools/vfx_lava.py`.
 - **H1 clásica** (la de fuego): `GIANT` en `tools/vfx_specs.py`.
 
 Después de editarlos se regenera el módulo con:

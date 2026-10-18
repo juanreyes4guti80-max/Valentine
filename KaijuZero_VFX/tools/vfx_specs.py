@@ -893,23 +893,27 @@ def _interp(x, table):
     return table[-1][1]
 
 
-def crimson(c, neutral=False):
+def crimson(c, neutral=False, g_map=None):
     """Color de fuego naranja -> carmesí (lo más claro queda blanco-rosado). En humo y polvo
-    (neutral) solo oscurece con un toque rojizo, salvo el brillo de fuego al nacer."""
+    (neutral) solo oscurece con un toque rojizo, salvo el brillo de fuego al nacer.
+    g_map: curva del verde (por defecto _G_MAP); una que sube antes deja más blancos los tonos calientes."""
     r, g, b = c
     if neutral and (max(c) - min(c)) / max(max(c), 1) < 0.4:
         return (min(255, round(r * 0.72 + 4)), round(g * 0.68), round(b * 0.70))
-    g2 = _interp(g, _G_MAP)
+    g2 = _interp(g, g_map or _G_MAP)
     b2 = min(255.0, g2 + 20 * (1 - g2 / 255))
     return (round(r * (0.6 + 0.4 * r / 255)), round(g2), round(b2))
 
 
-def ignitionize(spec, name, size_k=1.5, k=1.5, doc="", le_k=1.0, decal_le_k=1.0):
+def ignitionize(spec, name, size_k=1.5, k=1.5, doc="", le_k=1.0, decal_le_k=1.0, g_map=None, bright_k=1.0,
+                overrides=None):
     """Versión Ignition de una explosión: colores carmesí, tamaño ×size_k (vía escala interna) e
     intensidad ×k: más partículas en cada ráfaga, emisión continua más densa, más rocas, luz y
     sacudida más fuertes. Los tiempos no cambian.
     le_k: multiplica el LightEmission de las partículas semi-aditivas (0 < LE < 1): el rojo de la lava
-    no se lava a rosa sobre un cielo claro. decal_le_k: lo mismo en los Decals (su brillo en el suelo)."""
+    no se lava a rosa sobre un cielo claro. decal_le_k: lo mismo en los Decals (su brillo en el suelo).
+    g_map: curva del verde para el carmesí (ver crimson). bright_k: multiplica el Brightness de las partículas.
+    overrides: {nombre de capa: secuencia de color} para capas que llevan su propio color en la Ignition."""
     out = _copy.deepcopy(spec)
     out["name"] = name
     out["doc"] = doc or out.get("doc", "")
@@ -922,11 +926,15 @@ def ignitionize(spec, name, size_k=1.5, k=1.5, doc="", le_k=1.0, decal_le_k=1.0)
             L["light_emission"] = round(le * decal_le_k, 3)
         elif 0 < le < 1:
             L["light_emission"] = round(le * le_k, 3)
-        if nm in _TRAILS:
+        if not L.get("decal") and bright_k != 1 and "brightness" in L:
+            L["brightness"] = round(L["brightness"] * bright_k, 3)
+        if overrides and nm in overrides:
+            L["color"] = overrides[nm]
+        elif nm in _TRAILS:
             L["color"] = _TRAILS[nm]
         elif "color" in L:
             neutral = any(w in nm for w in _NEUTRAL)
-            L["color"] = [(t, crimson(c, neutral)) for t, c in L["color"]]
+            L["color"] = [(t, crimson(c, neutral, g_map)) for t, c in L["color"]]
             if L.get("decal") and not neutral:      # en el suelo: rojo profundo y algo más sutil (no un plato rosado)
                 L["color"] = [(t, (round(r * 0.85), round(g * 0.5), round(b * 0.55))) for t, (r, g, b) in L["color"]]
                 L["transparency"] = [(t, v if v >= 1 else min(0.95, round(v + 0.1, 3))) + tuple(e)
@@ -940,7 +948,7 @@ def ignitionize(spec, name, size_k=1.5, k=1.5, doc="", le_k=1.0, decal_le_k=1.0)
         if sp:      # rocas fundidas: costra más roja y resplandor carmesí (vista previa)
             sp["color"] = crimson(sp["color"], neutral=True)
             if sp.get("glow"):
-                sp["glow"] = dict(sp["glow"], color=crimson(sp["glow"]["color"]))
+                sp["glow"] = dict(sp["glow"], color=crimson(sp["glow"]["color"], g_map=g_map))
         if L.get("stream"):
             L["stream"] = [(a, b, round(r0 * k, 2), round(r1 * k, 2)) for a, b, r0, r1 in L["stream"]]
         for sub in L.get("trails", []) + L.get("land", []):
@@ -962,8 +970,11 @@ import vfx_lava as _VL
 
 GIANT_CLASSIC = dict(GIANT, name="GiantExplosionClassic",
                      doc="La explosión gigante anterior (fuego, estilo detonación), por si quieres volver a ella. " + GIANT["doc"])
+# misma iluminación que la normal (el naranja pasa a rojo, no se apaga): los tonos más calientes se van a
+# blanco, el brillo sube un poco y el núcleo de magma nace blanco
+_G_MAP_HOT = [(0, 0), (32, 8), (60, 12), (104, 30), (150, 70), (180, 120), (205, 175), (225, 215), (255, 250)]
 GIANT_IGNITION = ignitionize(
-    _VL.LAVA_EXPLOSION, "GiantExplosionIgnition", le_k=0.4, decal_le_k=0.6,
+    _VL.LAVA_EXPLOSION, "GiantExplosionIgnition", g_map=_G_MAP_HOT, bright_k=1.3, overrides=_VL.IGNITION_CORE,
     doc="H1 IGNITION: la explosión de lava en carmesí, 1.5 veces más grande y más intensa (más magma, "
         "más rocas fundidas, luz y sacudida más fuertes); la lava carmesí queda viva en el suelo 5 s.")
 
