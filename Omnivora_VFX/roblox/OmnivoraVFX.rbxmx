@@ -3630,9 +3630,14 @@ local function playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vic
 					rk.vel = (if outward.Magnitude > 1e-3 then outward.Unit else Vector3.yAxis) * rng:NextNumber(250, 600) * k
 					rk.state = "fall"
 				else
+					-- al final del consumo la atracción se lleva lo que siga flotando: la masa crítica empieza en el vacío
+					local sweep = smooth01(T.attract[3], T.attract[3] + Rk.sweep[1], t)
+					if sweep > 0 then
+						o.inward = math.max(o.inward, Rk.sweep[2] * sweep)
+					end
 					stepTracer(o, dt, Fd, R, Hs, k, L, S, A)
 					pos = tracerPos(o, C, Fd, R, Hs, t)
-					if rb > 1 and A > 0.2 and (pos - B).Magnitude < rb * Fd.capture then
+					if rb > 1 and A > 0.2 and (pos - B).Magnitude < rb * Fd.capture or t >= T.crit[1] then
 						kill(rk, t, true, 0.25)
 						burst("ConsumeFlash", pos, 1, math.clamp(rk.size.Magnitude / (30 * k), 0.4, 1.6))
 					elseif rk.breakAt and t >= rk.breakAt then
@@ -17966,6 +17971,7 @@ local SPEC_GravitationalCataclysm = {
 				every = 0.12,
 				min_size = 24,
 			},
+			sweep = {1, 2.5},
 			rain = {
 				n = 36,
 				t = {16.87, 19.52},

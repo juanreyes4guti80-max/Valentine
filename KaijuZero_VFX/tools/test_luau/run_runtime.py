@@ -424,6 +424,10 @@ do
 		assert(d < 2 * 150 * 1.75 + 60, ("ULTIMATE: la víctima %d no llegó a la singularidad (a %.0f studs)"):format(i, d))
 	end
 	local rocksMid = R.stats.cataRocks
+	-- la masa crítica empieza en el vacío: la singularidad ya se tragó todas las rocas
+	stepTo(Tm.CriticalMass + 0.35)
+	local floating = R.liveNamed("CataclysmRock")
+	assert(floating == 0, ("ULTIMATE: quedan %d rocas flotando en la masa crítica"):format(floating))
 	stepTo(Tm.Detonation + 1.2)
 	assert(R.stats.flashMin < 0.05, "ULTIMATE: no hubo destello blanco")
 	-- cada víctima quedó en su punto de impacto

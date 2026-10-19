@@ -359,6 +359,14 @@ function M.reset()
 	M.byClass = {}
 	M.orbPath = {}
 end
+-- cuántas instancias vivas tienen ese nombre
+function M.liveNamed(name)
+	local n = 0
+	for _, o in live do
+		if rawget(o, "__props").Name == name and not isDestroyed(o) then n += 1 end
+	end
+	return n
+end
 function M.liveCount()
 	local n = 0
 	for _, o in live do

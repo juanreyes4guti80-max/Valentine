@@ -85,6 +85,8 @@ ROCKS = {
               "inward": [0.6, 1.0], "break_p": 0.65, "break_t": [5.0, 12.0], "dark": 0.15},
     "frag": {"n": [3, 5], "k": [0.32, 0.6], "life": [1.8, 3.4]},
     "collide": {"every": 0.12, "min_size": 24},
+    # al final del consumo la atracción se lleva lo que siga flotando: [segundos en llegar a toda fuerza, atracción mínima]
+    "sweep": [1.0, 2.5],
     # lo que llueve después de la detonación
     "rain": {"n": 36, "t": [DET + 0.25, DET + 2.9], "size": [3, 11], "height": [160, 620], "r": [0.05, 0.7]},
     "r_min": 0.08,

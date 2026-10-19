@@ -904,9 +904,13 @@ def render_cataclysm(spec, impact_spec, tex_folder, out_dir, cam, victims, durat
                     rk.vel = (out / nrm if nrm > 1e-3 else np.array([0, 1.0, 0])) * rng.uniform(250, 600) * k
                     rk.state = "fall"
                 else:
+                    # al final del consumo la atracción se lleva lo que siga flotando
+                    sweep = smooth01(T["attract"][2], T["attract"][2] + Rk["sweep"][0], t)
+                    if sweep > 0:
+                        o.inward = max(o.inward, Rk["sweep"][1] * sweep)
                     step_tracer(o, dt, Fd, R, Hs, k, L_, S_, A_)
                     pos = tracer_pos(o, C, Fd, R, Hs, t)
-                    if rb > 1 and A_ > 0.2 and np.linalg.norm(pos - B) < rb * Fd["capture"]:
+                    if (rb > 1 and A_ > 0.2 and np.linalg.norm(pos - B) < rb * Fd["capture"]) or t >= T["crit"][0]:
                         kill(rk, t, True, 0.25)
                         burst("ConsumeFlash", pos, 1, min(max(float(np.linalg.norm(rk.size)) / (30 * k), 0.4), 1.6))
                     elif rk.break_at is not None and t >= rk.break_at:
