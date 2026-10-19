@@ -10,7 +10,7 @@ omni = open(os.path.join(d, "..", "..", "..", "Omnivora_VFX", "roblox", "Omnivor
     .replace("--!nonstrict", "")
 G = ["Vector3", "Vector2", "CFrame", "Color3", "NumberRange", "NumberSequence", "NumberSequenceKeypoint",
      "ColorSequence", "ColorSequenceKeypoint", "TweenInfo", "Random", "Enum", "Instance", "workspace", "game", "task", "time",
-     "typeof", "RaycastParams"]
+     "typeof", "RaycastParams", "UDim2"]
 test = r'''
 local function run(name, call, seconds, len)
 	R.reset()
@@ -390,6 +390,82 @@ do
 end
 runAura("CrimsonAura", VFX, "CrimsonAura")
 runAura("CosmicAura", OMNI, "CosmicAura")
+-- ULTIMATE de Omnívora: la secuencia completa con tres víctimas (el efecto las mueve), sin víctimas y cortada antes
+local function cataDummy(x, z)
+	local m = R.Instance.new("Model")
+	local pivot = R.CFrame.new(x, 30, z)
+	m.GetPivot = function() return pivot end
+	m.PivotTo = function(_, cf) pivot = cf end
+	m.GetBoundingBox = function() return pivot, R.Vector3.new(30, 60, 30) end
+	m.Parent = R.workspace
+	return m
+end
+do
+	R.reset()
+	OMNI.Parent = R.workspace
+	local v1, v2, v3 = cataDummy(250, 0), cataDummy(-200, 180), cataDummy(60, -335)
+	local events = {}
+	local ult = OMNI.GravitationalCataclysm(R.Vector3.new(0, 10, 0), { v1, v2, v3 }, {
+		MoveVictims = true,
+		OnEvent = function(name) table.insert(events, name) end,
+	})
+	local Tm = OMNI.GravitationalCataclysmTimes
+	local function stepTo(t1)
+		while ult.Time < t1 - 1e-6 and ult.Active do R.step(1 / 30) end
+	end
+	stepTo(5.0)
+	local _, _, hbMid, rsMid = R.pending()
+	assert(R.stats.cataRocks > 40, "ULTIMATE: casi no se levantaron rocas")
+	assert(hbMid >= 1 and rsMid == 2, "ULTIMATE: falta el bucle o la sacudida")
+	stepTo(13.7)
+	-- atrapadas junto a la singularidad
+	for i, v in { v1, v2, v3 } do
+		local d = (v:GetPivot().Position - ult.Singularity).Magnitude
+		assert(d < 2 * 150 * 1.75 + 60, ("ULTIMATE: la víctima %d no llegó a la singularidad (a %.0f studs)"):format(i, d))
+	end
+	local rocksMid = R.stats.cataRocks
+	stepTo(Tm.Detonation + 1.2)
+	assert(R.stats.flashMin < 0.05, "ULTIMATE: no hubo destello blanco")
+	-- cada víctima quedó en su punto de impacto
+	for i, v in { v1, v2, v3 } do
+		local land = ult:GetImpactPoint(v)
+		local p = v:GetPivot().Position
+		assert(math.abs(p.X - land.X) < 0.01 and math.abs(p.Z - land.Z) < 0.01, "ULTIMATE: la víctima " .. i .. " no cayó en su punto")
+		assert(p.Y < 40 and p.Y > 10, "ULTIMATE: la víctima " .. i .. " no quedó en el suelo")
+	end
+	local land1 = ult:GetImpactPoint(v1)
+	assert(math.abs(land1.X - 250) < 0.5 and math.abs(land1.Z) < 0.5, "ULTIMATE: el punto de impacto no es donde estaba")
+	local plan = OMNI.GravitationalCataclysmPlan(R.Vector3.new(0, 10, 0), { v1, v2, v3 })
+	local times = plan:GetVictimTimes(v2)
+	assert(times and times.Impact > Tm.Detonation and times.Lift < times.Held, "ULTIMATE: tiempos del plan")
+	stepTo(30)
+	stepFor(0.5)   -- la sacudida se desengancha en el cuadro siguiente al terminar
+	local dl, wt, hb, rs = R.pending()
+	local seq = table.concat(events, ",")
+	local function count(name) local n = 0 for _, e in events do if e == name then n += 1 end end return n end
+	print(("%-17s rocas creadas %d (a los 13.7 s: %d) | eventos: fases=%d suben=%d impactos=%d | destello %.2f | limpio=%s heartbeat=%d render=%d"):format(
+		"Cataclysm", R.stats.cataRocks, rocksMid, count("Phase"), count("VictimLift"), count("VictimImpact"), R.stats.flashMin,
+		tostring(R.isDestroyed(ult.Holder)), hb, rs))
+	assert(count("Phase") == 8 and count("VictimLift") == 3 and count("VictimLaunch") == 3 and count("VictimImpact") == 3,
+		"ULTIMATE: faltan eventos: " .. seq)
+	assert(events[#events] == "Finished", "ULTIMATE: el último evento no es Finished")
+	assert(seq:find("VictimLift") < seq:find("Detonation") and seq:find("Detonation") < seq:find("VictimImpact"),
+		"ULTIMATE: los eventos no van en orden: " .. seq)
+	assert(not ult.Active and R.isDestroyed(ult.Holder) and hb == 0 and rs == 0, "ULTIMATE: no se limpió")
+	assert(R.isDestroyed(R.byClass.ColorCorrectionEffect) and R.isDestroyed(R.byClass.ScreenGui),
+		"ULTIMATE: quedó la corrección de color o el destello")
+	-- empezar en una fase (para revisarla) y cortarla antes
+	R.reset()
+	local u2 = OMNI.GravitationalCataclysm(R.Vector3.new(0, 10, 0), {}, { StartTime = 11 })
+	assert(math.abs(u2.Time - 11) < 0.05 and u2.Phase == "Consumo total", "ULTIMATE: StartTime no empezó en la fase")
+	R.step(1 / 30)
+	R.step(1 / 30)
+	u2:Stop()
+	stepFor(1.5)
+	local _, _, hb2, rs2 = R.pending()
+	assert(R.isDestroyed(u2.Holder) and hb2 == 0 and rs2 == 0, "ULTIMATE: Stop() no limpió")
+	print(("%-17s   empezar en una fase: t=%.2f (%s) | cortada antes: limpio"):format("", u2.Time, u2.Phase))
+end
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"

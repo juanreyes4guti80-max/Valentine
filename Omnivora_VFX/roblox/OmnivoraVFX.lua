@@ -92,7 +92,7 @@ local rng = Random.new()
 local function numberSeq(points: { { number } }, scale: number): NumberSequence
 	local kps = table.create(#points)
 	for i, p in points do
-		local v = math.max(p[2] * scale, 0)
+		local v = math.clamp(p[2] * scale, 0, 100) -- Roblox no dibuja partículas de más de 100 studs
 		kps[i] = NumberSequenceKeypoint.new(p[1], v, math.min((p[3] or 0) * scale, v))
 	end
 	return NumberSequence.new(kps)
@@ -2397,6 +2397,1557 @@ local function playAura(spec: Layer, model: Instance, scale: number?, duration: 
 		end
 	end)
 	return ctl
+end
+
+-- ---------------------------------------------------------------- ULTIMATE: cataclismo gravitacional
+-- (vfx_cataclysm.py) Una sola secuencia continua sobre un campo gravitacional único. Todo lo que se levanta (rocas,
+-- portadores de partículas, corrientes de energía, brazos de polvo y las víctimas) se mueve con la misma fuerza: sin
+-- gravedad sube a su franja de altura (L), gira alrededor del epicentro, más rápido cerca del centro (S), y cuando
+-- aparece la singularidad cae en espiral hacia ella (A) hasta desaparecer en su horizonte. El reloj manda en todo.
+export type CataclysmControl = {
+	Holder: Part,
+	Active: boolean,
+	Time: number,
+	Phase: string,
+	Center: Vector3,
+	Radius: number,
+	Singularity: Vector3,
+	SingularityRadius: number,
+	Victims: { any },
+	GetVictimCFrame: (CataclysmControl, victim: any, t: number?) -> CFrame?,
+	GetImpactPoint: (CataclysmControl, victim: any) -> Vector3?,
+	Stop: (CataclysmControl) -> (),
+}
+
+type CTracer = { r: number, th: number, y: number, w: number, band: number, rise: number, inward: number, vy: number,
+	seed: number }
+type CEm = { L: Layer, e: ParticleEmitter }
+type CCarrier = { part: Part, o: CTracer?, ems: { CEm }, size: Vector3, spin: number, ang: number, on: boolean,
+	r0: number, t0: number, t1: number }
+type CRock = { part: Part, o: CTracer, size: Vector3, s0: Vector3, kind: string, state: string, t1: number,
+	rot: CFrame, axis: Vector3, spin: number, pos: Vector3, breakAt: number?, dieAt: number?, dieT: number,
+	dieDur: number, consume: boolean, vel: Vector3, base: Vector3 }
+type CChain = { atts: { Attachment }, beams: { Beam }, spec: Layer, tr: { number } }
+type CVictimPlan = { inst: any, index: number, start: CFrame, land: Vector3, height: number, phi: number, l0: number,
+	tl: number, ti: number, r0: number, th0: number, axis: Vector3 }
+type CPlan = { spec: Layer, C: Vector3, B: Vector3, R: number, k: number, Hs: number, victims: { CVictimPlan },
+	exclude: { Instance } }
+type CVictim = { plan: CVictimPlan, carrier: Part, aura: { CEm }, trail: { CEm }, tether: CChain, lifted: boolean,
+	launched: boolean, impacted: boolean }
+
+local function smooth01(a: number, b: number, t: number): number
+	local u = math.clamp((t - a) / math.max(b - a, 1e-6), 0, 1)
+	return u * u * (3 - 2 * u)
+end
+
+local function easeOut(u: number): number
+	local v = 1 - math.clamp(u, 0, 1)
+	return 1 - v * v * v
+end
+
+local function rnd(range: { number }): number
+	return rng:NextNumber(range[1], range[2])
+end
+
+-- el campo en el segundo t: L (sin gravedad), S (remolino), A (atracción) y el radio del agujero (fracción del máximo)
+local function cataField(Cf: Layer, t: number): (number, number, number, number)
+	local T, F, Hh = Cf.t, Cf.field, Cf.hole
+	local after = t >= T.det
+	local L = if after then 0 else smooth01(T.lift[1], T.lift[2], t)
+	local S = smooth01(T.swirl[1], T.swirl[2], t) * (1 + F.swirl_boost * smooth01(T.swirl_up[1], T.swirl_up[2], t))
+	if after then
+		S *= math.exp(-(t - T.det) * 3)
+	end
+	local A = if after then 0
+		else F.a_mid * smooth01(T.attract[1], T.attract[2], t) + (1 - F.a_mid) * smooth01(T.attract[2], T.attract[3], t)
+	local rbk = 0
+	if t >= T.sing[1] and not after then
+		local g = smooth01(T.sing[1], T.sing[2], t)
+		rbk = (Hh.rb[1] + (Hh.rb[2] - Hh.rb[1]) * g) / Hh.rb[2]
+		rbk *= 1 - (1 - Hh.crit_shrink) * smooth01(T.crit[1] + 0.8, T.crit[2], t)
+	end
+	return L, S, A, rbk
+end
+
+-- un paso del campo para algo que flota (r, th, y relativos al epicentro)
+local function stepTracer(o: CTracer, dt: number, F: Layer, R: number, Hs: number, k: number, L: number, S: number,
+	A: number)
+	local omega = F.omega0 * o.w * (R / (o.r + F.r_core * R)) ^ F.omega_pow * S
+	o.th += omega * dt
+	if A > 0 then
+		o.r = math.max(o.r - A * F.c_in * o.inward * (o.r + 0.06 * R) * dt, 0)
+	end
+	local yb = o.band * Hs
+	local yt = yb + A * (Hs - yb) * math.exp(-o.r / (F.funnel * R))
+	local vmax = 140 * k * o.rise
+	o.y += math.clamp((yt - o.y) * o.rise * L * F.c_rise, -vmax, vmax) * dt + o.vy * dt
+	o.vy *= math.exp(-1.6 * dt)
+	if A > 0 then
+		o.y += (Hs - o.y) * math.min(1, A * A * F.c_up * dt)
+	end
+end
+
+local function tracerPos(o: CTracer, C: Vector3, F: Layer, R: number, Hs: number, t: number): Vector3
+	local rr = math.max(o.r + R * F.turb_r * math.noise(o.seed, t * 0.35), 0)
+	local yy = o.y + Hs * F.turb_y * math.noise(o.seed + 7.3, t * 0.5)
+	return C + Vector3.new(math.cos(o.th) * rr, yy, math.sin(o.th) * rr)
+end
+
+
+-- el radio del agujero en el segundo tt (studs)
+local function cataRb(Cf: Layer, k: number, tt: number): number
+	local _, _, _, rbk = cataField(Cf, math.min(tt, Cf.t.det - 1e-3))
+	return rbk * Cf.hole.rb[2] * k
+end
+
+-- dónde pasa todo: el epicentro en el suelo, la singularidad y el recorrido de cada víctima. No crea nada ni usa números
+-- al azar: el servidor y los clientes calculan exactamente lo mismo.
+local function cataclysmPlan(spec: Layer, epicenter: any, victimsIn: any, options: { [string]: any }?): CPlan
+	local opt: { [string]: any } = options or {}
+	local Cf = spec.cataclysm
+	local T, Vc = Cf.t, Cf.victims
+	local R = opt.Radius or Cf.radius
+	local k = R / Cf.radius
+	local Hs = opt.Height or Cf.height * k
+	local victimList: { any } = if typeof(victimsIn) == "table" then victimsIn elseif victimsIn ~= nil then { victimsIn } else {}
+	local p0 = pointOf(epicenter) or Vector3.zero
+	local exclude: { Instance } = {}
+	if typeof(epicenter) == "Instance" then
+		table.insert(exclude, epicenter)
+	end
+	if typeof(opt.Caster) == "Instance" then
+		table.insert(exclude, opt.Caster)
+	end
+	for _, v in victimList do
+		if typeof(v) == "Instance" then
+			table.insert(exclude, v)
+		end
+	end
+	local _, _, gy0 = groundLook(p0, exclude, 400)
+	local C = Vector3.new(p0.X, gy0 or p0.Y, p0.Z)
+	local victims: { CVictimPlan } = {}
+	local n = #victimList
+	for i, v in victimList do
+		local cf: CFrame? = nil
+		local height = Vc.ref * k
+		if typeof(v) == "Instance" then
+			if v:IsA("Model") then
+				cf = v:GetPivot()
+				local _, size = v:GetBoundingBox()
+				height = size.Y
+			elseif v:IsA("BasePart") then
+				cf = v.CFrame
+				height = v.Size.Y
+			end
+		elseif typeof(v) == "CFrame" then
+			cf = v
+		elseif typeof(v) == "Vector3" then
+			cf = CFrame.new(v)
+		end
+		if not cf then
+			continue
+		end
+		local start = cf :: CFrame
+		local rel = Vector3.new(start.Position.X - C.X, 0, start.Position.Z - C.Z)
+		local land: Vector3
+		if opt.ImpactPoints and opt.ImpactPoints[i] then
+			land = opt.ImpactPoints[i]
+		else
+			-- cae en su lugar, pero nunca tan lejos que la caída deje de ser hacia abajo
+			local dist = math.min(rel.Magnitude, Vc.land_max * Hs)
+			local dir = if rel.Magnitude > 1e-3 then rel.Unit else Vector3.xAxis
+			land = C + dir * dist
+			local _, _, ly = groundLook(land, exclude, 300)
+			land = Vector3.new(land.X, ly or C.Y, land.Z)
+		end
+		local l0 = T.victims[1] + Vc.stagger * (i - 1)
+		local tl = T.det + Vc.fall_stagger * (i - 1)
+		table.insert(victims, { inst = v, index = i, start = start, land = land, height = height,
+			phi = math.atan2(rel.Z, rel.X) + math.pi * (i - 1) / math.max(n, 1), l0 = l0, tl = tl, ti = tl + Vc.fall,
+			r0 = rel.Magnitude, th0 = math.atan2(rel.Z, rel.X),
+			axis = Vector3.new(math.sin(i * 1.7), 0.6, math.cos(i * 2.3)).Unit })
+	end
+	return { spec = spec, C = C, B = C + Vector3.new(0, Hs, 0), R = R, k = k, Hs = Hs, victims = victims, exclude = exclude }
+end
+
+local function cataHoldPos(P: CPlan, vic: CVictimPlan, tt: number): Vector3
+	local Cf = P.spec.cataclysm
+	local Vc = Cf.victims
+	local rb = cataRb(Cf, P.k, tt)
+	local ang = vic.phi + Vc.hold_spin * (tt - vic.l0)
+	local rr = Vc.hold_r * rb + vic.height * 0.6
+	return P.B + Vector3.new(math.cos(ang) * rr, -Vc.hold_drop * rb + math.sin(tt * 1.7 + vic.index) * 6 * P.k, math.sin(ang) * rr)
+end
+
+-- dónde está cada víctima en el segundo tt: tiembla, sube en espiral, queda atrapada junto al agujero, sale disparada
+-- hacia abajo y queda en el cráter
+local function cataVictimCFrame(P: CPlan, vic: CVictimPlan, tt: number): CFrame
+	local Cf = P.spec.cataclysm
+	local Vc = Cf.victims
+	local C = P.C
+	local start = vic.start
+	local rotOnly = start - start.Position
+	if tt < vic.l0 then
+		local a = smooth01(vic.l0 - Vc.tremble, vic.l0, tt) * vic.height * 0.02
+		return start + Vector3.new(math.noise(vic.index + 0.5, tt * 23) * a, 0, math.noise(vic.index + 5.5, tt * 23) * a)
+	end
+	local liftEnd = Cf.t.victims[2]
+	if tt < liftEnd then
+		local u = smooth01(vic.l0, liftEnd, tt)
+		local H = cataHoldPos(P, vic, tt)
+		local rel = H - C
+		local rH = Vector3.new(rel.X, 0, rel.Z).Magnitude
+		local thH = math.atan2(rel.Z, rel.X)
+		local target = vic.th0 + Vc.turns * 2 * math.pi
+		local dth = (thH - target + math.pi) % (2 * math.pi) - math.pi
+		local th = vic.th0 + (Vc.turns * 2 * math.pi + dth) * u
+		local rr = vic.r0 + (rH - vic.r0) * u ^ 0.9
+		local y0 = start.Position.Y
+		local yy = y0 + (H.Y - y0) * (u * u * (3 - 2 * u))
+		return CFrame.new(C.X + math.cos(th) * rr, yy, C.Z + math.sin(th) * rr) * CFrame.fromAxisAngle(vic.axis, u * 2.2) * rotOnly
+	end
+	if tt < vic.tl then
+		return CFrame.new(cataHoldPos(P, vic, tt)) * CFrame.fromAxisAngle(vic.axis, 2.2 + (tt - liftEnd) * 0.8) * rotOnly
+	end
+	if tt < vic.ti then
+		local s = (tt - vic.tl) / (vic.ti - vic.tl)
+		local from = cataHoldPos(P, vic, vic.tl)
+		local to = vic.land + Vector3.new(0, vic.height * 0.35, 0)
+		return CFrame.new(from + (to - from) * (s * s)) * CFrame.fromAxisAngle(vic.axis, 2.2 + (vic.tl - liftEnd) * 0.8 + s * 2) * rotOnly
+	end
+	-- en el cráter, un poco hundida y torcida
+	return CFrame.new(vic.land + Vector3.new(0, vic.height * 0.3, 0)) * CFrame.fromAxisAngle(vic.axis, 0.5) * rotOnly
+end
+
+local function cataFindVictim(P: CPlan, v: any): CVictimPlan?
+	for _, vic in P.victims do
+		if vic.inst == v or vic.index == v then
+			return vic
+		end
+	end
+	return nil
+end
+
+local function randomUnit(): Vector3
+	local v = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1))
+	return if v.Magnitude > 1e-3 then v.Unit else Vector3.yAxis
+end
+
+local function playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, victimsIn: any, options: { [string]: any }?): CataclysmControl
+	local opt: { [string]: any } = options or {}
+	local Cf = spec.cataclysm
+	local T, Fd, Hh, Rk = Cf.t, Cf.field, Cf.hole, Cf.rocks
+	local plan = cataclysmPlan(spec, epicenter, victimsIn, opt)
+	local R, k, Hs, C, B = plan.R, plan.k, plan.Hs, plan.C, plan.B
+	local exclude = plan.exclude
+	local shakeK = if opt.Shake == nil then 1 else opt.Shake
+	local Q = OmnivoraVFX.Quality
+	local victimList: { any } = if typeof(victimsIn) == "table" then victimsIn elseif victimsIn ~= nil then { victimsIn } else {}
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), CFrame.new(C), OmnivoraVFX.Parent)
+	table.insert(exclude, holder)
+	local isClient = RunService:IsClient()
+
+	local byRole: { [string]: { Layer } } = {}
+	for _, L in spec.layers do
+		local list = byRole[L.role]
+		if not list then
+			list = {}
+			byRole[L.role] = list
+		end
+		table.insert(list, L)
+	end
+	local function roleLayers(role: string): { Layer }
+		return byRole[role] or {}
+	end
+	local layerByName: { [string]: Layer } = {}
+	for _, L in spec.layers do
+		layerByName[L.name] = L
+	end
+
+	local ctl: CataclysmControl
+	local clock = 0
+	local silent = false
+	local function fire(name: string, ...: any)
+		if silent or not opt.OnEvent then
+			return
+		end
+		task.spawn(opt.OnEvent, name, ...)
+	end
+
+	-- ---------------- emisores ----------------
+	local allEms: { CEm } = {}
+	local function addEmitters(part: Part, role: string, index: number, kk: number): { CEm }
+		local out: { CEm } = {}
+		for _, L in roleLayers(role) do
+			if L.every and index % L.every ~= 0 then
+				continue
+			end
+			local e = configureEmitter(L, kk)
+			e.LockedToPart = L.locked == true
+			if not L.shape then
+				e.Shape = Enum.ParticleEmitterShape.Box
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+			end
+			e.Parent = part
+			local item = { L = L, e = e }
+			table.insert(out, item)
+			table.insert(allEms, item)
+		end
+		return out
+	end
+	local function setRates(ems: { CEm }, t: number, gate: number)
+		for _, it in ems do
+			local env = if it.L.env then evalNum(it.L.env, t) else 1
+			local rate = (it.L.rate or 0) * env * gate * Q
+			if silent then
+				rate = 0
+			end
+			it.e.Rate = rate
+			it.e.Enabled = rate > 0.01
+		end
+	end
+	local function disable(ems: { CEm })
+		for _, it in ems do
+			it.e.Enabled = false
+		end
+	end
+
+	-- ráfagas: un emisor por capa que se mueve a cada punto y suelta Emit
+	local bursts: { [string]: { part: Part, e: ParticleEmitter, L: Layer } } = {}
+	for _, L in roleLayers("burst") do
+		local part = invisiblePart(L.name .. "_Burst", Vector3.one, CFrame.new(C), holder)
+		local e = configureEmitter(L, k)
+		e.Parent = part
+		bursts[L.name] = { part = part, e = e, L = L }
+	end
+	local function burst(name: string, pos: Vector3, n: number, sizeK: number?)
+		local b = bursts[name]
+		if silent or not b or n <= 0 then
+			return
+		end
+		local sk = sizeK or 1
+		local r = if b.L.shape and b.L.shape.radius then b.L.shape.radius * 2 * k * sk else 1
+		b.part.Size = Vector3.one * math.clamp(r, 0.2, 2000)
+		b.part.CFrame = CFrame.new(pos)
+		b.e.Size = numberSeq(b.L.size, k * sk)
+		b.e:Emit(quality(n))
+	end
+	local function decal(name: string, pos: Vector3, sizeK: number)
+		local L = layerByName[name]
+		if silent or not L then
+			return
+		end
+		playDecalAt(L, holder, k * sizeK, 1, CFrame.new(pos + Vector3.new(0, 0.3 * k, 0)))
+	end
+
+	-- ---------------- cadenas de Beams (corrientes, brazos de polvo, ondas) ----------------
+	local function makeBeam(Bs: Layer, a0: Attachment, a1: Attachment): Beam
+		local b = Instance.new("Beam")
+		b.Name = Bs.name
+		b.Attachment0 = a0
+		b.Attachment1 = a1
+		b.Texture = OmnivoraVFX.TEXTURES[Bs.texture] or ""
+		b.TextureMode = Enum.TextureMode.Wrap
+		b.TextureLength = Bs.tex_len * k
+		b.TextureSpeed = Bs.speed
+		b.LightEmission = Bs.light_emission
+		b.LightInfluence = 0
+		b.Brightness = Bs.brightness
+		b.Color = colorSeq(Bs.color)
+		b.FaceCamera = true
+		b.Segments = 3
+		b.Width0 = 0
+		b.Width1 = 0
+		b.Transparency = NumberSequence.new(1)
+		b.Enabled = false
+		b.Parent = holder
+		return b
+	end
+	local function makeChain(Bs: Layer, n: number, closed: boolean): CChain
+		local atts: { Attachment } = {}
+		for i = 1, n do
+			local a = Instance.new("Attachment")
+			a.Name = Bs.name
+			a.Parent = holder
+			atts[i] = a
+		end
+		local beams: { Beam } = {}
+		local tr: { number } = {}
+		for i = 1, if closed then n else n - 1 do
+			beams[i] = makeBeam(Bs, atts[i], atts[i % n + 1])
+			tr[i] = 1
+		end
+		return { atts = atts, beams = beams, spec = Bs, tr = tr }
+	end
+	local function showChain(ch: CChain, pts: { Vector3 }, widths: { number }, trs: { number })
+		local n = #ch.atts
+		for i = 1, n do
+			ch.atts[i].WorldPosition = pts[i]
+		end
+		for i, b in ch.beams do
+			local j = i % n + 1
+			local tr = math.max(trs[i], trs[j])
+			if tr >= 0.995 then
+				b.Enabled = false
+			else
+				b.Enabled = true
+				b.Width0 = widths[i]
+				b.Width1 = widths[j]
+				if math.abs(ch.tr[i] - tr) > 0.01 then
+					ch.tr[i] = tr
+					b.Transparency = NumberSequence.new(tr)
+				end
+			end
+		end
+	end
+	local function hideChain(ch: CChain)
+		for _, b in ch.beams do
+			b.Enabled = false
+		end
+	end
+	local LO = Cf.loops
+	local function showLoop(ch: CChain, radius: number, y: number, width: number, tr: number)
+		local n = #ch.atts
+		local pts, ws, trs = table.create(n), table.create(n), table.create(n)
+		for i = 1, n do
+			local a = 2 * math.pi * (i - 1) / n
+			pts[i] = C + Vector3.new(math.cos(a) * radius, y, math.sin(a) * radius)
+			ws[i] = width
+			trs[i] = tr
+		end
+		showChain(ch, pts, ws, trs)
+	end
+
+	-- ---------------- el despertar: portadores en la onda que recorre el suelo ----------------
+	local function frontR(t: number): number
+		return R * easeOut((t - T.front[1]) / (T.front[2] - T.front[1]))
+	end
+	local front: { CCarrier } = {}
+	for i = 1, Cf.front_n do
+		local part = invisiblePart("CataFront", Vector3.one, CFrame.new(C), holder)
+		local c: CCarrier = { part = part, o = nil, ems = addEmitters(part, "front", i, k), size = Vector3.one, spin = 0,
+			ang = 2 * math.pi * (i - 1) / Cf.front_n + rng:NextNumber(-0.1, 0.1), on = true, r0 = 0, t0 = 0, t1 = 0 }
+		table.insert(front, c)
+	end
+	local frontLoop = makeChain(LO.front, LO.points, true)
+	local ripLoops = { makeChain(LO.ripple, LO.points, true), makeChain(LO.ripple_purple, LO.points, true),
+		makeChain(LO.ripple, LO.points, true) }
+
+	-- ---------------- la tormenta: anillos de portadores que siguen al campo ----------------
+	local function newTracer(r: number, th: number, y: number, band: number): CTracer
+		return { r = r, th = th, y = y, w = rng:NextNumber(0.85, 1.15), band = band, rise = rng:NextNumber(0.6, 1.0),
+			inward = rng:NextNumber(0.85, 1.15), vy = 0, seed = rng:NextNumber(0, 1000) }
+	end
+	local storm: { CCarrier } = {}
+	local idx = 0
+	for _, ring in Cf.rings do
+		local r, n, band, hgt = ring[1] * R, ring[2], ring[3], ring[4] * Hs
+		for i = 1, n do
+			idx += 1
+			local part = invisiblePart("CataStorm", Vector3.one, CFrame.new(C), holder)
+			local th = 2 * math.pi * (i - 1) / n + rng:NextNumber(-0.25, 0.25)
+			local arc = math.min(2 * math.pi * r / n * 0.85, 2000)
+			local c: CCarrier = { part = part, o = newTracer(r, th, band * Hs * 0.3, band), ems = addEmitters(part, "storm", idx, k),
+				size = Vector3.new(math.min(R * 0.15, 2000), math.min(hgt, 2000), arc), spin = 0, ang = 0, on = true, r0 = r,
+				t0 = 0, t1 = 0 }
+			table.insert(storm, c)
+		end
+	end
+	local UD = Cf.updrafts
+	local updrafts: { CCarrier } = {}
+	for i = 1, UD.n do
+		local part = invisiblePart("CataUpdraft", Vector3.one * 60 * k, CFrame.new(C), holder)
+		local r = rnd(UD.r) * R
+		local c: CCarrier = { part = part, o = newTracer(r, rng:NextNumber(0, 2 * math.pi), 0, rnd(UD.band)),
+			ems = addEmitters(part, "updraft", i, k), size = Vector3.new(120, 40, 120) * k, spin = 0, ang = 0, on = true,
+			r0 = r, t0 = 0, t1 = 0 }
+		table.insert(updrafts, c)
+	end
+	local ED = Cf.eddies
+	local eddies: { CCarrier } = {}
+	for i = 1, ED.n do
+		local part = invisiblePart("CataEddy", Vector3.one, CFrame.new(C), holder)
+		local r = rnd(ED.r) * R
+		local life = ED.life[(i - 1) % #ED.life + 1]
+		local c: CCarrier = { part = part, o = newTracer(r, rng:NextNumber(0, 2 * math.pi), 0, rnd(ED.band)),
+			ems = addEmitters(part, "eddy", i, k), size = Vector3.new(ED.box[1], ED.box[2], ED.box[3]) * k,
+			spin = math.rad(rnd(ED.spin)), ang = 0, on = true, r0 = r, t0 = life[1], t1 = life[2] }
+		table.insert(eddies, c)
+	end
+
+	-- corrientes de energía, brazos de polvo y corrientes de acreción
+	local Cu, Bd, St = Cf.currents, Cf.bands, Cf.streams
+	type CCurrent = { ch: CChain, rc: number, th: number, wind: number, w: number, inward: number, seed: number }
+	local currents: { CCurrent } = {}
+	for c = 1, Cu.n do
+		local frac = (c - 1) / math.max(Cu.n - 1, 1)
+		table.insert(currents, { ch = makeChain(Cu.beams[(c - 1) % #Cu.beams + 1], Cu.points, false),
+			rc = R * (Cu.r[1] + (Cu.r[2] - Cu.r[1]) * ((frac * 7.31) % 1)), th = 2 * math.pi * (c - 1) / Cu.n + rng:NextNumber(-0.2, 0.2),
+			wind = rnd(Cu.wind), w = rnd(Cu.w), inward = rng:NextNumber(0.8, 1.2), seed = rng:NextNumber(0, 1000) })
+	end
+	type CArm = { ch: CChain, pts: { CTracer } }
+	local arms: { CArm } = {}
+	for a = 1, Bd.n do
+		local th0 = 2 * math.pi * (a - 1) / Bd.n + rng:NextNumber(-0.2, 0.2)
+		local pts: { CTracer } = {}
+		local w = rng:NextNumber(0.95, 1.05)
+		for j = 1, Bd.points do
+			local u = (j - 1) / (Bd.points - 1)
+			local band = Bd.band[1] + (Bd.band[2] - Bd.band[1]) * u
+			local o = newTracer(R * (Bd.r[1] + (Bd.r[2] - Bd.r[1]) * u), th0 + Bd.spiral * u, band * Hs * 0.4, band)
+			o.w, o.rise, o.inward = w, 0.6, 1
+			pts[j] = o
+		end
+		table.insert(arms, { ch = makeChain(Bd.beams[(a - 1) % #Bd.beams + 1], Bd.points, false), pts = pts })
+	end
+	type CStream = { ch: CChain, o: CTracer }
+	local streams: { CStream } = {}
+	for s = 1, St.n do
+		local o = newTracer(rnd(St.r) * R, 2 * math.pi * (s - 1) / St.n, 0, rnd(St.band))
+		o.y = o.band * Hs
+		table.insert(streams, { ch = makeChain(St.beams[(s - 1) % #St.beams + 1], St.points, false), o = o })
+	end
+
+	-- ---------------- rocas (Parts que siguen al campo) ----------------
+	local rocks: { CRock } = {}
+	local counts: { [string]: number } = { medium = 0, chunk = 0, frag = 0, rain = 0 }
+	local function rockPart(size: Vector3, color: Color3, material: Enum.Material, shadow: boolean, cf: CFrame): Part
+		local p = Instance.new("Part")
+		p.Name = "CataclysmRock"
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = shadow
+		p.Material = material
+		p.Color = color
+		p.Size = size
+		p.CFrame = cf
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		p.Parent = holder
+		return p
+	end
+	local function spawnRock(kind: string, t: number)
+		local P = Rk[kind]
+		local rf = math.min(frontR(t), R)
+		local rmin = Rk.r_min * R
+		if rf <= rmin * 1.3 then
+			return
+		end
+		local r = math.sqrt(rng:NextNumber((rmin / R) ^ 2, (rf / R) ^ 2)) * R
+		local th = rng:NextNumber(0, 2 * math.pi)
+		local gp = C + Vector3.new(math.cos(th) * r, 0, math.sin(th) * r)
+		local col, mat, yy = groundLook(gp, exclude, 200)
+		gp = Vector3.new(gp.X, yy or C.Y, gp.Z)
+		if rng:NextNumber() < P.dark then
+			col = Color3.fromRGB(62, 64, 76):Lerp(col, 0.25)
+			mat = Enum.Material.Slate
+		end
+		local s = skewed(P.size[1], P.size[2], P.skew) * k
+		local size = Vector3.new(s * rng:NextNumber(0.75, 1.25), s * rnd(P.aspect), s * rng:NextNumber(0.75, 1.25))
+		local o: CTracer = { r = r, th = th, y = (gp.Y - C.Y) - size.Y * 0.35, w = rnd(P.w), band = rnd(P.band),
+			rise = rnd(P.rise), inward = rnd(P.inward), vy = 0, seed = rng:NextNumber(0, 1000) }
+		local shoot = rng:NextNumber() < P.shoot
+		local rot = if kind == "chunk" then CFrame.Angles(rng:NextNumber(-0.15, 0.15), rng:NextNumber(0, 2 * math.pi), rng:NextNumber(-0.15, 0.15))
+			else CFrame.Angles(rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28))
+		local base = gp + Vector3.new(0, -size.Y * 0.35, 0)
+		local rk: CRock = { part = rockPart(size, col, mat, kind == "chunk", CFrame.new(base) * rot), o = o, size = size, s0 = size, kind = kind,
+			state = "embed", t1 = t + (if shoot then rng:NextNumber(0.08, 0.2) else rnd(P.tremble)), rot = rot,
+			axis = randomUnit(), spin = if kind == "chunk" then rng:NextNumber(0.2, 0.6) else rng:NextNumber(0.8, 3.0),
+			pos = gp, breakAt = if rng:NextNumber() < P.break_p then rnd(P.break_t) else nil, dieAt = nil, dieT = 0,
+			dieDur = 0.45, consume = false, vel = Vector3.zero, base = base }
+		if shoot then
+			o.vy = rng:NextNumber(300, 500) * k
+		end
+		table.insert(rocks, rk)
+		counts[kind] += 1
+		if kind == "chunk" then
+			decal("GroundCrack", gp, size.X / (80 * k))
+			decal("GroundVoid", gp, size.X / (90 * k))
+			burst("BurstDust", gp + Vector3.new(0, 10 * k, 0), 8, size.X / (60 * k))
+			burst("BurstDebris", gp, 10)
+		elseif rng:NextNumber() < 0.3 then
+			burst("BurstDust", gp, 2, 0.5)
+		end
+	end
+	local function newFragment(parent: CRock, t: number, kind: string)
+		local Fg = Rk.frag
+		local sz = Vector3.new(parent.size.X * rnd(Fg.k), math.min(parent.size.Y * rnd(Fg.k) * 1.5, parent.size.Y),
+			parent.size.Z * rnd(Fg.k))
+		local po = parent.o
+		local o: CTracer = { r = math.max(po.r + rng:NextNumber(-0.5, 0.5) * parent.size.X, 0),
+			th = po.th + rng:NextNumber(-0.5, 0.5) * parent.size.X / math.max(po.r, 1),
+			y = po.y + rng:NextNumber(-0.5, 0.5) * parent.size.Y, w = po.w * rng:NextNumber(0.85, 1.25),
+			band = po.band * rng:NextNumber(0.9, 1.4), rise = po.rise * rng:NextNumber(1, 1.5),
+			inward = po.inward * rng:NextNumber(0.9, 1.3), vy = rng:NextNumber(-40, 120) * k, seed = rng:NextNumber(0, 1000) }
+		local rot = parent.rot * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), 0)
+		local rk: CRock = { part = rockPart(sz, parent.part.Color, parent.part.Material, false, CFrame.new(parent.pos) * rot),
+			o = o, size = sz, s0 = sz, kind = kind, state = "fly", t1 = t, rot = rot,
+			axis = randomUnit(), spin = rng:NextNumber(1.5, 4.0), pos = parent.pos, breakAt = nil, dieAt = t + rnd(Fg.life),
+			dieT = 0, dieDur = 0.5, consume = false, vel = Vector3.zero, base = parent.pos }
+		table.insert(rocks, rk)
+		counts.frag += 1
+	end
+	local function fragment(rk: CRock, t: number)
+		local n = rng:NextInteger(Rk.frag.n[1], Rk.frag.n[2])
+		if counts.frag > 80 * Q then
+			n = 1
+		end
+		for _ = 1, n do
+			newFragment(rk, t, "frag")
+		end
+		local sk = rk.size.Magnitude / (40 * k)
+		burst("BurstDust", rk.pos, 4 + math.floor(sk * 4), math.clamp(sk, 0.4, 2))
+		burst("BurstSparks", rk.pos, 10, math.clamp(sk, 0.5, 2))
+		burst("BurstDebris", rk.pos, 8, 1)
+		if rk.kind == "chunk" then
+			burst("BurstFlash", rk.pos, 1, math.clamp(sk, 0.6, 1.5))
+		end
+		rk.part:Destroy()
+		counts[rk.kind] -= 1
+	end
+	local function kill(rk: CRock, t: number, consume: boolean, dur: number)
+		rk.state = "die"
+		rk.dieT = t
+		rk.dieDur = dur
+		rk.consume = consume
+	end
+
+	-- ---------------- la singularidad (geometría: el núcleo, anillos y discos que miran a la cámara, la lente) ---------
+	type CBill = { part: Part, d: Decal }
+	local function bill(name: string, tex: string): CBill
+		local p = invisiblePart(name, Vector3.new(1, 1, 0.05), CFrame.new(B), holder)
+		local d = Instance.new("Decal")
+		d.Face = Enum.NormalId.Front
+		d.Texture = OmnivoraVFX.TEXTURES[tex] or ""
+		d.Transparency = 1
+		d.Parent = p
+		return { part = p, d = d }
+	end
+	local function placeBill(b: CBill, pos: Vector3, camPos: Vector3, size: number, roll: number, color: Color3, tr: number)
+		local sz = math.clamp(size, 0.1, 2048)
+		b.part.Size = Vector3.new(sz, sz, 0.05)
+		b.part.CFrame = CFrame.lookAt(pos, camPos) * CFrame.Angles(0, 0, roll)
+		b.d.Color3 = color
+		b.d.Transparency = math.clamp(tr, 0, 1)
+	end
+	local function ball(name: string, material: Enum.Material, color: Color3, tr: number): Part
+		local p = invisiblePart(name, Vector3.one, CFrame.new(B), holder)
+		p.Shape = Enum.PartType.Ball
+		p.Material = material
+		p.Color = color
+		p.Transparency = tr
+		return p
+	end
+	type CHole = { core: Part, lens: Part, halo: CBill, photon: CBill, purple: CBill, swirl: CBill, wind: CBill,
+		glow: CBill, disk: Part, diskD: { Decal }, disk2: Part, tilt: CFrame, carriers: { { part: Part, ems: { CEm }, shell: number } } }
+	local hole: CHole? = nil
+	local function camPosition(): Vector3
+		local cam = workspace.CurrentCamera
+		return if cam then cam.CFrame.Position else B + Vector3.new(0, 0, 1000)
+	end
+	local function makeHole()
+		local camPos = camPosition()
+		local d = Vector3.new(camPos.X - B.X, 0, camPos.Z - B.Z)
+		local tilt = CFrame.identity
+		if d.Magnitude > 1e-3 then
+			local axis = Vector3.yAxis:Cross(d.Unit)
+			tilt = CFrame.fromAxisAngle(axis, math.rad(Hh.tilt))
+		end
+		local function disk(name: string, tex: string, col: Color3): (Part, { Decal })
+			local p = invisiblePart(name, Vector3.new(1, 0.05, 1), CFrame.new(B), holder)
+			local ds = {}
+			for _, face in { Enum.NormalId.Top, Enum.NormalId.Bottom } do
+				local dd = Instance.new("Decal")
+				dd.Face = face
+				dd.Texture = OmnivoraVFX.TEXTURES[tex] or ""
+				dd.Color3 = col
+				dd.Transparency = 1
+				dd.Parent = p
+				table.insert(ds, dd)
+			end
+			return p, ds
+		end
+		local dk, dkd = disk("HoleDisk", "kk_light_03", Color3.new(0.75, 1.1, 1.5))
+		local dk2, dk2d = disk("HoleDiskPurple", "fx_swirl_rings", Color3.new(1.2, 0.6, 1.6))
+		for _, dd in dk2d do
+			table.insert(dkd, dd)
+		end
+		local carriers = {}
+		for _, role in { "hole", "crit" } do
+			for _, L in roleLayers(role) do
+				local part = invisiblePart(L.name .. "_Shell", Vector3.one, CFrame.new(B), holder)
+				local e = configureEmitter(L, k)
+				e.Shape = Enum.ParticleEmitterShape.Sphere
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+				e.ShapeInOut = if L.outward then Enum.ParticleEmitterShapeInOut.Outward else Enum.ParticleEmitterShapeInOut.Inward
+				e.Parent = part
+				local item = { L = L, e = e }
+				table.insert(allEms, item)
+				table.insert(carriers, { part = part, ems = { item }, shell = L.shell or 1 })
+			end
+		end
+		hole = { core = ball("HoleCore", Enum.Material.Neon, Color3.new(0, 0, 0), 0),
+			lens = ball("HoleLens", Enum.Material.Glass, Color3.fromRGB(24, 30, 80), 1),
+			halo = bill("HoleHalo", "fx_glow"), photon = bill("PhotonRing", "kk_circle_02"),
+			purple = bill("PhotonPurple", "kk_circle_02"), swirl = bill("HoleSwirl", "fx_swirl_rings"),
+			wind = bill("HoleWind", "fx_wind_swirl"), glow = bill("CritGlow", "fx_glow"), disk = dk, diskD = dkd,
+			disk2 = dk2, tilt = tilt, carriers = carriers }
+	end
+	local pulsePhase = 0
+
+	-- ---------------- las víctimas ----------------
+	local Vc = Cf.victims
+	local victims: { CVictim } = {}
+	for _, vp in plan.victims do
+		local part = invisiblePart("CataVictim", Vector3.one, vp.start, holder)
+		local vk = k * math.clamp(vp.height / (Vc.ref * k), 0.6, 2.2)
+		table.insert(victims, { plan = vp, carrier = part, aura = addEmitters(part, "victim", vp.index, vk),
+			trail = addEmitters(part, "trail", vp.index, vk), tether = makeChain(Vc.tether, 2, false), lifted = false,
+			launched = false, impacted = false })
+	end
+	local function victimPos(vp: CVictimPlan, tt: number): Vector3
+		if opt.MoveVictims or typeof(vp.inst) ~= "Instance" then
+			return cataVictimCFrame(plan, vp, tt).Position
+		end
+		local inst = vp.inst :: any
+		if inst:IsA("Model") then
+			return inst:GetPivot().Position
+		end
+		return inst.Position
+	end
+
+	-- ---------------- destello y corrección de color (solo en el cliente) ----------------
+	local cc: Instance? = nil
+	local flashGui: Instance? = nil
+	local flashFrame: Frame? = nil
+	if isClient then
+		pcall(function()
+			local lighting = game:GetService("Lighting")
+			local e = Instance.new("ColorCorrectionEffect")
+			e.Name = "OmnivoraCataclysm"
+			e.Parent = lighting
+			cc = e
+		end)
+		if opt.Flash ~= false then
+			pcall(function()
+				local Players = game:GetService("Players")
+				local lp = Players.LocalPlayer
+				local pg = lp and (lp :: any).PlayerGui
+				if not pg then
+					return
+				end
+				local gui = Instance.new("ScreenGui")
+				gui.Name = "OmnivoraCataclysmFlash"
+				gui.IgnoreGuiInset = true
+				gui.ResetOnSpawn = false
+				gui.DisplayOrder = 1000
+				local fr = Instance.new("Frame")
+				fr.Size = UDim2.fromScale(1, 1)
+				fr.BackgroundColor3 = Color3.new(1, 1, 1)
+				fr.BorderSizePixel = 0
+				fr.BackgroundTransparency = 1
+				fr.Parent = gui
+				gui.Parent = pg
+				flashGui = gui
+				flashFrame = fr
+			end)
+		end
+	end
+
+	-- ---------------- detonación ----------------
+	local Dc = Cf.det
+	type CDet = { core: Part, shell: Part, shell2: Part, ring: CBill, distort: Part, sky: { CChain }, ground: { CChain },
+		wall: { CCarrier } }
+	local det: CDet? = nil
+	local detEms: { CEm } = {}
+	local detCarrier = invisiblePart("CataDetonation", Vector3.one, CFrame.new(B), holder)
+	for _, L in roleLayers("det") do
+		local e = configureEmitter(L, k)
+		e.Parent = detCarrier
+		table.insert(detEms, { L = L, e = e })
+	end
+	local function makeDetonation()
+		local wall: { CCarrier } = {}
+		for i = 1, Dc.wall_n do
+			local part = invisiblePart("CataWall", Vector3.one, CFrame.new(C), holder)
+			table.insert(wall, { part = part, o = nil, ems = addEmitters(part, "wall", i, k), size = Vector3.one, spin = 0,
+				ang = 2 * math.pi * (i - 1) / Dc.wall_n, on = true, r0 = 0, t0 = 0, t1 = 0 })
+		end
+		det = { core = ball("DetCore", Enum.Material.Neon, Color3.fromRGB(220, 238, 255), 0),
+			shell = ball("DetShell", Enum.Material.ForceField, Color3.fromRGB(110, 170, 255), 0.15),
+			shell2 = ball("DetShellPurple", Enum.Material.ForceField, Color3.fromRGB(190, 90, 255), 1),
+			ring = bill("DetRing", "kk_circle_02"), distort = ball("DetDistortion", Enum.Material.Glass, Color3.fromRGB(40, 60, 120), 0.55),
+			sky = { makeChain(LO.det_sky, LO.points, true), makeChain(LO.det_sky_purple, LO.points, true) },
+			ground = { makeChain(LO.det_ground, LO.points, true), makeChain(LO.det_ground_core, LO.points, true) },
+			wall = wall }
+		detCarrier.Size = Vector3.one * math.min(2 * Hh.rb[2] * k, 2000)
+		if not silent then
+			for _, it in detEms do
+				it.e:Emit(quality(it.L.n or 10))
+			end
+		end
+	end
+	local after: { CCarrier } = {}
+	local function makeAftermath()
+		local AF = Cf.after
+		for i = 1, AF.n do
+			local r = rnd(AF.r) * R
+			local th = rng:NextNumber(0, 2 * math.pi)
+			local part = invisiblePart("CataAfter", Vector3.new(300, 80, 300) * k,
+				CFrame.new(C + Vector3.new(math.cos(th) * r, 40 * k, math.sin(th) * r)), holder)
+			table.insert(after, { part = part, o = nil, ems = addEmitters(part, "after", i, k), size = Vector3.one, spin = 0,
+				ang = 0, on = true, r0 = r, t0 = 0, t1 = 0 })
+		end
+	end
+
+	-- ---------------- lluvia de piedras después de la detonación ----------------
+	local rain = Rk.rain
+	local rainTimes: { number } = {}
+	for i = 1, math.floor(rain.n * Q + 0.5) do
+		rainTimes[i] = rain.t[1] + (rain.t[2] - rain.t[1]) * (i - 1) / math.max(rain.n * Q - 1, 1)
+	end
+	local rainNext = 1
+	local function spawnRain()
+		local r = rnd(rain.r) * R
+		local th = rng:NextNumber(0, 2 * math.pi)
+		local s = rnd(rain.size) * k
+		local size = Vector3.new(s * rng:NextNumber(0.7, 1.3), s * rng:NextNumber(0.6, 1), s * rng:NextNumber(0.7, 1.3))
+		local pos = C + Vector3.new(math.cos(th) * r, rnd(rain.height) * k, math.sin(th) * r)
+		local o: CTracer = { r = r, th = th, y = pos.Y - C.Y, w = 1, band = 0, rise = 0, inward = 0, vy = 0, seed = rng:NextNumber(0, 1000) }
+		table.insert(rocks, { part = rockPart(size, Color3.fromRGB(96, 98, 110), Enum.Material.Slate, false, CFrame.new(pos)), o = o,
+			size = size, s0 = size, kind = "rain", state = "fall", t1 = 0, rot = CFrame.Angles(rng:NextNumber(0, 6), rng:NextNumber(0, 6), 0),
+			axis = randomUnit(), spin = rng:NextNumber(1, 4), pos = pos, breakAt = nil, dieAt = nil, dieT = 0, dieDur = 0.3,
+			consume = false, vel = Vector3.new(rng:NextNumber(-20, 20), -rng:NextNumber(0, 60), rng:NextNumber(-20, 20)) * k, base = pos })
+		counts.rain += 1
+	end
+
+	-- ---------------- lentes gravitacionales que laten durante la tormenta ----------------
+	type CLens = { part: Part, o: CTracer, size: number, ph: number }
+	local lenses: { CLens } = {}
+	for i = 1, 3 do
+		local o = newTracer(rng:NextNumber(0.15, 0.5) * R, rng:NextNumber(0, 6.28), 0, rng:NextNumber(0.12, 0.3))
+		table.insert(lenses, { part = ball("GravityLens", Enum.Material.Glass, Color3.fromRGB(30, 44, 110), 1), o = o,
+			size = rng:NextNumber(140, 260) * k, ph = i * 2.1 })
+	end
+
+	-- ---------------- el control ----------------
+	local conn: RBXScriptConnection? = nil
+	local cleaned = false
+	local function cleanup()
+		if cleaned then
+			return
+		end
+		cleaned = true
+		ctl.Active = false
+		if conn then
+			conn:Disconnect()
+		end
+		if holder.Parent then
+			holder:Destroy()
+		end
+		if cc then
+			cc:Destroy()
+		end
+		if flashGui then
+			flashGui:Destroy()
+		end
+	end
+	ctl = {
+		Holder = holder,
+		Active = true,
+		Time = 0,
+		Phase = Cf.phases[1][1],
+		Center = C,
+		Radius = R,
+		Singularity = B,
+		SingularityRadius = 0,
+		Victims = victimList,
+		GetVictimCFrame = function(_, v: any, tt: number?): CFrame?
+			local vic = cataFindVictim(plan, v)
+			return if vic then cataVictimCFrame(plan, vic, tt or clock) else nil
+		end,
+		GetImpactPoint = function(_, v: any): Vector3?
+			local vic = cataFindVictim(plan, v)
+			return if vic then vic.land else nil
+		end,
+		Stop = function(_)
+			cleanup()
+		end,
+	}
+	if shakeK > 0 then
+		addShakeSource(function()
+			if not ctl.Active then
+				return nil
+			end
+			return shakeK * evalNum(Cf.shake, clock)
+		end)
+	end
+
+	local phaseIdx = 0
+	local nextRate = 0
+	local nextCollide = 0
+	local spawnAcc: { [string]: number } = { medium = 0, chunk = 0 }
+	local ripplesFired = 0
+	local detDone, afterDone = false, false
+	local movParts: { BasePart } = {}
+	local movCF: { CFrame } = {}
+
+	local function update(dt: number)
+		clock += dt
+		local t = clock
+		ctl.Time = t
+		while phaseIdx < #Cf.phases and t >= Cf.phases[phaseIdx + 1][2] do
+			phaseIdx += 1
+			ctl.Phase = Cf.phases[phaseIdx][1]
+			fire("Phase", ctl.Phase, phaseIdx)
+		end
+		if t >= T["end"] then
+			fire("Finished")
+			cleanup()
+			return
+		end
+		local L, S, A, rbk = cataField(Cf, t)
+		local rb = rbk * Hh.rb[2] * k
+		ctl.SingularityRadius = rb
+		local doRates = t >= nextRate or silent
+		if doRates then
+			nextRate = t + 0.1
+		end
+		table.clear(movParts)
+		table.clear(movCF)
+		local camPos = camPosition()
+
+		-- el despertar
+		local rf = frontR(t)
+		for _, c in front do
+			if not c.on then
+				continue
+			end
+			if t > T.front[2] + 4.5 then
+				c.on = false
+				disable(c.ems)
+				continue
+			end
+			local pos = C + Vector3.new(math.cos(c.ang) * rf, 30 * k, math.sin(c.ang) * rf)
+			local tangent = Vector3.new(-math.sin(c.ang), 0, math.cos(c.ang))
+			c.part.Size = Vector3.new(160 * k, 60 * k, math.clamp(2 * math.pi * rf / Cf.front_n * 0.8, 40 * k, 2000))
+			table.insert(movParts, c.part)
+			table.insert(movCF, CFrame.lookAt(pos, pos + tangent))
+			if doRates then
+				setRates(c.ems, t, 1)
+			end
+		end
+		local ftr = 1 - (1 - LO.front.transparency) * (1 - smooth01(T.front[2] - 0.4, T.front[2] + 0.5, t))
+		if ftr < 0.995 then
+			showLoop(frontLoop, math.max(rf, 1), 18 * k, LO.front.width * k, ftr)
+		else
+			hideChain(frontLoop)
+		end
+		-- ondas de gravedad (cada una se abre hasta el borde)
+		local anyRipple = { false, false, false }
+		for ri, ts in LO.ripples do
+			local u = (t - ts) / LO.ripple_time
+			if u >= 0 and u <= 1 then
+				local slot = (ri - 1) % 3 + 1
+				local Bs = ripLoops[slot].spec
+				anyRipple[slot] = true
+				local radius = R * (0.05 + 0.95 * easeOut(u))
+				showLoop(ripLoops[slot], radius, 12 * k, Bs.width * k * (1 - 0.4 * u),
+					1 - (1 - Bs.transparency) * (1 - u) ^ 0.7)
+				if ri > ripplesFired then
+					ripplesFired = ri
+				end
+			end
+		end
+		for slot = 1, 3 do
+			if not anyRipple[slot] then
+				hideChain(ripLoops[slot])
+			end
+		end
+
+		-- la tormenta
+		for _, c in storm do
+			if not c.on then
+				continue
+			end
+			local o = c.o :: CTracer
+			stepTracer(o, dt, Fd, R, Hs, k, L, S, A)
+			local pos = tracerPos(o, C, Fd, R, Hs, t)
+			if (rb > 1 and A > 0.25 and (pos - B).Magnitude < rb * Fd.capture * 1.5) or t >= T.det then
+				c.on = false
+				disable(c.ems)
+				continue
+			end
+			local tangent = Vector3.new(-math.sin(o.th), 0, math.cos(o.th))
+			local shrink = math.clamp((o.r / c.r0) ^ 0.8, 0.15, 1)
+			if doRates then
+				c.part.Size = Vector3.new(c.size.X * shrink, c.size.Y, c.size.Z * shrink)
+				setRates(c.ems, t, 1)
+			end
+			table.insert(movParts, c.part)
+			table.insert(movCF, CFrame.lookAt(pos, pos + tangent))
+		end
+		for _, c in updrafts do
+			if not c.on then
+				continue
+			end
+			local o = c.o :: CTracer
+			stepTracer(o, dt, Fd, R, Hs, k, L, S, A)
+			local pos = tracerPos(o, C, Fd, R, Hs, t)
+			if (rb > 1 and A > 0.25 and (pos - B).Magnitude < rb * Fd.capture * 2) or t >= T.det then
+				c.on = false
+				disable(c.ems)
+				continue
+			end
+			-- apuntan al cielo y, con la atracción, a la singularidad
+			local up = pos + Vector3.new(0, 1000 * k, 0)
+			local aim = up:Lerp(B, math.clamp(A * 1.3, 0, 1))
+			table.insert(movParts, c.part)
+			table.insert(movCF, CFrame.lookAt(pos, aim))
+			if doRates then
+				setRates(c.ems, t, 1)
+			end
+		end
+		for _, c in eddies do
+			if not c.on then
+				continue
+			end
+			local o = c.o :: CTracer
+			stepTracer(o, dt, Fd, R, Hs, k, L, S, A)
+			local pos = tracerPos(o, C, Fd, R, Hs, t)
+			if t > c.t1 + 2.5 or (rb > 1 and A > 0.25 and (pos - B).Magnitude < rb * Fd.capture * 1.5) then
+				c.on = false
+				disable(c.ems)
+				continue
+			end
+			c.ang += c.spin * dt
+			if doRates then
+				c.part.Size = c.size
+				local gate = smooth01(c.t0, c.t0 + 0.8, t) * (1 - smooth01(c.t1 - 0.8, c.t1, t))
+				setRates(c.ems, t, gate)
+			end
+			table.insert(movParts, c.part)
+			table.insert(movCF, CFrame.new(pos) * CFrame.Angles(0, c.ang, 0))
+		end
+		for _, ls in lenses do
+			stepTracer(ls.o, dt, Fd, R, Hs, k, L, S, A)
+			local pos = tracerPos(ls.o, C, Fd, R, Hs, t)
+			local vis = smooth01(0.6, 2.0, t) * (1 - smooth01(9.0, 10.5, t))
+			local pulse = 0.75 + 0.25 * math.sin(t * 2.3 + ls.ph)
+			ls.part.Size = Vector3.one * math.max(ls.size * pulse, 0.2)
+			ls.part.Transparency = 1 - 0.28 * vis
+			table.insert(movParts, ls.part)
+			table.insert(movCF, CFrame.new(pos))
+		end
+
+		-- corrientes de energía: giran con la tormenta y se doblan hacia la singularidad
+		local np = Cu.points
+		for _, cur in currents do
+			local omega = Fd.omega0 * cur.w * (R / (cur.rc + Fd.r_core * R)) ^ Fd.omega_pow * S
+			cur.th += omega * dt
+			if A > 0 then
+				cur.rc = math.max(cur.rc - A * Fd.c_in * cur.inward * (cur.rc + 0.06 * R) * dt, 0)
+			end
+			local alpha = smooth01(Cu.fade[1], Cu.fade[2], t) * math.clamp(cur.rc / (0.12 * R), 0, 1)
+			if t >= T.det or alpha <= 0.01 then
+				hideChain(cur.ch)
+				continue
+			end
+			local Bs = cur.ch.spec
+			local bend = math.clamp(A * Cu.bend, 0, 1)
+			local pts, ws, trs = table.create(np), table.create(np), table.create(np)
+			for j = 1, np do
+				local u = (j - 1) / (np - 1)
+				local rr = cur.rc * (1 - 0.3 * u)
+				local th = cur.th + cur.wind * u + 0.15 * math.noise(cur.seed, t * 0.4 + u * 2)
+				local yy = u * Cu.top * Hs
+				local b = bend * u ^ 1.2
+				rr *= 1 - b
+				yy += (Hs - yy) * b
+				pts[j] = C + Vector3.new(math.cos(th) * rr, yy, math.sin(th) * rr)
+				ws[j] = Bs.width * k * (1 - Cu.taper * u) * (0.85 + 0.3 * math.noise(cur.seed + 3, t * 0.8 + u))
+				local endFade = math.clamp(math.min(u / 0.12, (1 - u) / 0.12), 0, 1)
+				trs[j] = 1 - (1 - Bs.transparency) * alpha * endFade
+			end
+			showChain(cur.ch, pts, ws, trs)
+		end
+		-- brazos de polvo: cada punto es arrastrado por el campo
+		local na = Bd.points
+		for _, arm in arms do
+			local Bs = arm.ch.spec
+			local pts, ws, trs = table.create(na), table.create(na), table.create(na)
+			local anyVis = false
+			for j = 1, na do
+				local o = arm.pts[j]
+				stepTracer(o, dt, Fd, R, Hs, k, L, S, A)
+				local u = (j - 1) / (na - 1)
+				pts[j] = tracerPos(o, C, Fd, R, Hs, t)
+				ws[j] = Bs.width * k * (0.55 + 0.45 * math.sin(math.pi * u))
+				local alpha = smooth01(Bd.fade[1], Bd.fade[2], t) * math.clamp(o.r / (0.1 * R), 0, 1)
+				if t >= T.det then
+					alpha = 0
+				end
+				local endFade = math.clamp(math.min(u / 0.15, (1 - u) / 0.15), 0, 1)
+				trs[j] = 1 - (1 - Bs.transparency) * alpha * endFade
+				anyVis = anyVis or alpha > 0.01
+			end
+			if anyVis then
+				showChain(arm.ch, pts, ws, trs)
+			else
+				hideChain(arm.ch)
+			end
+		end
+		-- corrientes de acreción: la tormenta alimenta al agujero
+		local ns = St.points
+		for _, st in streams do
+			local o = st.o
+			stepTracer(o, dt, Fd, R, Hs, k, L, S, A)
+			local alpha = smooth01(St.fade[1], St.fade[2], t) * (1 - smooth01(13.6, 14.3, t)) * math.clamp(o.r / (0.08 * R), 0, 1)
+			if t >= T.det or alpha <= 0.01 or rb < 1 then
+				hideChain(st.ch)
+				continue
+			end
+			local Bs = st.ch.spec
+			local base = tracerPos(o, C, Fd, R, Hs, t)
+			local pts, ws, trs = table.create(ns), table.create(ns), table.create(ns)
+			for j = 1, ns do
+				local u = (j - 1) / (ns - 1)
+				local rr = o.r * (1 - u) ^ 1.3
+				local th = o.th + St.turns * 2 * math.pi * u
+				local yy = (base.Y - C.Y) + (Hs - (base.Y - C.Y)) * u ^ 0.8
+				pts[j] = if j == ns then B else C + Vector3.new(math.cos(th) * rr, yy, math.sin(th) * rr)
+				ws[j] = Bs.width * k * (1 - 0.75 * u)
+				local endFade = math.clamp(u / 0.1, 0, 1)
+				trs[j] = 1 - (1 - Bs.transparency) * alpha * endFade
+			end
+			showChain(st.ch, pts, ws, trs)
+		end
+
+		-- rocas: nacen, tiemblan, se despegan, orbitan, chocan, se rompen, se deshacen o se las traga el agujero
+		if t < T.det then
+			for _, kind in { "medium", "chunk" } do
+				local P = Rk[kind]
+				local rate = 0
+				for _, w in P.rate do
+					if t >= w[1] and t <= w[2] then
+						rate += w[3] + (w[4] - w[3]) * (t - w[1]) / math.max(w[2] - w[1], 1e-3)
+					end
+				end
+				spawnAcc[kind] += rate * Q * dt
+				while spawnAcc[kind] >= 1 do
+					spawnAcc[kind] -= 1
+					if counts[kind] < P.max * Q then
+						spawnRock(kind, t)
+					end
+				end
+			end
+		end
+		while rainNext <= #rainTimes and t >= rainTimes[rainNext] do
+			rainNext += 1
+			spawnRain()
+		end
+		-- choques entre rocas grandes
+		if t >= nextCollide and t < T.det then
+			nextCollide = t + Rk.collide.every
+			local big: { CRock } = {}
+			for _, rk in rocks do
+				if rk.state == "fly" and math.max(rk.size.X, rk.size.Z) >= Rk.collide.min_size * k then
+					table.insert(big, rk)
+				end
+			end
+			local hitA, hitB = nil, nil
+			for a = 1, #big do
+				for b = a + 1, #big do
+					local ra, rb2 = big[a], big[b]
+					if (ra.pos - rb2.pos).Magnitude < (ra.size.Magnitude + rb2.size.Magnitude) * 0.35 then
+						hitA, hitB = ra, rb2
+						break
+					end
+				end
+				if hitA then
+					break
+				end
+			end
+			if hitA and hitB then
+				burst("BurstFlash", (hitA.pos + hitB.pos) / 2, 1, 1)
+				for _, rk in { hitA, hitB } do
+					local at = table.find(rocks, rk)
+					if at then
+						fragment(rk, t)
+						table.remove(rocks, at)
+					end
+				end
+			end
+		end
+
+		local i = #rocks
+		while i >= 1 do
+			local rk = rocks[i]
+			local o = rk.o
+			local pos = rk.pos
+			local removed = false
+			if rk.state == "embed" then
+				local a = rk.size.Magnitude * 0.03
+				pos = rk.base + Vector3.new(math.noise(o.seed, t * 25) * a, math.noise(o.seed + 3, t * 25) * a * 0.5,
+					math.noise(o.seed + 6, t * 25) * a)
+				if t >= rk.t1 then
+					rk.state = "fly"
+					if rk.kind == "chunk" then
+						burst("BurstDust", rk.base, 4, rk.size.X / (70 * k))
+					end
+				end
+			elseif rk.state == "fly" then
+				if t >= T.det then
+					-- la detonación: se acaba la atracción, salen despedidas y caen
+					local outward = pos - B
+					rk.vel = (if outward.Magnitude > 1e-3 then outward.Unit else Vector3.yAxis) * rng:NextNumber(250, 600) * k
+					rk.state = "fall"
+				else
+					stepTracer(o, dt, Fd, R, Hs, k, L, S, A)
+					pos = tracerPos(o, C, Fd, R, Hs, t)
+					if rb > 1 and A > 0.2 and (pos - B).Magnitude < rb * Fd.capture then
+						kill(rk, t, true, 0.25)
+						burst("ConsumeFlash", pos, 1, math.clamp(rk.size.Magnitude / (30 * k), 0.4, 1.6))
+					elseif rk.breakAt and t >= rk.breakAt then
+						rk.pos = pos
+						fragment(rk, t)
+						table.remove(rocks, i)
+						removed = true
+					elseif rk.dieAt and t >= rk.dieAt then
+						kill(rk, t, false, 0.5)
+						burst("BurstSparks", pos, 3, 0.5)
+					end
+				end
+			elseif rk.state == "die" then
+				local u = (t - rk.dieT) / rk.dieDur
+				if u >= 1 then
+					rk.part:Destroy()
+					counts[rk.kind] -= 1
+					table.remove(rocks, i)
+					removed = true
+				else
+					if rk.consume then
+						pos = pos:Lerp(B, math.min(1, dt * 8))
+					end
+					rk.part.Size = rk.s0 * math.max(1 - u, 0.05)
+				end
+			elseif rk.state == "fall" then
+				rk.vel += Vector3.new(0, -230 * k, 0) * dt
+				rk.vel *= math.exp(-0.4 * dt)
+				pos += rk.vel * dt
+				if pos.Y <= C.Y + rk.size.Y * 0.3 then
+					pos = Vector3.new(pos.X, C.Y + rk.size.Y * 0.3, pos.Z)
+					burst("BurstDust", pos, 2, math.clamp(rk.size.Magnitude / (25 * k), 0.3, 1.2))
+					kill(rk, t, false, 0.3)
+				end
+			end
+			if not removed then
+				rk.rot = rk.rot * CFrame.fromAxisAngle(rk.axis, rk.spin * dt * (if rk.state == "embed" then 0 else 1))
+				rk.pos = pos
+				table.insert(movParts, rk.part)
+				table.insert(movCF, CFrame.new(pos) * rk.rot)
+			end
+			i -= 1
+		end
+		-- la singularidad
+		if not hole and t >= T.sing[1] and t < T.det then
+			makeHole()
+		end
+		if hole and t < T.det then
+			local h = hole :: CHole
+			local birth = smooth01(T.sing[1], T.sing[1] + 0.8, t)
+			local crit = smooth01(T.crit[1], T.crit[2], t)
+			pulsePhase += 2 * math.pi * (Hh.pulse_hz[1] + (Hh.pulse_hz[2] - Hh.pulse_hz[1]) * crit) * dt
+			local pulse = 0.5 + 0.5 * math.sin(pulsePhase)
+			h.core.Size = Vector3.one * math.clamp(2 * rb, 0.2, 2048)
+			table.insert(movParts, h.core)
+			table.insert(movCF, CFrame.new(B))
+			local glowK = 1.8 + 1.7 * crit * (0.6 + 0.4 * pulse)
+			placeBill(h.halo, B, camPos, Hh.halo * rb, 0, Color3.fromRGB(10, 14, 40), 1 - 0.75 * birth)
+			placeBill(h.photon, B, camPos, Hh.photon * rb, 0, Color3.new(0.92 * glowK, 0.97 * glowK, glowK),
+				1 - (0.9 - 0.1 * crit) * birth)
+			placeBill(h.purple, B, camPos, Hh.purple * rb, 0, Color3.new(0.9 * glowK * 0.8, 0.5 * glowK * 0.8, glowK * 0.8),
+				1 - 0.6 * birth)
+			placeBill(h.swirl, B, camPos, Hh.swirl * rb, math.rad(Hh.spin_swirl * t * (0.6 + 0.4 * S)),
+				Color3.new(0.55, 0.85, 1.1), 1 - 0.65 * birth)
+			placeBill(h.wind, B, camPos, Hh.wind * rb, math.rad(Hh.spin_wind * t), Color3.new(0.75, 0.3, 1.0), 1 - 0.6 * birth)
+			placeBill(h.glow, B, camPos, rb * (Hh.glow[1] + (Hh.glow[2] - Hh.glow[1]) * crit), 0,
+				Color3.new(0.9 * glowK, 0.95 * glowK, glowK), 1 - (0.92 * crit ^ 1.5) * (0.7 + 0.3 * pulse))
+			local dsz = math.clamp(Hh.disk * rb, 0.1, 2048)
+			h.disk.Size = Vector3.new(dsz, 0.05, dsz)
+			h.disk2.Size = Vector3.new(math.min(dsz * 1.25, 2048), 0.05, math.min(dsz * 1.25, 2048))
+			table.insert(movParts, h.disk)
+			table.insert(movCF, CFrame.new(B) * h.tilt * CFrame.Angles(0, math.rad(Hh.spin_disk * t), 0))
+			table.insert(movParts, h.disk2)
+			table.insert(movCF, CFrame.new(B) * h.tilt * CFrame.Angles(0, math.rad(-Hh.spin_disk * 0.6 * t), 0))
+			for di, dd in h.diskD do
+				dd.Transparency = 1 - (if di <= 2 then 0.55 else 0.45) * birth
+			end
+			local away = B - camPos
+			local lensPos = B + (if away.Magnitude > 1e-3 then away.Unit else Vector3.zAxis) * rb * 0.9
+			h.lens.Size = Vector3.one * math.clamp(Hh.lens * rb * (1 + 0.08 * crit * pulse), 0.2, 2048)
+			h.lens.Transparency = 1 - 0.38 * birth
+			table.insert(movParts, h.lens)
+			table.insert(movCF, CFrame.new(lensPos))
+			if doRates then
+				for _, hc in h.carriers do
+					local shell = hc.shell * rb
+					hc.part.Size = Vector3.one * math.clamp(2 * shell, 0.2, 2000)
+					for _, it in hc.ems do
+						if not it.L.outward then
+							it.e.Speed = NumberRange.new(shell / it.L.lifetime[2], shell / it.L.lifetime[1])
+						end
+					end
+					setRates(hc.ems, t, birth)
+				end
+			end
+		end
+
+		-- las víctimas
+		for _, vic in victims do
+			local vp = vic.plan
+			if opt.MoveVictims and typeof(vp.inst) == "Instance" and not silent then
+				local cf = cataVictimCFrame(plan, vp, t)
+				local inst = vp.inst :: any
+				if inst:IsA("Model") then
+					inst:PivotTo(cf)
+				elseif inst:IsA("BasePart") then
+					inst.CFrame = cf
+				end
+			end
+			local pos = victimPos(vp, t)
+			vic.carrier.Size = Vector3.new(vp.height * 0.8, vp.height, vp.height * 0.8)
+			table.insert(movParts, vic.carrier)
+			table.insert(movCF, CFrame.new(pos))
+			if not vic.lifted and t >= vp.l0 then
+				vic.lifted = true
+				local gp = Vector3.new(vp.start.Position.X, C.Y, vp.start.Position.Z)
+				burst("BurstDust", gp + Vector3.new(0, 8 * k, 0), 10, vp.height / (40 * k))
+				burst("BurstDebris", gp, 16, 1)
+				burst("BurstFlash", gp + Vector3.new(0, vp.height * 0.5, 0), 1, 1)
+				decal("GroundCrack", gp, vp.height / (50 * k))
+				decal("GroundVoid", gp, vp.height / (60 * k))
+				fire("VictimLift", vp.inst, vp.index)
+			end
+			if not vic.launched and t >= vp.tl then
+				vic.launched = true
+				fire("VictimLaunch", vp.inst, vp.index)
+			end
+			if not vic.impacted and t >= vp.ti then
+				vic.impacted = true
+				if opt.AutoImpacts ~= false and not silent then
+					play(impactSpec, CFrame.new(vp.land), k * math.clamp(vp.height / (Vc.ref * k), 0.6, 2.2), nil, shakeK)
+				end
+				fire("VictimImpact", vp.inst, vp.index, vp.land)
+			end
+			if doRates then
+				setRates(vic.aura, t, if t >= vp.l0 and t < vp.tl then 1 else 0)
+				setRates(vic.trail, t, if t >= vp.tl and t < vp.ti then 1 else 0)
+			end
+			local tetherOn = smooth01(vp.l0 + 0.3, vp.l0 + 1.0, t) * (1 - smooth01(vp.tl - 0.15, vp.tl, t))
+			if tetherOn > 0.01 and rb > 1 then
+				local Bs = Vc.tether
+				local tr = 1 - (1 - Bs.transparency) * tetherOn * (0.7 + 0.3 * math.sin(t * 9 + vp.index))
+				showChain(vic.tether, { pos, B }, { Bs.width * k, Bs.width * k * 0.4 }, { tr, tr })
+			else
+				hideChain(vic.tether)
+			end
+		end
+
+		-- la detonación
+		if not detDone and t >= T.det then
+			detDone = true
+			if hole then
+				local h = hole :: CHole
+				for _, hc in h.carriers do
+					disable(hc.ems)
+				end
+				for _, p in { h.core, h.lens, h.halo.part, h.photon.part, h.purple.part, h.swirl.part, h.wind.part, h.glow.part, h.disk, h.disk2 } do
+					p:Destroy()
+				end
+			end
+			makeDetonation()
+			fire("Detonation", B)
+		end
+		if det then
+			local d = det :: CDet
+			local td = t - T.det
+			if td > 3.0 then
+				for _, p in { d.core, d.shell, d.shell2, d.ring.part, d.distort } do
+					if p.Parent then
+						p:Destroy()
+					end
+				end
+				for _, ch in d.sky do
+					hideChain(ch)
+				end
+				for _, ch in d.ground do
+					hideChain(ch)
+				end
+				for _, c in d.wall do
+					disable(c.ems)
+				end
+			else
+				local rbMax = Hh.rb[2] * k
+				local core = math.clamp(2 * rbMax * Dc.core[2] * easeOut(td / Dc.core[1]), 0.2, 2048)
+				d.core.Size = Vector3.one * core
+				d.core.Transparency = smooth01(Dc.core[3], Dc.core[3] + Dc.core[4], td)
+				local sh = math.clamp(300 * k + (Dc.shell[2] - 300 * k) * easeOut(td / Dc.shell[1]), 0.2, 2048)
+				d.shell.Size = Vector3.one * sh
+				d.shell.Transparency = Dc.shell[3] + (1 - Dc.shell[3]) * smooth01(0, Dc.shell[1], td) ^ 0.7
+				local td2 = td - Dc.shell2[3]
+				local sh2 = math.clamp(200 * k + (Dc.shell2[2] - 200 * k) * easeOut(td2 / Dc.shell2[1]), 0.2, 2048)
+				d.shell2.Size = Vector3.one * sh2
+				d.shell2.Transparency = if td2 < 0 then 1 else Dc.shell2[4] + (1 - Dc.shell2[4]) * smooth01(0, Dc.shell2[1], td2) ^ 0.7
+				placeBill(d.ring, B, camPos, Dc.ring[2] * easeOut(td / Dc.ring[1]), 0, Color3.new(2.0, 2.2, 2.5),
+					smooth01(0, Dc.ring[1], td))
+				d.distort.Size = Vector3.one * math.clamp(Dc.distort[2] * easeOut(td / Dc.distort[1]), 0.2, 2048)
+				d.distort.Transparency = Dc.distort[3] + (1 - Dc.distort[3]) * smooth01(0, Dc.distort[1], td)
+				for _, p in { d.core, d.shell, d.shell2, d.distort } do
+					table.insert(movParts, p)
+					table.insert(movCF, CFrame.new(B))
+				end
+				local us = math.clamp(td / Dc.sky[1], 0, 1)
+				for ci, ch in d.sky do
+					local Bs = ch.spec
+					if us < 1 then
+						showLoop(ch, R * Dc.sky[2] * easeOut(us) * (if ci == 1 then 1 else 0.92), Hs, Bs.width * k * (1 - 0.5 * us),
+							1 - (1 - Bs.transparency) * (1 - us) ^ 0.8)
+					else
+						hideChain(ch)
+					end
+				end
+				local ug = math.clamp((td - Dc.ground[1]) / Dc.ground[2], 0, 1)
+				local groundR = R * Dc.ground[3] * easeOut(ug)
+				for _, ch in d.ground do
+					local Bs = ch.spec
+					if td >= Dc.ground[1] and ug < 1 then
+						showLoop(ch, math.max(groundR, 1), 28 * k, Bs.width * k * (1 - 0.35 * ug),
+							1 - (1 - Bs.transparency) * (1 - ug) ^ 0.6)
+					else
+						hideChain(ch)
+					end
+				end
+				for _, c in d.wall do
+					local pos = C + Vector3.new(math.cos(c.ang) * groundR, 30 * k, math.sin(c.ang) * groundR)
+					c.part.Size = Vector3.new(120 * k, 60 * k, math.clamp(2 * math.pi * groundR / Dc.wall_n * 0.8, 40 * k, 2000))
+					table.insert(movParts, c.part)
+					table.insert(movCF, CFrame.lookAt(pos, pos + Vector3.new(-math.sin(c.ang), 0, math.cos(c.ang))))
+					if doRates then
+						setRates(c.ems, t, if td >= Dc.ground[1] then 1 else 0)
+					end
+				end
+			end
+		end
+		if not afterDone and t >= T.det + 0.3 then
+			afterDone = true
+			makeAftermath()
+		end
+		if doRates then
+			for _, c in after do
+				setRates(c.ems, t, 1)
+			end
+		end
+
+		-- destello y luz
+		if cc then
+			local e = cc :: any
+			local n = #Cf.cc
+			local row = Cf.cc[n]
+			for ci = 1, n - 1 do
+				local a, b = Cf.cc[ci], Cf.cc[ci + 1]
+				if t <= b[1] then
+					local u = math.clamp((t - a[1]) / math.max(b[1] - a[1], 1e-6), 0, 1)
+					row = {}
+					for c2 = 1, 7 do
+						row[c2] = a[c2] + (b[c2] - a[c2]) * u
+					end
+					break
+				end
+			end
+			e.Brightness = row[2]
+			e.Contrast = row[3]
+			e.Saturation = row[4]
+			e.TintColor = Color3.fromRGB(math.clamp(row[5], 0, 255), math.clamp(row[6], 0, 255), math.clamp(row[7], 0, 255))
+		end
+		if flashFrame then
+			local fl = Cf.flash
+			local a = 0
+			if t >= fl[1] and t < fl[2] then
+				a = ((t - fl[1]) / (fl[2] - fl[1])) ^ 2
+			elseif t >= fl[2] and t < fl[2] + fl[3] then
+				a = 1
+			elseif t >= fl[2] + fl[3] then
+				a = 1 - math.clamp((t - fl[2] - fl[3]) / fl[4], 0, 1)
+			end
+			(flashFrame :: Frame).BackgroundTransparency = 1 - a
+		end
+
+		if #movParts > 0 then
+			workspace:BulkMoveTo(movParts, movCF, Enum.BulkMoveMode.FireCFrameChanged)
+		end
+	end
+
+	-- empezar a mitad de la secuencia (para revisar una fase): se adelanta el campo sin partículas ni ráfagas
+	local startT = math.clamp(opt.StartTime or 0, 0, T.det - 0.05)
+	if startT > 0 then
+		silent = true
+		local steps = math.ceil(startT * 30)
+		for _ = 1, steps do
+			update(startT / steps)
+			if cleaned then
+				break
+			end
+		end
+		silent = false
+		nextRate = 0
+	end
+	if not cleaned then
+		conn = RunService.Heartbeat:Connect(function(dt: number)
+			if not holder.Parent then
+				cleanup()
+				return
+			end
+			update(math.min(dt, 0.1))
+		end)
+	end
+	return ctl
+end
+
+-- el plan sin efectos (para el servidor): dónde está cada víctima en cada segundo, cuándo sube, cuándo sale disparada y
+-- cuándo y dónde se estrella. Calcula lo mismo que GravitationalCataclysm en los clientes.
+export type CataclysmPlanControl = {
+	Center: Vector3,
+	Singularity: Vector3,
+	Radius: number,
+	GetVictimCFrame: (CataclysmPlanControl, victim: any, t: number) -> CFrame?,
+	GetImpactPoint: (CataclysmPlanControl, victim: any) -> Vector3?,
+	GetVictimTimes: (CataclysmPlanControl, victim: any) -> { [string]: number }?,
+}
+local function planCataclysm(spec: Layer, epicenter: any, victimsIn: any, options: { [string]: any }?): CataclysmPlanControl
+	local P = cataclysmPlan(spec, epicenter, victimsIn, options)
+	return {
+		Center = P.C,
+		Singularity = P.B,
+		Radius = P.R,
+		GetVictimCFrame = function(_, v: any, t: number): CFrame?
+			local vic = cataFindVictim(P, v)
+			return if vic then cataVictimCFrame(P, vic, t) else nil
+		end,
+		GetImpactPoint = function(_, v: any): Vector3?
+			local vic = cataFindVictim(P, v)
+			return if vic then vic.land else nil
+		end,
+		GetVictimTimes = function(_, v: any): { [string]: number }?
+			local vic = cataFindVictim(P, v)
+			if not vic then
+				return nil
+			end
+			return { Lift = vic.l0, Held = spec.cataclysm.t.victims[2], Launch = vic.tl, Impact = vic.ti }
+		end,
+	}
 end
 
 local SPEC_CosmicPillar = {
@@ -13086,5 +14637,3639 @@ local SPEC_CosmicAura = {
 function OmnivoraVFX.CosmicAura(model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
 	return playAura(SPEC_CosmicAura, model, scale, duration, intensity)
 end
+
+local SPEC_CataclysmImpact = {
+	name = "CataclysmImpact",
+	duration = 5.6,
+	cleanup = 8.5,
+	layers = {
+		{
+			name = "ImpFlash",
+			texture = "fx_glow",
+			emit = {
+				{0, 2},
+			},
+			lifetime = {0.28, 0.32},
+			size = {
+				{0, 30, 0},
+				{0.25, 100, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.5, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			offset = {0, 12, 0},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ImpStar",
+			texture = "kk_star_09",
+			emit = {
+				{0, 2},
+			},
+			lifetime = {0.3, 0.36},
+			size = {
+				{0, 30, 0},
+				{0.15, 100, 0},
+				{1, 25, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rotation = {0, 90},
+			offset = {0, 14, 0},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ImpShock",
+			texture = "kk_circle_02",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {0.6, 0.6},
+			size = {
+				{0, 40, 0},
+				{1, 560, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.5, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{180, 225, 255},
+				},
+				{
+					0.5,
+					{90, 150, 255},
+				},
+				{
+					1,
+					{30, 70, 200},
+				},
+			},
+			light_emission = 0.45,
+			offset = {0, 0.6, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ImpShockSharp",
+			texture = "kk_circle_02",
+			emit = {
+				{0.04, 1},
+			},
+			lifetime = {0.42, 0.42},
+			size = {
+				{0, 40, 0},
+				{1, 760, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{170, 220, 255},
+				},
+				{
+					0.5,
+					{90, 160, 255},
+				},
+				{
+					1,
+					{30, 70, 200},
+				},
+			},
+			light_emission = 0.6,
+			offset = {0, 0.7, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ImpCrater",
+			texture = "fx_glow",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {5.4, 5.4},
+			size = {
+				{0, 30, 0},
+				{0.03, 220, 0},
+				{1, 230, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.03, 0.15, 0},
+				{0.8, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{10, 16, 52},
+				},
+				{
+					0.5,
+					{6, 10, 40},
+				},
+				{
+					1,
+					{4, 6, 26},
+				},
+			},
+			light_emission = 0,
+			offset = {0, 0.3, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ImpCracks",
+			texture = "om_cracks",
+			emit = {
+				{0.02, 1},
+			},
+			lifetime = {5.2, 5.2},
+			size = {
+				{0, 60, 0},
+				{0.05, 340, 0},
+				{1, 360, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.03, 0.2, 0},
+				{0.1, 0.02, 0},
+				{0.4, 0.2, 0},
+				{0.85, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{90, 160, 255},
+				},
+				{
+					0.15,
+					{190, 230, 255},
+				},
+				{
+					0.3,
+					{80, 150, 255},
+				},
+				{
+					1,
+					{30, 60, 180},
+				},
+			},
+			light_emission = 0.8,
+			rotation = {0, 360},
+			offset = {0, 0.5, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ImpScorch",
+			texture = "kz_scorch",
+			emit = {
+				{0, 1},
+			},
+			lifetime = {5.5, 5.5},
+			size = {
+				{0, 40, 0},
+				{0.03, 300, 0},
+				{1, 310, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.03, 0.3, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{8, 12, 36},
+				},
+				{
+					1,
+					{14, 20, 50},
+				},
+			},
+			light_emission = 0,
+			rotation = {0, 360},
+			offset = {0, 0.4, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ImpRocks",
+			type = "meteor",
+			emit = {
+				{0, 14},
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {160, 300},
+			accel = {0, -196, 0},
+			drag = 0.15,
+			lifetime = {1.6, 2.4},
+			trails = {
+				{
+					name = "ImpRockDust",
+					rate = 28,
+					texture = "kk_smoke_04",
+					speed = {1, 6},
+					direction = "Top",
+					spread = {180, 180},
+					drag = 2,
+					accel = {0, 5, 0},
+					lifetime = {0.6, 1},
+					size = {
+						{0, 8, 2},
+						{1, 26, 4},
+					},
+					transparency = {
+						{0, 0.45, 0},
+						{0.6, 0.6, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{138, 144, 170},
+						},
+						{
+							0.5,
+							{112, 118, 146},
+						},
+						{
+							1,
+							{90, 96, 124},
+						},
+					},
+					rotation = {0, 360},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+				{
+					name = "ImpRockSparks",
+					rate = 20,
+					texture = "fx_spark002",
+					speed = {0, 8},
+					direction = "Top",
+					spread = {180, 180},
+					lifetime = {0.4, 0.7},
+					size = {
+						{0, 0, 0},
+						{0.08, 5.12, 0},
+						{0.22, 2.24, 0},
+						{0.38, 5.44, 0},
+						{0.55, 1.92, 0},
+						{0.72, 4.48, 0},
+						{1, 0, 0},
+					},
+					color = {
+						{
+							0,
+							{255, 255, 255},
+						},
+						{
+							0.5,
+							{220, 238, 255},
+						},
+						{
+							1,
+							{140, 190, 255},
+						},
+					},
+					light_emission = 1,
+					brightness = 1.8,
+					rotation = {0, 45},
+					accel = {0, 0, 0},
+					drag = 0,
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+			},
+			land = {
+				{
+					name = "ImpRockPuff",
+					texture = "kk_smoke_07",
+					emit = {
+						{0, 4},
+					},
+					direction = "Top",
+					spread = {70, 70},
+					speed = {10, 30},
+					drag = 2,
+					accel = {0, 4, 0},
+					lifetime = {1, 1.5},
+					size = {
+						{0, 12, 3},
+						{1, 34, 6},
+					},
+					transparency = {
+						{0, 0.45, 0},
+						{0.4, 0.6, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{138, 144, 170},
+						},
+						{
+							0.5,
+							{112, 118, 146},
+						},
+						{
+							1,
+							{90, 96, 124},
+						},
+					},
+					rotation = {0, 360},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			offset = {0, 0, 0},
+			rock = {
+				size = {8, 22},
+				spin = {-360, 360},
+				material = "Slate",
+				color = {112, 116, 130},
+			},
+		},
+		{
+			name = "ImpDust",
+			texture = "kk_smoke_07",
+			emit = {
+				{0, 34},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 20,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {60, 180},
+			drag = 2.5,
+			accel = {0, 8, 0},
+			lifetime = {2.6, 4},
+			size = {
+				{0, 50, 10},
+				{0.3, 90, 10},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.3, 0.5, 0},
+				{0.8, 0.7, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					0.5,
+					{128, 132, 146},
+				},
+				{
+					1,
+					{110, 114, 128},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			offset = {0, 10, 0},
+			zoffset = -3,
+			spread = {0, 0},
+			direction = "Top",
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ImpDustRing",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.02, 26},
+			},
+			direction = "Front",
+			spread = {180, 3},
+			speed = {220, 340},
+			drag = 3,
+			accel = {0, 6, 0},
+			lifetime = {1.6, 2.3},
+			size = {
+				{0, 40, 8},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.4, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{138, 144, 170},
+				},
+				{
+					0.5,
+					{112, 118, 146},
+				},
+				{
+					1,
+					{90, 96, 124},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			offset = {0, 8, 0},
+			zoffset = -3,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ImpNebula",
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0, 12},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 15,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {40, 120},
+			drag = 2,
+			lifetime = {1.6, 2.6},
+			size = {
+				{0, 60, 0},
+				{0.3, 100, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.08, 0.35, 0},
+				{0.6, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.15,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			offset = {0, 18, 0},
+			zoffset = -2,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ImpStreaks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0, 50},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 10,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {300, 600},
+			drag = 2,
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 10, 0},
+				{0.3, 70, 0},
+				{1, 20, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			offset = {0, 10, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ImpPurple",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			emit = {
+				{0, 30},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 10,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {260, 520},
+			drag = 2,
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 10, 0},
+				{0.3, 70, 0},
+				{1, 20, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.35,
+			offset = {0, 10, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "ImpStars",
+			texture = "fx_spark002",
+			emit = {
+				{0, 80},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 10,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {60, 260},
+			drag = 1.5,
+			lifetime = {1, 2},
+			size = {
+				{0, 0, 0},
+				{0.08, 7.68, 0},
+				{0.22, 3.36, 0},
+				{0.38, 8.16, 0},
+				{0.55, 2.88, 0},
+				{0.72, 6.72, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			rotation = {0, 45},
+			offset = {0, 12, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "ImpLingerDust",
+			texture = "kk_smoke_07",
+			direction = "Top",
+			spread = {60, 60},
+			speed = {10, 30},
+			drag = 0.5,
+			accel = {0, 5, 0},
+			lifetime = {3.5, 5},
+			size = {
+				{0, 70, 10},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.55, 0},
+				{0.75, 0.7, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					0.5,
+					{128, 132, 146},
+				},
+				{
+					1,
+					{110, 114, 128},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-15, 15},
+			zoffset = -4,
+			shape = {
+				type = "Box",
+				size = {160, 10, 160},
+				style = "Volume",
+				inout = "Outward",
+			},
+			stream = {
+				{0.3, 3.2, 10, 2},
+			},
+			offset = {0, 10, 0},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ImpLingerMotes",
+			texture = "fx_particle02",
+			direction = "Top",
+			spread = {50, 50},
+			speed = {6, 22},
+			drag = 0.4,
+			accel = {0, 4, 0},
+			lifetime = {1.6, 2.8},
+			size = {
+				{0, 0, 0},
+				{0.15, 6, 2},
+				{0.8, 4, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 240, 255},
+				},
+				{
+					1,
+					{120, 180, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			shape = {
+				type = "Box",
+				size = {200, 20, 200},
+				style = "Volume",
+				inout = "Outward",
+			},
+			stream = {
+				{0.2, 4.2, 22, 3},
+			},
+			offset = {0, 12, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+			emit = {},
+		},
+	},
+	shakes = {
+		{0, 1.4, 0.7},
+	},
+	light = {
+		color = {150, 200, 255},
+		brightness = 8,
+		range = 60,
+		time = 0.9,
+	},
+}
+
+-- OMNÍVORA: el impacto de una víctima que cae desde el cielo bajo una gravedad descomunal: destello, ondas de choque, cráter oscuro con grietas de luz, rocas que salen disparadas, una nube densa de polvo y residuos cósmicos que quedan unos 5 s. cf = el punto del suelo.
+function OmnivoraVFX.CataclysmImpact(cf: CFrame, scale: number?, shake: number?): Part
+	return play(SPEC_CataclysmImpact, cf, scale, nil, shake)
+end
+
+local SPEC_GravitationalCataclysm = {
+	name = "GravitationalCataclysm",
+	duration = 23,
+	cleanup = 23.3,
+	layers = {
+		{
+			name = "StormDust",
+			role = "storm",
+			locked = true,
+			texture = "kk_smoke_07",
+			direction = "Top",
+			spread = {40, 40},
+			speed = {5, 20},
+			accel = {0, 6, 0},
+			lifetime = {2.6, 3.6},
+			size = {
+				{0, 60, 15},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.72, 0},
+				{0.7, 0.78, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{138, 144, 170},
+				},
+				{
+					0.5,
+					{112, 118, 146},
+				},
+				{
+					1,
+					{90, 96, 124},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -4,
+			rate = 2.4,
+			env = {
+				{0, 0},
+				{2.4, 0.15},
+				{5, 0.8},
+				{7.5, 1},
+				{10.6, 1.25},
+				{12.6, 1.1},
+				{13.8, 0.3},
+				{14.2, 0},
+			},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StormNebula",
+			role = "storm",
+			locked = true,
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {40, 40},
+			speed = {4, 14},
+			lifetime = {2.2, 3},
+			size = {
+				{0, 70, 15},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.55, 0},
+				{0.7, 0.62, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.15,
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -3,
+			rate = 1.3,
+			env = {
+				{0, 0},
+				{2.4, 0.15},
+				{5, 0.8},
+				{7.5, 1},
+				{10.6, 1.25},
+				{12.6, 1.1},
+				{13.8, 0.3},
+				{14.2, 0},
+			},
+			every = 2,
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StormMotes",
+			role = "storm",
+			locked = true,
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {60, 60},
+			speed = {10, 30},
+			lifetime = {1.2, 2},
+			size = {
+				{0, 0, 0},
+				{0.08, 9.6, 0},
+				{0.22, 4.2, 0},
+				{0.38, 10.2, 0},
+				{0.55, 3.6, 0},
+				{0.72, 8.4, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			rate = 8,
+			env = {
+				{0, 0},
+				{2.4, 0.15},
+				{5, 0.8},
+				{7.5, 1},
+				{10.6, 1.25},
+				{12.6, 1.1},
+				{13.8, 0.3},
+				{14.2, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StormPebbles",
+			role = "storm",
+			locked = true,
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {10, 30},
+			lifetime = {2.5, 3.5},
+			size = {
+				{0, 5, 2},
+				{1, 4, 1.5},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					1,
+					{112, 116, 132},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-300, 300},
+			rate = 7,
+			env = {
+				{0, 0},
+				{2.4, 0.15},
+				{5, 0.8},
+				{7.5, 1},
+				{10.6, 1.25},
+				{12.6, 1.1},
+				{13.8, 0.3},
+				{14.2, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StormStreaks",
+			role = "storm",
+			locked = true,
+			texture = "kk_trace_03",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			spread = {6, 6},
+			speed = {90, 170},
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 10, 0},
+				{0.3, 55, 0},
+				{1, 15, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			rate = 2.2,
+			env = {
+				{0, 0},
+				{2.4, 0.15},
+				{5, 0.8},
+				{7.5, 1},
+				{10.6, 1.25},
+				{12.6, 1.1},
+				{13.8, 0.3},
+				{14.2, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FrontDust",
+			role = "front",
+			texture = "kk_smoke_07",
+			direction = "Top",
+			spread = {35, 35},
+			speed = {15, 40},
+			drag = 0.5,
+			accel = {0, 4, 0},
+			lifetime = {2.5, 3.5},
+			size = {
+				{0, 50, 10},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.15, 0.62, 0},
+				{0.7, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{138, 144, 170},
+				},
+				{
+					0.5,
+					{112, 118, 146},
+				},
+				{
+					1,
+					{90, 96, 124},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
+			zoffset = -4,
+			rate = 3.5,
+			env = {
+				{0, 0.4},
+				{0.5, 1},
+				{3.6, 1},
+				{4.4, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FrontPebbles",
+			role = "front",
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {20, 60},
+			accel = {0, 10, 0},
+			lifetime = {3, 4},
+			size = {
+				{0, 5, 2},
+				{1, 4, 1.5},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					1,
+					{112, 116, 132},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-300, 300},
+			rate = 12,
+			env = {
+				{0, 0.3},
+				{0.6, 1},
+				{3.6, 1},
+				{4.4, 0},
+			},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FrontMotes",
+			role = "front",
+			texture = "fx_particle02",
+			direction = "Top",
+			spread = {40, 40},
+			speed = {10, 35},
+			lifetime = {1.5, 2.5},
+			size = {
+				{0, 0, 0},
+				{0.15, 7, 2},
+				{0.8, 5, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 240, 255},
+				},
+				{
+					1,
+					{120, 180, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rate = 10,
+			env = {
+				{0, 0.5},
+				{0.6, 1},
+				{3.6, 1},
+				{4.4, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Updraft",
+			role = "updraft",
+			texture = "kk_trace_03",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			spread = {6, 6},
+			speed = {350, 700},
+			lifetime = {0.7, 1.2},
+			size = {
+				{0, 10, 0},
+				{0.3, 75, 0},
+				{1, 20, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			rate = 6,
+			env = {
+				{0, 0},
+				{2.4, 0},
+				{5, 0.8},
+				{7.5, 1},
+				{12.6, 1.3},
+				{13.8, 0.2},
+				{14.2, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "UpdraftPurple",
+			role = "updraft",
+			texture = "kk_trace_04",
+			orientation = "VelocityParallel",
+			direction = "Front",
+			spread = {8, 8},
+			speed = {300, 600},
+			lifetime = {0.7, 1.1},
+			size = {
+				{0, 10, 0},
+				{0.3, 60, 0},
+				{1, 18, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rate = 3,
+			env = {
+				{0, 0},
+				{3, 0},
+				{6, 0.8},
+				{8, 1},
+				{12.6, 1.2},
+				{13.8, 0.2},
+				{14.2, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "UpdraftMotes",
+			role = "updraft",
+			texture = "fx_spark002",
+			direction = "Front",
+			spread = {15, 15},
+			speed = {100, 220},
+			lifetime = {1, 1.8},
+			size = {
+				{0, 0, 0},
+				{0.08, 7.68, 0},
+				{0.22, 3.36, 0},
+				{0.38, 8.16, 0},
+				{0.55, 2.88, 0},
+				{0.72, 6.72, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			rate = 10,
+			env = {
+				{0, 0},
+				{2.4, 0},
+				{5, 1},
+				{12.6, 1.2},
+				{14.2, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EddyDust",
+			role = "eddy",
+			locked = true,
+			texture = "kk_smoke_04",
+			direction = "Top",
+			spread = {30, 30},
+			speed = {4, 12},
+			lifetime = {1.5, 2.2},
+			size = {
+				{0, 45, 10},
+				{1, 90, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.68, 0},
+				{0.7, 0.75, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{138, 144, 170},
+				},
+				{
+					0.5,
+					{112, 118, 146},
+				},
+				{
+					1,
+					{90, 96, 124},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -2,
+			rate = 7,
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EddySwirl",
+			role = "eddy",
+			locked = true,
+			texture = "fx_swirl_rings",
+			lifetime = {1, 1.4},
+			size = {
+				{0, 60, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.55, 0},
+				{0.75, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 150, 255},
+				},
+				{
+					0.5,
+					{190, 80, 235},
+				},
+				{
+					1,
+					{110, 40, 190},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.1,
+			rotation = {0, 360},
+			rot_speed = {-260, -180},
+			rate = 1.6,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EddyWind",
+			role = "eddy",
+			locked = true,
+			texture = "fx_wind_swirl",
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 70, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.5, 0},
+				{0.75, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 235, 255},
+				},
+				{
+					0.4,
+					{110, 180, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.1,
+			rotation = {0, 360},
+			rot_speed = {160, 240},
+			rate = 1.4,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "HoleInflow",
+			role = "hole",
+			shell = 3.3,
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			lifetime = {0.38, 0.46},
+			size = {
+				{0, 8, 0},
+				{0.4, 70, 0},
+				{1, 22, 0},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.25, 0.1, 0},
+				{1, 0.4, 0},
+			},
+			color = {
+				{
+					0,
+					{40, 90, 230},
+				},
+				{
+					0.6,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{240, 248, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rate = 150,
+			env = {
+				{0, 0},
+				{6.4, 0},
+				{8, 0.3},
+				{10.6, 0.7},
+				{12.6, 1},
+				{14.2, 0.35},
+				{16, 0.6},
+				{16.6, 1},
+				{16.62, 0},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "HoleInflowPurple",
+			role = "hole",
+			shell = 3.6,
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			lifetime = {0.4, 0.5},
+			size = {
+				{0, 8, 0},
+				{0.4, 70, 0},
+				{1, 22, 0},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.25, 0.1, 0},
+				{1, 0.4, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rate = 70,
+			env = {
+				{0, 0},
+				{6.4, 0},
+				{8, 0.3},
+				{10.6, 0.7},
+				{12.6, 1},
+				{14.2, 0.35},
+				{16.6, 0.8},
+				{16.62, 0},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "HoleStars",
+			role = "hole",
+			shell = 2.9,
+			texture = "fx_spark002",
+			lifetime = {0.45, 0.55},
+			size = {
+				{0, 0, 0},
+				{0.25, 9, 0},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			rate = 80,
+			env = {
+				{0, 0},
+				{6.4, 0.2},
+				{10.6, 0.8},
+				{12.6, 1},
+				{14.2, 0.4},
+				{16.62, 0},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "HoleDebris",
+			role = "hole",
+			shell = 4,
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			lifetime = {0.55, 0.7},
+			size = {
+				{0, 6, 2},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					1,
+					{112, 116, 132},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			rate = 60,
+			env = {
+				{0, 0},
+				{8, 0},
+				{10.6, 0.6},
+				{12.6, 1},
+				{14, 0.2},
+				{14.4, 0},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CritBolts",
+			role = "crit",
+			shell = 1.3,
+			texture = "fx_thunder",
+			lifetime = {0.08, 0.12},
+			size = {
+				{0, 80, 15},
+				{1, 100, 0},
+			},
+			color = {
+				{
+					0,
+					{240, 248, 255},
+				},
+				{
+					0.5,
+					{150, 210, 255},
+				},
+				{
+					1,
+					{60, 120, 235},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rate = 26,
+			env = {
+				{0, 0},
+				{14.4, 0},
+				{15.6, 0.5},
+				{16.6, 1},
+				{16.62, 0},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CritSparks",
+			role = "crit",
+			shell = 1.1,
+			outward = true,
+			texture = "fx_spark002",
+			speed = {60, 160},
+			lifetime = {0.5, 0.9},
+			size = {
+				{0, 0, 0},
+				{0.08, 9.6, 0},
+				{0.22, 4.2, 0},
+				{0.38, 10.2, 0},
+				{0.55, 3.6, 0},
+				{0.72, 8.4, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			rotation = {0, 45},
+			rate = 90,
+			env = {
+				{0, 0},
+				{14.4, 0.2},
+				{16.6, 1},
+				{16.62, 0},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "VictimAura",
+			role = "victim",
+			locked = true,
+			texture = "om_aura_wisp_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "FacingCameraWorldUp",
+			direction = "Top",
+			spread = {25, 25},
+			speed = {4, 12},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 15, 4},
+				{0.3, 35, 6},
+				{1, 45, 8},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.2, 0.35, 0},
+				{0.7, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.5,
+			rate = 30,
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "VictimSparks",
+			role = "victim",
+			locked = true,
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {60, 60},
+			speed = {10, 30},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.08, 6.4, 0},
+				{0.22, 2.8, 0},
+				{0.38, 6.8, 0},
+				{0.55, 2.4, 0},
+				{0.72, 5.6, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			rate = 30,
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FallTrail",
+			role = "trail",
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {10, 30},
+			drag = 1,
+			lifetime = {0.8, 1.2},
+			size = {
+				{0, 40, 8},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.5, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			rate = 70,
+			accel = {0, 0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FallStreaks",
+			role = "trail",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Top",
+			spread = {5, 5},
+			speed = {200, 420},
+			lifetime = {0.25, 0.4},
+			size = {
+				{0, 20, 0},
+				{0.3, 90, 0},
+				{1, 30, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			rate = 45,
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BurstDust",
+			role = "burst",
+			texture = "kk_smoke_07",
+			shape = {
+				type = "Sphere",
+				radius = 0.5,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {30, 80},
+			drag = 2,
+			accel = {0, 4, 0},
+			lifetime = {1, 1.6},
+			size = {
+				{0, 25, 6},
+				{1, 60, 10},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.3, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{138, 144, 170},
+				},
+				{
+					0.5,
+					{112, 118, 146},
+				},
+				{
+					1,
+					{90, 96, 124},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			spread = {0, 0},
+			direction = "Top",
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BurstSparks",
+			role = "burst",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Sphere",
+				radius = 0.5,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {120, 260},
+			drag = 2,
+			lifetime = {0.25, 0.4},
+			size = {
+				{0, 5, 0},
+				{0.3, 30, 0},
+				{1, 10, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BurstDebris",
+			role = "burst",
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			shape = {
+				type = "Sphere",
+				radius = 0.5,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {40, 110},
+			drag = 1,
+			lifetime = {0.8, 1.4},
+			size = {
+				{0, 6, 2},
+				{1, 3, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 154, 168},
+				},
+				{
+					1,
+					{112, 116, 132},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BurstFlash",
+			role = "burst",
+			texture = "kk_star_09",
+			lifetime = {0.22, 0.28},
+			size = {
+				{0, 30, 0},
+				{0.2, 90, 0},
+				{1, 20, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.2,
+			rotation = {0, 90},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ConsumeFlash",
+			role = "burst",
+			texture = "fx_glow",
+			lifetime = {0.2, 0.25},
+			size = {
+				{0, 30, 0},
+				{0.3, 80, 0},
+				{1, 40, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetStreaks",
+			role = "det",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Sphere",
+				radius = 0.5,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {900, 1600},
+			drag = 0.6,
+			lifetime = {0.5, 0.9},
+			size = {
+				{0, 20, 0},
+				{0.3, 100, 0},
+				{1, 40, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 240, 255},
+				},
+				{
+					0.5,
+					{120, 190, 255},
+				},
+				{
+					1,
+					{45, 100, 230},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			n = 150,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetPurple",
+			role = "det",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Sphere",
+				radius = 0.5,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {800, 1400},
+			drag = 0.6,
+			lifetime = {0.5, 0.9},
+			size = {
+				{0, 20, 0},
+				{0.3, 100, 0},
+				{1, 40, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 140, 255},
+				},
+				{
+					0.4,
+					{190, 70, 250},
+				},
+				{
+					1,
+					{115, 30, 200},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.35,
+			n = 80,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetNebula",
+			role = "det",
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			shape = {
+				type = "Sphere",
+				radius = 0.5,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {150, 420},
+			drag = 1.5,
+			lifetime = {1.6, 2.4},
+			size = {
+				{0, 60, 0},
+				{0.3, 100, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.08, 0.3, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.15,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -3,
+			n = 50,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetStars",
+			role = "det",
+			texture = "fx_spark002",
+			shape = {
+				type = "Sphere",
+				radius = 0.5,
+				style = "Surface",
+				inout = "Outward",
+			},
+			speed = {100, 600},
+			drag = 1.2,
+			lifetime = {1.2, 2.2},
+			size = {
+				{0, 0, 0},
+				{0.08, 12.8, 0},
+				{0.22, 5.6, 0},
+				{0.38, 13.6, 0},
+				{0.55, 4.8, 0},
+				{0.72, 11.2, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			rotation = {0, 45},
+			n = 260,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetBolts",
+			role = "det",
+			texture = "fx_thunder",
+			shape = {
+				type = "Sphere",
+				radius = 0.8,
+				style = "Surface",
+				inout = "Outward",
+			},
+			lifetime = {0.1, 0.16},
+			size = {
+				{0, 90, 0},
+				{1, 100, 0},
+			},
+			color = {
+				{
+					0,
+					{240, 248, 255},
+				},
+				{
+					0.5,
+					{150, 210, 255},
+				},
+				{
+					1,
+					{60, 120, 235},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			rotation = {0, 360},
+			n = 18,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetFlash",
+			role = "det",
+			texture = "fx_glow",
+			lifetime = {0.4, 0.4},
+			size = {
+				{0, 60, 0},
+				{0.2, 100, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.4, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					0.25,
+					{140, 200, 255},
+				},
+				{
+					1,
+					{40, 90, 220},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			n = 6,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "WallDust",
+			role = "wall",
+			texture = "kk_smoke_07",
+			direction = "Top",
+			spread = {40, 40},
+			speed = {40, 110},
+			drag = 1.2,
+			accel = {0, 6, 0},
+			lifetime = {1.8, 2.8},
+			size = {
+				{0, 60, 10},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{138, 144, 170},
+				},
+				{
+					0.5,
+					{112, 118, 146},
+				},
+				{
+					1,
+					{90, 96, 124},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -3,
+			rate = 18,
+			env = {
+				{16.62, 0},
+				{16.77, 1},
+				{17.92, 0.7},
+				{18.22, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "WallSparks",
+			role = "wall",
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {50, 50},
+			speed = {60, 200},
+			drag = 1,
+			lifetime = {0.8, 1.4},
+			size = {
+				{0, 0, 0},
+				{0.08, 9.6, 0},
+				{0.22, 4.2, 0},
+				{0.38, 10.2, 0},
+				{0.55, 3.6, 0},
+				{0.72, 8.4, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			rate = 20,
+			env = {
+				{16.62, 0},
+				{16.77, 1},
+				{17.92, 0.5},
+				{18.22, 0},
+			},
+			accel = {0, 0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AfterDust",
+			role = "after",
+			texture = "kk_smoke_07",
+			direction = "Top",
+			spread = {40, 40},
+			speed = {8, 25},
+			drag = 0.6,
+			accel = {0, 3, 0},
+			lifetime = {3.5, 5},
+			size = {
+				{0, 60, 10},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.25, 0.62, 0},
+				{0.75, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{138, 144, 170},
+				},
+				{
+					0.5,
+					{112, 118, 146},
+				},
+				{
+					1,
+					{90, 96, 124},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-15, 15},
+			zoffset = -4,
+			rate = 2.2,
+			env = {
+				{16.62, 0},
+				{16.92, 1},
+				{19.12, 0.8},
+				{21.22, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AfterMotes",
+			role = "after",
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {70, 70},
+			speed = {5, 20},
+			drag = 0.5,
+			accel = {0, 4, 0},
+			lifetime = {1.8, 3},
+			size = {
+				{0, 0, 0},
+				{0.08, 8.32, 0},
+				{0.22, 3.64, 0},
+				{0.38, 8.84, 0},
+				{0.55, 3.12, 0},
+				{0.72, 7.28, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 238, 255},
+				},
+				{
+					1,
+					{140, 190, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			rate = 8,
+			env = {
+				{16.62, 0},
+				{17.02, 1},
+				{19.62, 0.6},
+				{21.62, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "AfterNebula",
+			role = "after",
+			texture = "om_nebula_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {4, 14},
+			lifetime = {2.5, 3.6},
+			size = {
+				{0, 60, 0},
+				{1, 100, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.25, 0.65, 0},
+				{0.7, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{225, 225, 240},
+				},
+			},
+			light_emission = 0.12,
+			rotation = {0, 360},
+			rot_speed = {-15, 15},
+			zoffset = -3,
+			rate = 0.8,
+			env = {
+				{16.62, 0},
+				{17.02, 1},
+				{19.62, 0.5},
+				{21.22, 0},
+			},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundCrack",
+			role = "decal",
+			texture = "om_cracks",
+			lifetime = {5.5, 7},
+			size = {
+				{0, 30, 0},
+				{0.06, 240, 0},
+				{1, 260, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.04, 0.25, 0},
+				{0.1, 0.05, 0},
+				{0.4, 0.2, 0},
+				{0.85, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{90, 160, 255},
+				},
+				{
+					0.15,
+					{190, 230, 255},
+				},
+				{
+					0.3,
+					{80, 150, 255},
+				},
+				{
+					1,
+					{30, 60, 180},
+				},
+			},
+			light_emission = 0.8,
+			rotation = {0, 360},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundVoid",
+			role = "decal",
+			texture = "fx_glow",
+			lifetime = {6, 7.5},
+			size = {
+				{0, 20, 0},
+				{0.05, 160, 0},
+				{1, 170, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.05, 0.35, 0},
+				{0.8, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{10, 16, 52},
+				},
+				{
+					0.5,
+					{6, 10, 40},
+				},
+				{
+					1,
+					{4, 6, 26},
+				},
+			},
+			light_emission = 0,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundScar",
+			role = "decal",
+			texture = "kz_scorch",
+			lifetime = {6, 7.5},
+			size = {
+				{0, 20, 0},
+				{0.05, 200, 0},
+				{1, 210, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.05, 0.4, 0},
+				{0.8, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{8, 12, 36},
+				},
+				{
+					1,
+					{14, 20, 50},
+				},
+			},
+			light_emission = 0,
+			rotation = {0, 360},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+	},
+	cataclysm = {
+		radius = 1786,
+		height = 760,
+		t = {
+			front = {0, 3.6},
+			lift = {0.2, 3},
+			swirl = {2.4, 7.5},
+			swirl_up = {10.6, 13},
+			sing = {6.4, 12.4},
+			attract = {6.8, 10.6, 12.4},
+			victims = {10.8, 13.6},
+			crit = {14.4, 16.6},
+			det = 16.62,
+			["end"] = 23,
+		},
+		phases = {
+			{"Despertar gravitacional", 0},
+			{"Formación del vórtice", 2.4},
+			{"La singularidad emerge", 6.4},
+			{"Consumo total", 10.6},
+			{"Masa crítica", 14.4},
+			{"Detonación cósmica", 16.62},
+			{"Impacto planetario", 17.15},
+			{"Secuelas cósmicas", 17.6},
+		},
+		field = {
+			omega0 = 0.16,
+			omega_pow = 0.6,
+			r_core = 0.12,
+			swirl_boost = 0.9,
+			a_mid = 0.35,
+			c_in = 0.62,
+			c_up = 1.4,
+			c_rise = 0.9,
+			funnel = 0.45,
+			turb_r = 0.025,
+			turb_y = 0.02,
+			capture = 1.3,
+		},
+		hole = {
+			rb = {6, 150},
+			crit_shrink = 0.82,
+			halo = 6.5,
+			photon = 2.35,
+			purple = 2.85,
+			swirl = 6,
+			wind = 7.6,
+			disk = 8,
+			lens = 4.2,
+			glow = {2.6, 10.5},
+			spin_swirl = -260,
+			spin_wind = 170,
+			spin_disk = -45,
+			tilt = 22,
+			shell = 3.3,
+			pulse_hz = {1, 7},
+		},
+		rocks = {
+			medium = {
+				rate = {
+					{1, 3, 4, 12},
+					{3, 10, 12, 12},
+					{10, 11.5, 12, 0},
+				},
+				size = {6, 26},
+				skew = 1.8,
+				aspect = {0.55, 1.1},
+				max = 140,
+				tremble = {0.25, 0.9},
+				shoot = 0.22,
+				band = {0.04, 0.5},
+				rise = {0.5, 1.3},
+				w = {0.75, 1.3},
+				inward = {0.7, 1.3},
+				break_p = 0.22,
+				break_t = {4.5, 12.5},
+				dark = 0.45,
+			},
+			chunk = {
+				rate = {
+					{2, 9.5, 1.3, 1.3},
+				},
+				size = {45, 110},
+				skew = 1.4,
+				aspect = {0.28, 0.5},
+				max = 18,
+				tremble = {0.6, 1.4},
+				shoot = 0.12,
+				band = {0.03, 0.3},
+				rise = {0.32, 0.7},
+				w = {0.7, 1.1},
+				inward = {0.6, 1},
+				break_p = 0.65,
+				break_t = {5, 12},
+				dark = 0.15,
+			},
+			frag = {
+				n = {3, 5},
+				k = {0.32, 0.6},
+				life = {1.8, 3.4},
+			},
+			collide = {
+				every = 0.12,
+				min_size = 24,
+			},
+			rain = {
+				n = 36,
+				t = {16.87, 19.52},
+				size = {3, 11},
+				height = {160, 620},
+				r = {0.05, 0.7},
+			},
+			r_min = 0.08,
+		},
+		rings = {
+			{0.16, 5, 0.1, 0.12},
+			{0.3, 7, 0.14, 0.14},
+			{0.46, 9, 0.17, 0.16},
+			{0.62, 10, 0.18, 0.17},
+			{0.78, 9, 0.16, 0.16},
+			{0.94, 8, 0.12, 0.13},
+		},
+		front_n = 16,
+		updrafts = {
+			n = 10,
+			r = {0.2, 0.85},
+			band = {0.05, 0.2},
+		},
+		eddies = {
+			n = 6,
+			r = {0.25, 0.8},
+			band = {0.06, 0.3},
+			box = {260, 140, 260},
+			spin = {110, 190},
+			life = {
+				{3.6, 9.5},
+				{4.6, 10.4},
+				{5.2, 11},
+				{6, 11.6},
+				{6.8, 12},
+				{7.6, 12.2},
+			},
+		},
+		after = {
+			n = 12,
+			r = {0.05, 0.75},
+		},
+		currents = {
+			n = 12,
+			points = 11,
+			r = {0.32, 0.92},
+			wind = {5.0265, 7.5398},
+			top = 1.15,
+			taper = 0.55,
+			w = {0.85, 1.15},
+			fade = {3.2, 6.5},
+			bend = 1.4,
+			beams = {
+				{
+					name = "CurrentCeleste",
+					texture = "om_beam_flow",
+					width = 70,
+					color = {
+						{
+							0,
+							{160, 215, 255},
+						},
+						{
+							1,
+							{110, 185, 255},
+						},
+					},
+					transparency = 0.25,
+					light_emission = 1,
+					brightness = 1.25,
+					tex_len = 260,
+					speed = 1.4,
+				},
+				{
+					name = "CurrentPurple",
+					texture = "om_beam_flow",
+					width = 58,
+					color = {
+						{
+							0,
+							{220, 140, 255},
+						},
+						{
+							1,
+							{180, 80, 245},
+						},
+					},
+					transparency = 0.32,
+					light_emission = 1,
+					brightness = 1.25,
+					tex_len = 300,
+					speed = 1.1,
+				},
+			},
+		},
+		bands = {
+			n = 6,
+			points = 9,
+			r = {0.2, 0.98},
+			spiral = 1.7,
+			band = {0.04, 0.2},
+			fade = {2.6, 6},
+			beams = {
+				{
+					name = "DustArm",
+					texture = "om_beam_nebula",
+					width = 300,
+					color = {
+						{
+							0,
+							{255, 255, 255},
+						},
+						{
+							1,
+							{230, 235, 255},
+						},
+					},
+					transparency = 0.42,
+					light_emission = 0.18,
+					brightness = 1,
+					tex_len = 420,
+					speed = 0.35,
+				},
+				{
+					name = "DustArmStars",
+					texture = "om_beam_stars",
+					width = 220,
+					color = {
+						{
+							0,
+							{255, 255, 255},
+						},
+						{
+							1,
+							{200, 230, 255},
+						},
+					},
+					transparency = 0.35,
+					light_emission = 1,
+					brightness = 1.4,
+					tex_len = 360,
+					speed = 0.6,
+				},
+			},
+		},
+		streams = {
+			n = 5,
+			points = 13,
+			r = {0.4, 0.75},
+			band = {0.12, 0.3},
+			turns = 1.1,
+			fade = {8, 10.5},
+			beams = {
+				{
+					name = "Accretion",
+					texture = "om_beam_flow",
+					width = 110,
+					color = {
+						{
+							0,
+							{200, 235, 255},
+						},
+						{
+							1,
+							{120, 190, 255},
+						},
+					},
+					transparency = 0.15,
+					light_emission = 1,
+					brightness = 1.4,
+					tex_len = 240,
+					speed = 2.2,
+				},
+			},
+		},
+		loops = {
+			points = 36,
+			front = {
+				name = "FrontWave",
+				texture = "om_beam_glow",
+				width = 70,
+				color = {
+					{
+						0,
+						{150, 210, 255},
+					},
+					{
+						1,
+						{150, 210, 255},
+					},
+				},
+				transparency = 0.35,
+				light_emission = 1,
+				brightness = 1.2,
+				tex_len = 500,
+				speed = 0.6,
+			},
+			ripple = {
+				name = "GravityRipple",
+				texture = "om_beam_glow",
+				width = 46,
+				color = {
+					{
+						0,
+						{120, 170, 255},
+					},
+					{
+						1,
+						{120, 170, 255},
+					},
+				},
+				transparency = 0.5,
+				light_emission = 1,
+				brightness = 1.1,
+				tex_len = 500,
+				speed = 0.4,
+			},
+			ripple_purple = {
+				name = "GravityRipplePurple",
+				texture = "om_beam_glow",
+				width = 40,
+				color = {
+					{
+						0,
+						{200, 110, 255},
+					},
+					{
+						1,
+						{200, 110, 255},
+					},
+				},
+				transparency = 0.55,
+				light_emission = 1,
+				brightness = 1.1,
+				tex_len = 500,
+				speed = 0.4,
+			},
+			ripples = {0.5, 1.4, 2.3, 3.2, 4.1, 5, 5.9, 6.8, 7.7, 8.6},
+			ripple_time = 2.4,
+			det_ground = {
+				name = "ShockGround",
+				texture = "om_beam_glow",
+				width = 150,
+				color = {
+					{
+						0,
+						{190, 230, 255},
+					},
+					{
+						1,
+						{190, 230, 255},
+					},
+				},
+				transparency = 0.15,
+				light_emission = 1,
+				brightness = 1.4,
+				tex_len = 600,
+				speed = 0,
+			},
+			det_ground_core = {
+				name = "ShockGroundCore",
+				texture = "om_beam_core",
+				width = 60,
+				color = {
+					{
+						0,
+						{235, 245, 255},
+					},
+					{
+						1,
+						{235, 245, 255},
+					},
+				},
+				transparency = 0.1,
+				light_emission = 1,
+				brightness = 1.6,
+				tex_len = 600,
+				speed = 0,
+			},
+			det_sky = {
+				name = "ShockSky",
+				texture = "om_beam_glow",
+				width = 120,
+				color = {
+					{
+						0,
+						{170, 215, 255},
+					},
+					{
+						1,
+						{170, 215, 255},
+					},
+				},
+				transparency = 0.2,
+				light_emission = 1,
+				brightness = 1.3,
+				tex_len = 600,
+				speed = 0,
+			},
+			det_sky_purple = {
+				name = "ShockSkyPurple",
+				texture = "om_beam_glow",
+				width = 100,
+				color = {
+					{
+						0,
+						{200, 110, 255},
+					},
+					{
+						1,
+						{200, 110, 255},
+					},
+				},
+				transparency = 0.3,
+				light_emission = 1,
+				brightness = 1.3,
+				tex_len = 600,
+				speed = 0,
+			},
+		},
+		victims = {
+			stagger = 0.28,
+			hold_r = 1.75,
+			hold_drop = 0.25,
+			hold_spin = 0.6,
+			turns = 0.85,
+			tremble = 0.5,
+			fall = 0.55,
+			fall_stagger = 0.06,
+			land_max = 0.55,
+			ref = 40,
+			tether = {
+				name = "Tether",
+				texture = "om_beam_flow",
+				width = 34,
+				color = {
+					{
+						0,
+						{170, 220, 255},
+					},
+					{
+						1,
+						{210, 130, 255},
+					},
+				},
+				transparency = 0.3,
+				light_emission = 1,
+				brightness = 1.4,
+				tex_len = 120,
+				speed = 2.6,
+			},
+		},
+		det = {
+			core = {0.32, 6, 0.05, 0.8},
+			shell = {1.1, 2040, 0.15},
+			shell2 = {1, 1700, 0.06, 0.25},
+			ring = {0.6, 2040},
+			distort = {0.85, 2040, 0.55},
+			sky = {1.4, 1},
+			ground = {0.15, 1.35, 1},
+			wall_n = 20,
+		},
+		shake = {
+			{0, 0.04},
+			{3.5, 0.22},
+			{7.5, 0.4},
+			{10.6, 0.5},
+			{12.6, 0.85},
+			{14.2, 0.32},
+			{14.4, 0.3},
+			{16.55, 0.95},
+			{16.62, 2.4},
+			{17.32, 0.9},
+			{18.52, 0.35},
+			{20.52, 0.1},
+			{22.02, 0},
+		},
+		cc = {
+			{0, 0, 0, 0, 255, 255, 255},
+			{6.4, 0, 0.03, -0.05, 245, 248, 255},
+			{14.4, 0.02, 0.06, -0.1, 235, 242, 255},
+			{16.3, 0.22, 0.22, -0.2, 225, 236, 255},
+			{16.55, 0.4, 0.3, -0.3, 230, 240, 255},
+			{16.62, 0.55, 0.25, -0.2, 240, 246, 255},
+			{17.42, 0.12, 0.08, -0.05, 245, 248, 255},
+			{19.62, 0, 0, 0, 255, 255, 255},
+		},
+		flash = {16.42, 16.6, 0.07, 0.45},
+	},
+}
+
+-- OMNÍVORA ULTIMATE: CATACLISMO GRAVITACIONAL en un radio de 500 m (1786 studs). La gravedad desaparece y se levanta el terreno; la materia se organiza en una tormenta cósmica colosal; sobre el epicentro nace una singularidad que crece, se traga la tormenta y a las víctimas; acumula energía hasta un destello blanco y detona, estrellando a las víctimas contra el suelo. Quedan 5 s de residuos y todo se limpia.
+-- epicenter = el epicentro: el Model de Omnívora (o su HumanoidRootPart), una Part, un Vector3 o un CFrame;
+--   se busca el suelo debajo. victims = los kaijus atrapados: lista de Models (o Parts, Vector3, CFrame).
+--   Cada uno sube a la singularidad y se estrella contra el suelo en su punto.
+-- options (todo opcional):
+--   Radius = radio en studs (por defecto 1786 = 500 m con 1 stud = 0.28 m); todo se escala con él
+--   Height = altura de la singularidad sobre el epicentro (por defecto 760 × Radius / 1786)
+--   Shake = intensidad de la sacudida (1; 0 = sin sacudida)
+--   MoveVictims = true: el efecto mueve los modelos de las víctimas por su recorrido (pruebas o modelos anclados)
+--   ImpactPoints = { Vector3 }: el punto del suelo donde cae cada víctima (por defecto, donde estaba)
+--   AutoImpacts = false: no dibuja los impactos (llámalos tú con CataclysmImpact)
+--   StartTime = segundo en que empieza (para revisar una fase); Flash = false: sin el destello blanco
+--   Caster = el modelo de Omnívora (lo ignora al buscar el suelo)
+--   OnEvent = function(nombre, ...): "Phase" (nombre, i), "VictimLift" (víctima, i), "VictimLaunch"
+--     (víctima, i), "Detonation" (posición), "VictimImpact" (víctima, i, punto), "Finished"
+-- Devuelve un control: .Time, .Phase, .Active, .Center, .Singularity, .SingularityRadius,
+--   :GetVictimCFrame(víctima, t?), :GetImpactPoint(víctima), :Stop()
+function OmnivoraVFX.GravitationalCataclysm(epicenter: any, victims: any, options: { [string]: any }?): CataclysmControl
+	return playCataclysm(SPEC_GravitationalCataclysm, SPEC_CataclysmImpact, epicenter, victims, options)
+end
+-- el mismo recorrido de las víctimas, sin efectos: para el servidor (moverlas, el daño). Mismas options.
+-- :GetVictimCFrame(víctima, t), :GetImpactPoint(víctima), :GetVictimTimes(víctima) -> {Lift, Held, Launch, Impact}
+function OmnivoraVFX.GravitationalCataclysmPlan(epicenter: any, victims: any, options: { [string]: any }?): CataclysmPlanControl
+	return planCataclysm(SPEC_GravitationalCataclysm, epicenter, victims, options)
+end
+-- segundos (desde la llamada) en que empieza cada momento
+OmnivoraVFX.GravitationalCataclysmTimes = {
+	Vortex = 2.4,
+	Singularity = 6.4,
+	Consumption = 10.6,
+	VictimsLifted = 10.8,
+	VictimsHeld = 13.6,
+	CriticalMass = 14.4,
+	Flash = 16.6,
+	Detonation = 16.62,
+	FirstImpact = 17.17,
+	Aftermath = 17.6,
+	End = 23,
+}
 
 return OmnivoraVFX

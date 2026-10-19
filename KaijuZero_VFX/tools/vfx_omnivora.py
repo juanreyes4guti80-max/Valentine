@@ -480,3 +480,7 @@ SPECS["CosmicBeam"] = _CB.COSMIC_BEAM
 # el aura que se adapta a cualquier modelo (vfx_aura.py)
 import vfx_aura as _AU  # noqa: E402
 SPECS["CosmicAura"] = _AU.COSMIC_AURA
+# la ULTIMATE: cataclismo gravitacional (vfx_cataclysm.py); su impacto va antes porque la ULTIMATE lo usa
+import vfx_cataclysm as _CC  # noqa: E402
+SPECS["CataclysmImpact"] = _CC.IMPACT
+SPECS["GravitationalCataclysm"] = _CC.CATACLYSM

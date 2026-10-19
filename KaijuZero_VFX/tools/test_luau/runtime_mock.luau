@@ -28,8 +28,9 @@ end
 function V.Dot(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end
 function V.Cross(a, b) return v3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X) end
 function V.Lerp(a, b, u) return v3(a.X + (b.X - a.X) * u, a.Y + (b.Y - a.Y) * u, a.Z + (b.Z - a.Z) * u) end
-M.Vector3 = { new = v3, xAxis = v3(1, 0, 0), yAxis = v3(0, 1, 0), zAxis = v3(0, 0, 1), zero = v3(0, 0, 0) }
+M.Vector3 = { new = v3, xAxis = v3(1, 0, 0), yAxis = v3(0, 1, 0), zAxis = v3(0, 0, 1), zero = v3(0, 0, 0), one = v3(1, 1, 1) }
 M.Vector2 = { new = function(x, y) return { X = x, Y = y } end }
+M.UDim2 = { new = function(a, b, c, d) return { a, b, c, d } end, fromScale = function(x, y) return { x, 0, y, 0 } end }
 
 -- CFrame (posición + matriz 3x3 por filas)
 local C = {}
@@ -159,8 +160,9 @@ M.task = {
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
 	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0,
-	lensMax = 0, beamMaxW = 0, beamsOff = 0, maxPSize = 0 }
+	lensMax = 0, beamMaxW = 0, beamsOff = 0, maxPSize = 0, flashMin = 1, cataRocks = 0 }
 M.orbPath = {}
+M.byClass = {}
 local live = {}
 -- lo que devuelve el rayo al tocar el suelo: una Part de pasto verde (no cuenta como instancia viva)
 local groundFake = setmetatable({}, { __index = {
@@ -192,6 +194,7 @@ function Inst.new(class)
 	local props = { ClassName = class }
 	local o = { __props = props }
 	M.stats.created += 1
+	M.byClass[class] = o
 	if class == "Decal" then M.stats.decals += 1 end
 	setmetatable(o, {
 		__index = function(self, k)
@@ -239,6 +242,8 @@ function Inst.new(class)
 		end,
 		__newindex = function(self, k, v)
 			if k == "Rate" then M.stats.maxRate = math.max(M.stats.maxRate, v) end
+			if k == "BackgroundTransparency" then M.stats.flashMin = math.min(M.stats.flashMin, v) end
+			if k == "Name" and v == "CataclysmRock" then M.stats.cataRocks += 1 end
 			-- emisión continua: dónde está el emisor (una vez por emisor)
 			if k == "Rate" and v > 0 and not rawget(self, "__streamed") then
 				rawset(self, "__streamed", true)
@@ -350,6 +355,8 @@ function M.reset()
 	M.stats.emitNames = {}
 	M.stats.streamPos = {}
 	M.stats.beamEnd = nil
+	M.stats.flashMin = 1
+	M.byClass = {}
 	M.orbPath = {}
 end
 function M.liveCount()
