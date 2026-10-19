@@ -22,6 +22,7 @@ Si solo quieres un archivo (por ejemplo el módulo actualizado), ábrelo en GitH
 | `roblox/OmnivoraVFX.rbxmx` | El módulo con todos los efectos, también la ULTIMATE. |
 | `textures/` | Las 43 imágenes que hay que subir a Roblox. |
 | `roblox/CataclysmDemo.client.lua` | La escena de prueba de la ULTIMATE (opcional). |
+| `SubirTexturasVFX.rbxmx` | El plugin que sube las texturas y pega los IDs por ti. Viene aparte: te lo mando en el chat y en GitHub está en la carpeta `Plugin_Studio`. |
 
 **Si ya tenías una versión anterior del módulo**, cópiate los IDs de su tabla `TEXTURES` antes de borrarlo. Los nombres no cambian, así que los pegas igual en el módulo nuevo y solo subes las imágenes que te falten (compara con `roblox/texturas_necesarias.txt`). La ULTIMATE no trae texturas nuevas: usa las mismas 43. Si usas también los módulos de Kaiju Zero o de Astral Colossus, actualízalos a la vez: los tres comparten la sacudida de cámara.
 
@@ -109,7 +110,29 @@ OmnivoraVFX.CubeColor = Color3.fromRGB(70, 66, 80)
 OmnivoraVFX.CubeMaterial = Enum.Material.Slate
 ```
 
-## Instalación (unos 10 minutos)
+## Instalación fácil: con el plugin (unos 2 minutos)
+
+El plugin **Subir texturas VFX** (`Plugin_Studio/SubirTexturasVFX.rbxmx`) ya trae dentro todas las texturas de los tres módulos (Kaiju Zero, Omnívora y Astral Colossus). Las sube a tu cuenta como **imágenes** y pega sus IDs en el módulo. No tienes que subir ni copiar nada a mano.
+
+1. **Instala el plugin (una sola vez).** En Studio, pestaña *Plugins* > *Plugins Folder*. Se abre una carpeta: copia ahí `SubirTexturasVFX.rbxmx` y reinicia Studio. En la pestaña *Plugins* aparece la barra **VFX Kaiju**.
+2. **Inserta el módulo.** Clic derecho sobre `ReplicatedStorage` > *Insert from File…* > elige `roblox/OmnivoraVFX.rbxmx`. Si usas varios módulos, insértalos todos.
+3. **Toca "Subir texturas".** Se abre una ventana que va contando lo que sube. Si el juego es de un grupo, las imágenes van al grupo. Tarda uno o dos minutos.
+4. Guarda o publica el juego. Listo.
+
+Cuando te mande una versión nueva de un módulo, reemplázalo y vuelve a tocar **Subir texturas**: el plugin recuerda lo que ya subió, así que solo pega los IDs (y sube las texturas nuevas, si las hay).
+
+- **Revisar texturas** te dice qué texturas faltan o no cargan.
+- Roblox revisa cada imagen nueva. Durante unos minutos alguna puede verse en blanco: espera y toca **Revisar texturas**.
+- El plugin usa `AssetService:CreateAssetAsync`, que Roblox solo permite en plugins instalados en tu carpeta de Plugins (por eso se instala así y no desde la tienda). Si te muestra un error al subir, usa la instalación a mano de abajo y mándame el mensaje.
+
+## Si en Studio se ve peor que en el video
+
+1. **Toca "Revisar texturas".** La causa más común es una capa sin textura: si un ID falta, es de un **Decal** en vez de una imagen o la imagen fue rechazada, esa capa no se dibuja y el efecto queda pobre. Los IDs que dan al subir un Decal desde la web o desde Open Cloud no sirven puestos por código; el plugin sube imágenes y no tiene ese problema.
+2. **Sube la calidad gráfica.** Con calidad baja, Roblox dibuja muchas menos partículas. En Studio: *File* > *Studio Settings* > *Rendering* > *Editor Quality Level* al máximo. Al darle Play: *Esc* > *Settings* > *Graphics Quality* en manual y al máximo.
+3. **Revisa la luz.** Con un cielo muy claro o una exposición alta, los brillos se lavan a amarillo o blanco y el humo se aclara. Para compararlo con el video, prueba con la luz por defecto de Studio y un `BloomEffect` en `Lighting` (*Intensity* 0.6–1, *Size* 24, *Threshold* 1.5–2).
+4. Mis videos salen de mi simulador, que imita a Roblox pero no es Roblox. Si con todo lo anterior todavía se ve mal, mándame una captura y lo ajusto.
+
+## Instalación a mano (si el plugin no funciona, unos 10 minutos)
 
 1. **Inserta el módulo.** En Studio, clic derecho sobre `ReplicatedStorage` > *Insert from File…* > elige `roblox/OmnivoraVFX.rbxmx`.
 2. **Sube las texturas.** Ve a *View* > *Asset Manager* > botón *Bulk Import* y selecciona todas las imágenes de `textures/`.
