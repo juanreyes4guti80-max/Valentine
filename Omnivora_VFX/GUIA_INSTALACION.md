@@ -344,7 +344,7 @@ Por eso todo gira junto, se dobla junto hacia el agujero y desaparece en él.
 | 17.17 | **7. Impacto planetario** | Cada víctima se estrella en su punto, una cada 0.06 s. Cada impacto trae destello, ondas de choque, un cráter con grietas de luz, rocas, una columna y un anillo de polvo, residuos cósmicos y su propio golpe de cámara. |
 | 17.6 – 23 | **8. Secuelas cósmicas** | Unos 5 s de polvo que se asienta, piedritas que caen, partículas que flotan y energía que se apaga. Al terminar se borra todo. |
 
-**La cámara no se mueve.** El efecto no toca la posición ni la orientación de la cámara: solo la sacude, cada vez más fuerte según la fase. Hay un golpe fuerte en la detonación y uno por cada impacto, y al terminar la cámara queda exacta donde estaba.
+**La cámara no se mueve.** El efecto no cambia de sitio la cámara ni la hace girar: solo le suma una sacudida, cada vez más fuerte según la fase. Hay un golpe fuerte en la detonación y uno por cada impacto, y al terminar la cámara queda exacta donde estaba.
 
 ### La escala: 500 m en studs
 
