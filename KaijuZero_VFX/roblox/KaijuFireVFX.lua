@@ -2793,10 +2793,17 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 		end
 		return { atts = atts, beams = beams, spec = Bs, tr = tr }
 	end
+	local camNow = Vector3.zero
 	local function showChain(ch: CChain, pts: { Vector3 }, widths: { number }, trs: { number })
+		if silent then
+			return -- adelantando el campo (StartTime): no se dibuja
+		end
 		local n = #ch.atts
 		for i = 1, n do
 			ch.atts[i].WorldPosition = pts[i]
+			local w = widths[i]
+			local near = math.clamp(((pts[i] - camNow).Magnitude - w * 0.8) / (w * 2.5), 0, 1)
+			trs[i] = 1 - (1 - trs[i]) * near
 		end
 		for i, b in ch.beams do
 			local j = i % n + 1
@@ -3040,6 +3047,9 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 		return { part = p, d = d }
 	end
 	local function placeBill(b: CBill, pos: Vector3, camPos: Vector3, size: number, roll: number, color: Color3, tr: number)
+		if silent then
+			return
+		end
 		local sz = math.clamp(size, 0.1, 2048)
 		b.part.Size = Vector3.new(sz, sz, 0.05)
 		b.part.CFrame = CFrame.lookAt(pos, camPos) * CFrame.Angles(0, 0, roll)
@@ -3304,6 +3314,7 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 	local nextCollide = 0
 	local spawnAcc: { [string]: number } = { medium = 0, chunk = 0 }
 	local ripplesFired = 0
+	local nextCrack = Cf.cracks[1]
 	local detDone, afterDone = false, false
 	local movParts: { BasePart } = {}
 	local movCF: { CFrame } = {}
@@ -3332,6 +3343,7 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 		table.clear(movParts)
 		table.clear(movCF)
 		local camPos = camPosition()
+		camNow = camPos
 
 		-- el despertar
 		local rf = frontR(t)
@@ -3352,6 +3364,15 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 			if doRates then
 				setRates(c.ems, t, 1)
 			end
+		end
+		-- el suelo se agrieta detrás de la onda
+		while t >= nextCrack and nextCrack <= Cf.cracks[2] do
+			nextCrack += Cf.cracks[3]
+			local cr = math.sqrt(rng:NextNumber((Rk.r_min * R / math.max(rf, 1)) ^ 2, 1)) * rf
+			local ca = rng:NextNumber(0, 2 * math.pi)
+			local cp = C + Vector3.new(math.cos(ca) * cr, 0, math.sin(ca) * cr)
+			local _, _, cy = groundLook(cp, exclude, 200)
+			decal("GroundCrack", Vector3.new(cp.X, cy or C.Y, cp.Z), rng:NextNumber(0.6, 1.3))
 		end
 		local ftr = 1 - (1 - LO.front.transparency) * (1 - smooth01(T.front[2] - 0.4, T.front[2] + 0.5, t))
 		if ftr < 0.995 then
@@ -3451,7 +3472,7 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 			local vis = smooth01(0.6, 2.0, t) * (1 - smooth01(9.0, 10.5, t))
 			local pulse = 0.75 + 0.25 * math.sin(t * 2.3 + ls.ph)
 			ls.part.Size = Vector3.one * math.max(ls.size * pulse, 0.2)
-			ls.part.Transparency = 1 - 0.28 * vis
+			ls.part.Transparency = 1 - 0.2 * vis
 			table.insert(movParts, ls.part)
 			table.insert(movCF, CFrame.new(pos))
 		end
@@ -3668,6 +3689,10 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 		-- la singularidad
 		if not hole and t >= T.sing[1] and t < T.det then
 			makeHole()
+			-- nace: un destello en el cielo para que se note desde el primer instante
+			burst("BurstFlash", B, 2, 3)
+			burst("ConsumeFlash", B, 2, 3)
+			burst("BurstSparks", B, 30, 2)
 		end
 		if hole and t < T.det then
 			local h = hole :: CHole
@@ -3899,7 +3924,7 @@ local function _playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vi
 			(flashFrame :: Frame).BackgroundTransparency = 1 - a
 		end
 
-		if #movParts > 0 then
+		if #movParts > 0 and not silent then
 			workspace:BulkMoveTo(movParts, movCF, Enum.BulkMoveMode.FireCFrameChanged)
 		end
 	end

@@ -92,13 +92,15 @@ ROCKS = {
 
 # anillos de portadores de partículas: [radio (fracción de R), cantidad, franja (fracción de H), alto de la caja (fracción
 # de H)]. Cada portador es una caja invisible que sigue al campo con partículas pegadas (LockedToPart).
-RINGS = [[0.16, 5, 0.10, 0.12], [0.30, 7, 0.14, 0.14], [0.46, 9, 0.17, 0.16], [0.62, 10, 0.18, 0.17],
-         [0.78, 9, 0.16, 0.16], [0.94, 8, 0.12, 0.13]]
+RINGS = [[0.16, 5, 0.40, 0.32], [0.30, 7, 0.33, 0.29], [0.46, 9, 0.26, 0.25], [0.62, 10, 0.2, 0.22],
+         [0.78, 9, 0.15, 0.19], [0.94, 8, 0.1, 0.16]]   # un embudo: los de adentro, más arriba
 FRONT_N = 16
+# grietas que se abren en el suelo detrás de la onda del despertar: [desde, hasta, cada cuántos segundos]
+CRACKS = [0.3, 4.2, 0.12]
 UPDRAFTS = {"n": 10, "r": [0.2, 0.85], "band": [0.05, 0.2]}
 EDDIES = {"n": 6, "r": [0.25, 0.8], "band": [0.06, 0.3], "box": [260, 140, 260], "spin": [110, 190],
           "life": [[3.6, 9.5], [4.6, 10.4], [5.2, 11.0], [6.0, 11.6], [6.8, 12.0], [7.6, 12.2]]}
-AFTER = {"n": 12, "r": [0.05, 0.75]}
+AFTER = {"n": 18, "r": [0.04, 0.7]}
 
 
 def flow_beam(name, texture, width, color, transparency, le, bright, tex_len, speed):
@@ -108,16 +110,18 @@ def flow_beam(name, texture, width, color, transparency, le, bright, tex_len, sp
 
 # corrientes de energía del suelo al cielo (cadenas de Beams que giran con la tormenta y se doblan hacia la singularidad)
 CURRENTS = {
-    "n": 12, "points": 11, "r": [0.32, 0.92], "wind": [1.6 * math.pi, 2.4 * math.pi], "top": 1.15, "taper": 0.55,
+    "n": 14, "points": 11, "r": [0.2, 0.62], "wind": [0.6 * math.pi, 1.0 * math.pi], "top": 1.15, "taper": 0.55,
     "w": [0.85, 1.15], "fade": [3.2, 6.5], "bend": 1.4,
-    "beams": [flow_beam("CurrentCeleste", "om_beam_flow", 70, [[0, [160, 215, 255]], [1, [110, 185, 255]]], 0.25, 1.0,
+    "beams": [flow_beam("CurrentCeleste", "om_beam_flow", 90, [[0, [160, 215, 255]], [1, [110, 185, 255]]], 0.25, 1.0,
                         1.25, 260, 1.4),
-              flow_beam("CurrentPurple", "om_beam_flow", 58, [[0, [220, 140, 255]], [1, [180, 80, 245]]], 0.32, 1.0,
-                        1.25, 300, 1.1)],
+              flow_beam("CurrentPurple", "om_beam_flow", 72, [[0, [220, 140, 255]], [1, [180, 80, 245]]], 0.32, 1.0,
+                        1.25, 300, 1.1),
+              flow_beam("CurrentGlow", "om_beam_glow", 130, [[0, [120, 180, 255]], [1, [90, 150, 255]]], 0.5, 1.0,
+                        1.1, 400, 0.8)],
 }
 # brazos de polvo cerca del suelo: cada punto sigue al campo (el giro diferencial los enrolla y el consumo los traga)
 BANDS = {
-    "n": 6, "points": 9, "r": [0.2, 0.98], "spiral": 1.7, "band": [0.04, 0.2], "fade": [2.6, 6.0],
+    "n": 6, "points": 9, "r": [0.15, 0.75], "spiral": 1.7, "band": [0.04, 0.2], "fade": [2.6, 6.0],
     "beams": [flow_beam("DustArm", "om_beam_nebula", 300, [[0, [255, 255, 255]], [1, [230, 235, 255]]], 0.42, 0.18,
                         1.0, 420, 0.35),
               flow_beam("DustArmStars", "om_beam_stars", 220, [[0, [255, 255, 255]], [1, [200, 230, 255]]], 0.35, 1.0,
@@ -155,7 +159,7 @@ VICTIMS = {"stagger": 0.28, "hold_r": 1.75, "hold_drop": 0.25, "hold_spin": 0.6,
            "tether": flow_beam("Tether", "om_beam_flow", 34, [[0, [170, 220, 255]], [1, [210, 130, 255]]], 0.3, 1.0,
                                1.4, 120, 2.6)}
 
-DETO = {"core": [0.32, 6.0, 0.05, 0.8],     # [crece en s, hasta radios, empieza a desvanecerse, se desvanece en s]
+DETO = {"core": [0.3, 3.0, 0.04, 0.45],     # [crece en s, hasta radios, empieza a desvanecerse, se desvanece en s]
         "shell": [1.1, 2040.0, 0.15], "shell2": [1.0, 1700.0, 0.06, 0.25], "ring": [0.6, 2040.0],
         "distort": [0.85, 2040.0, 0.55], "sky": [1.4, 1.0], "ground": [0.15, 1.35, 1.0], "wall_n": 20}
 
@@ -163,10 +167,12 @@ DETO = {"core": [0.32, 6.0, 0.05, 0.8],     # [crece en s, hasta radios, empieza
 SHAKE = [[0.0, 0.04], [3.5, 0.22], [7.5, 0.4], [10.6, 0.5], [12.6, 0.85], [14.2, 0.32], [14.4, 0.3], [16.55, 0.95],
          [DET, 2.4], [DET + 0.7, 0.9], [DET + 1.9, 0.35], [DET + 3.9, 0.1], [DET + 5.4, 0.0]]
 # corrección de color: [segundo, brillo, contraste, saturación, tinte R, G, B]
-CC = [[0.0, 0, 0, 0, 255, 255, 255], [6.4, 0, 0.03, -0.05, 245, 248, 255], [14.4, 0.02, 0.06, -0.1, 235, 242, 255],
-      [16.3, 0.22, 0.22, -0.2, 225, 236, 255], [16.55, 0.4, 0.3, -0.3, 230, 240, 255], [DET, 0.55, 0.25, -0.2, 240, 246, 255],
-      [DET + 0.8, 0.12, 0.08, -0.05, 245, 248, 255], [DET + 3.0, 0, 0, 0, 255, 255, 255]]
-FLASH_T = [16.42, 16.6, 0.07, 0.45]   # empieza, máximo, se sostiene, se apaga en
+CC = [[0.0, 0, 0, 0, 255, 255, 255], [2.5, -0.06, 0.05, -0.05, 225, 232, 255], [6.4, -0.14, 0.1, -0.12, 200, 210, 255],
+      [12.6, -0.18, 0.14, -0.15, 190, 200, 255], [14.4, -0.2, 0.15, -0.18, 188, 196, 255],
+      [16.3, 0.15, 0.22, -0.2, 225, 236, 255], [16.55, 0.4, 0.3, -0.3, 230, 240, 255], [DET, 0.3, 0.2, -0.15, 240, 246, 255],
+      [DET + 0.6, 0.05, 0.08, -0.08, 235, 240, 255], [DET + 3.0, -0.05, 0.05, -0.05, 230, 236, 255],
+      [DET + 5.5, 0, 0, 0, 255, 255, 255]]
+FLASH_T = [16.45, 16.6, 0.05, 0.3]   # empieza, máximo, se sostiene, se apaga en
 
 
 def layer(name, role, **kw):
@@ -188,31 +194,35 @@ LAYERS = [
     # ---------------- la tormenta (en los portadores de los anillos; las partículas giran pegadas a ellos) ----------------
     layer("StormDust", "storm", locked=True, texture="kk_smoke_07", direction="Top", spread=(40, 40), speed=(5, 20),
           accel=(0, 6, 0), lifetime=(2.6, 3.6), size=[(0, 60, 15), (1, 100)], transparency=[(0, 1), (0.2, 0.72), (0.7, 0.78), (1, 1)],
-          color=DUSTC, rotation=(0, 360), rot_speed=(-25, 25), zoffset=-4, rate=2.4, env=STORM_ENV),
+          color=DUSTC, rotation=(0, 360), rot_speed=(-25, 25), zoffset=-4, rate=5.0, env=STORM_ENV),
+    layer("StormDark", "storm", locked=True, texture="kk_smoke_04", direction="Top", spread=(40, 40), speed=(4, 14),
+          lifetime=(2.4, 3.2), size=[(0, 70, 15), (1, 100)], transparency=[(0, 1), (0.2, 0.55), (0.7, 0.62), (1, 1)],
+          color=[(0, (30, 38, 80)), (1, (16, 22, 52))], rotation=(0, 360), rot_speed=(-20, 20), zoffset=-5, rate=1.6,
+          env=STORM_ENV),
     layer("StormNebula", "storm", locked=True, texture="om_nebula_2x2", flipbook=STATIC2x2, direction="Top",
           spread=(40, 40), speed=(4, 14), lifetime=(2.2, 3.0), size=[(0, 70, 15), (1, 100)],
-          transparency=[(0, 1), (0.2, 0.55), (0.7, 0.62), (1, 1)], color=NEBW, light_emission=0.15, rotation=(0, 360),
-          rot_speed=(-20, 20), zoffset=-3, rate=1.3, env=STORM_ENV, every=2),
+          transparency=[(0, 1), (0.2, 0.5), (0.7, 0.58), (1, 1)], color=NEBW, light_emission=0.15, rotation=(0, 360),
+          rot_speed=(-20, 20), zoffset=-3, rate=2.4, env=STORM_ENV),
     layer("StormMotes", "storm", locked=True, texture="fx_spark002", direction="Top", spread=(60, 60), speed=(10, 30),
           lifetime=(1.2, 2.0), size=twinkle(3.0), color=STAR, light_emission=1.0, brightness=1.8, rotation=(0, 45),
           rate=8, env=STORM_ENV),
     layer("StormPebbles", "storm", locked=True, texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top",
           spread=(30, 30), speed=(10, 30), lifetime=(2.5, 3.5), size=[(0, 5, 2), (1, 4, 1.5)], color=PEBBLE,
-          rotation=(0, 360), rot_speed=(-300, 300), rate=7, env=STORM_ENV),
+          rotation=(0, 360), rot_speed=(-300, 300), rate=10, env=STORM_ENV),
     layer("StormStreaks", "storm", locked=True, texture="kk_trace_03", orientation="VelocityParallel", direction="Front",
           spread=(6, 6), speed=(90, 170), lifetime=(0.4, 0.7), size=[(0, 10), (0.3, 55), (1, 15)], color=STREAK,
           light_emission=1.0, brightness=1.2, rate=2.2, env=STORM_ENV),
     # ---------------- el despertar (portadores en la onda que recorre el suelo) ----------------
     layer("FrontDust", "front", texture="kk_smoke_07", direction="Top", spread=(35, 35), speed=(15, 40), drag=0.5,
           accel=(0, 4, 0), lifetime=(2.5, 3.5), size=[(0, 50, 10), (1, 100)], transparency=[(0, 1), (0.15, 0.62), (0.7, 0.72), (1, 1)],
-          color=DUSTC, rotation=(0, 360), rot_speed=(-25, 25), zoffset=-4, rate=3.5,
+          color=DUSTC, rotation=(0, 360), rot_speed=(-25, 25), zoffset=-4, rate=8,
           env=[(0, 0.4), (0.5, 1.0), (3.6, 1.0), (4.4, 0)]),
     layer("FrontPebbles", "front", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(25, 25),
           speed=(20, 60), accel=(0, 10, 0), lifetime=(3.0, 4.0), size=[(0, 5, 2), (1, 4, 1.5)], color=PEBBLE,
-          rotation=(0, 360), rot_speed=(-300, 300), rate=12, env=[(0, 0.3), (0.6, 1.0), (3.6, 1.0), (4.4, 0)]),
+          rotation=(0, 360), rot_speed=(-300, 300), rate=24, env=[(0, 0.3), (0.6, 1.0), (3.6, 1.0), (4.4, 0)]),
     layer("FrontMotes", "front", texture="fx_particle02", direction="Top", spread=(40, 40), speed=(10, 35),
           lifetime=(1.5, 2.5), size=[(0, 0), (0.15, 7, 2), (0.8, 5), (1, 0)], color=[(0, (220, 240, 255)), (1, (120, 180, 255))],
-          light_emission=1.0, brightness=1.6, rate=10, env=[(0, 0.5), (0.6, 1.0), (3.6, 1.0), (4.4, 0)]),
+          light_emission=1.0, brightness=1.6, rate=16, env=[(0, 0.5), (0.6, 1.0), (3.6, 1.0), (4.4, 0)]),
     # ---------------- corrientes que suben (de la tierra al cielo; con la atracción, hacia la singularidad) ----------------
     layer("Updraft", "updraft", texture="kk_trace_03", orientation="VelocityParallel", direction="Front",
           spread=(6, 6), speed=(350, 700), lifetime=(0.7, 1.2), size=[(0, 10), (0.3, 75), (1, 20)], color=STREAK,
@@ -314,15 +324,15 @@ LAYERS = [
           rate=20, env=[(DET, 0), (DET + 0.15, 1.0), (DET + 1.3, 0.5), (DET + 1.6, 0)]),
     # ---------------- secuelas: polvo que sube despacio y partículas cósmicas que flotan ----------------
     layer("AfterDust", "after", texture="kk_smoke_07", direction="Top", spread=(40, 40), speed=(8, 25), drag=0.6,
-          accel=(0, 3, 0), lifetime=(3.5, 5.0), size=[(0, 60, 10), (1, 100)], transparency=[(0, 1), (0.25, 0.62), (0.75, 0.72), (1, 1)],
-          color=DUSTC, rotation=(0, 360), rot_speed=(-15, 15), zoffset=-4, rate=2.2,
+          accel=(0, 3, 0), lifetime=(3.5, 5.0), size=[(0, 60, 10), (1, 100)], transparency=[(0, 1), (0.25, 0.5), (0.75, 0.62), (1, 1)],
+          color=DUSTC, rotation=(0, 360), rot_speed=(-15, 15), zoffset=-4, rate=4.5,
           env=[(DET, 0), (DET + 0.3, 1.0), (DET + 2.5, 0.8), (DET + 4.6, 0)]),
     layer("AfterMotes", "after", texture="fx_spark002", direction="Top", spread=(70, 70), speed=(5, 20), drag=0.5,
-          accel=(0, 4, 0), lifetime=(1.8, 3.0), size=twinkle(2.6), color=STAR, light_emission=1.0, brightness=1.8,
-          rotation=(0, 45), rate=8, env=[(DET, 0), (DET + 0.4, 1.0), (DET + 3.0, 0.6), (DET + 5.0, 0)]),
+          accel=(0, 4, 0), lifetime=(1.8, 3.0), size=twinkle(3.2), color=STAR, light_emission=1.0, brightness=1.9,
+          rotation=(0, 45), rate=14, env=[(DET, 0), (DET + 0.4, 1.0), (DET + 3.0, 0.6), (DET + 5.0, 0)]),
     layer("AfterNebula", "after", texture="om_nebula_2x2", flipbook=STATIC2x2, direction="Top", spread=(60, 60),
           speed=(4, 14), lifetime=(2.5, 3.6), size=[(0, 60), (1, 100)], transparency=[(0, 1), (0.25, 0.65), (0.7, 0.72), (1, 1)],
-          color=NEBW, light_emission=0.12, rotation=(0, 360), rot_speed=(-15, 15), zoffset=-3, rate=0.8,
+          color=NEBW, light_emission=0.12, rotation=(0, 360), rot_speed=(-15, 15), zoffset=-3, rate=1.6,
           env=[(DET, 0), (DET + 0.4, 1.0), (DET + 3.0, 0.5), (DET + 4.6, 0)]),
     # ---------------- marcas en el suelo (Decals) ----------------
     layer("GroundCrack", "decal", texture="om_cracks", lifetime=(5.5, 7.0), size=[(0, 30), (0.06, 240), (1, 260)],
@@ -345,7 +355,7 @@ CATACLYSM = {
     "impact": "CataclysmImpact",      # el efecto de cada impacto (va antes en SPECS)
     "cataclysm": {
         "radius": R, "height": H, "t": T, "phases": PHASES, "field": FIELD, "hole": HOLE, "rocks": ROCKS,
-        "rings": RINGS, "front_n": FRONT_N, "updrafts": UPDRAFTS, "eddies": EDDIES, "after": AFTER,
+        "rings": RINGS, "front_n": FRONT_N, "cracks": CRACKS, "updrafts": UPDRAFTS, "eddies": EDDIES, "after": AFTER,
         "currents": CURRENTS, "bands": BANDS, "streams": STREAMS, "loops": LOOPS, "victims": VICTIMS, "det": DETO,
         "shake": SHAKE, "cc": CC, "flash": FLASH_T,
     },
@@ -398,8 +408,13 @@ IMPACT = {
              speed=(60, 180), drag=2.5, accel=(0, 8, 0), lifetime=(2.6, 4.0), size=[(0, 50, 10), (0.3, 90, 10), (1, 100)],
              transparency=[(0, 0.35), (0.3, 0.5), (0.8, 0.7), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-30, 30),
              offset=(0, 10, 0), zoffset=-3),
-        dict(name="ImpDustRing", texture="kk_smoke_04", emit=[(0.02, 26)], direction="Front", spread=(180, 3),
-             speed=(220, 340), drag=3, accel=(0, 6, 0), lifetime=(1.6, 2.3), size=[(0, 40, 8), (1, 100)],
+        # una columna de polvo que sube del cráter
+        dict(name="ImpColumn", texture="kk_smoke_07", emit=[(0.03, 22)], direction="Top", spread=(12, 12),
+             speed=(120, 320), drag=1.6, lifetime=(2.2, 3.4), size=[(0, 50, 10), (0.3, 100), (1, 100)],
+             transparency=[(0, 0.35), (0.4, 0.5), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-30, 30),
+             offset=(0, 10, 0), zoffset=-3),
+        dict(name="ImpDustRing", texture="kk_smoke_04", emit=[(0.02, 40)], direction="Front", spread=(180, 3),
+             speed=(260, 450), drag=3, accel=(0, 6, 0), lifetime=(1.6, 2.3), size=[(0, 40, 8), (1, 100)],
              transparency=[(0, 0.4), (0.4, 0.55), (1, 1)], color=DUSTC, rotation=(0, 360), rot_speed=(-40, 40),
              offset=(0, 8, 0), zoffset=-3),
         dict(name="ImpNebula", texture="om_nebula_2x2", flipbook=STATIC2x2, emit=[(0.0, 12)],
@@ -417,8 +432,8 @@ IMPACT = {
              brightness=1.9, rotation=(0, 45), offset=(0, 12, 0)),
         dict(name="ImpLingerDust", texture="kk_smoke_07", direction="Top", spread=(60, 60), speed=(10, 30), drag=0.5,
              accel=(0, 5, 0), lifetime=(3.5, 5.0), size=[(0, 70, 10), (1, 100)], transparency=[(0, 1), (0.2, 0.55), (0.75, 0.7), (1, 1)],
-             color=DUST, rotation=(0, 360), rot_speed=(-15, 15), zoffset=-4, shape={"type": "Box", "size": (160, 10, 160)},
-             stream=[(0.3, 3.2, 10, 2)], offset=(0, 10, 0)),
+             color=DUST, rotation=(0, 360), rot_speed=(-15, 15), zoffset=-4, shape={"type": "Box", "size": (220, 10, 220)},
+             stream=[(0.3, 3.8, 18, 3)], offset=(0, 10, 0)),
         dict(name="ImpLingerMotes", texture="fx_particle02", direction="Top", spread=(50, 50), speed=(6, 22), drag=0.4,
              accel=(0, 4, 0), lifetime=(1.6, 2.8), size=[(0, 0), (0.15, 6, 2), (0.8, 4), (1, 0)],
              color=[(0, (220, 240, 255)), (1, (120, 180, 255))], light_emission=1.0, brightness=1.6,

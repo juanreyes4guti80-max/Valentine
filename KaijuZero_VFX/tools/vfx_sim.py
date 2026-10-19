@@ -797,7 +797,8 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0, occ=None):
     """occ = profundidad por píxel (a lo largo del rayo) de lo que tapa a las partículas (la figura del aura)."""
     L = p.L
     tl = min(p.age / p.life, 1.0)
-    size = max(eval_seq(L["size"], tl, p.r_size) * p.ks * p.gm, 0.0)
+    # Roblox no dibuja partículas de más de 100 studs (el tamaño de la secuencia por la escala)
+    size = min(max(eval_seq(L["size"], tl, p.r_size) * p.ks, 0.0), 100.0) * p.gm
     if size <= 0.01:
         return
     tr = eval_seq(L.get("transparency", [(0, 0), (1, 0)]), tl, p.r_tr)
