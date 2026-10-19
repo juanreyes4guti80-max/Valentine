@@ -3240,7 +3240,7 @@ local function playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vic
 	-- ---------------- lentes gravitacionales que laten durante la tormenta ----------------
 	type CLens = { part: Part, o: CTracer, size: number, ph: number }
 	local lenses: { CLens } = {}
-	for i = 1, 3 do
+	for i = 1, if (OmnivoraVFX :: any).Lens == false then 0 else 3 do
 		local o = newTracer(rng:NextNumber(0.15, 0.5) * R, rng:NextNumber(0, 6.28), 0, rng:NextNumber(0.12, 0.3))
 		table.insert(lenses, { part = ball("GravityLens", Enum.Material.Glass, Color3.fromRGB(30, 44, 110), 1), o = o,
 			size = rng:NextNumber(140, 260) * k, ph = i * 2.1 })
@@ -3717,7 +3717,7 @@ local function playCataclysm(spec: Layer, impactSpec: Layer, epicenter: any, vic
 			local away = B - camPos
 			local lensPos = B + (if away.Magnitude > 1e-3 then away.Unit else Vector3.zAxis) * rb * 0.9
 			h.lens.Size = Vector3.one * math.clamp(Hh.lens * rb * (1 + 0.08 * crit * pulse), 0.2, 2048)
-			h.lens.Transparency = 1 - 0.38 * birth
+			h.lens.Transparency = if (OmnivoraVFX :: any).Lens == false then 1 else 1 - 0.38 * birth
 			table.insert(movParts, h.lens)
 			table.insert(movCF, CFrame.new(lensPos))
 			if doRates then

@@ -1,11 +1,37 @@
 # VFX cósmicos de OMNÍVORA: guía de instalación
 
+## Cómo descargar los archivos
+
+Hay dos caminos y los dos te dan la misma carpeta `Omnivora_VFX`.
+
+**A. El ZIP del chat (lo más fácil).** Descarga `Omnivora_VFX.zip` y descomprímelo. En Windows: clic derecho > *Extraer todo…*. En Mac: doble clic. Te queda la carpeta `Omnivora_VFX` con esta guía, `roblox/` y `textures/` (con sus licencias).
+
+**B. Desde GitHub.**
+
+1. Abre el repositorio `juanreyes4guti80-max/Valentine` en github.com.
+2. Arriba a la izquierda está el botón de la rama (dice `main`). Elige **`claude/inspiring-fermi-z0y6if`**, que es donde está la última versión.
+3. Botón verde **Code** > **Download ZIP**.
+4. Descomprime el ZIP. Lo de Omnívora está en la carpeta `Omnivora_VFX`, lo de Kaiju Zero en `KaijuZero_VFX` y lo de Astral Colossus en `AstralColossus_VFX`. Los videos de cada uno están en su carpeta `preview/`.
+
+Si solo quieres un archivo (por ejemplo el módulo actualizado), ábrelo en GitHub y toca **Download raw file**: es la flecha hacia abajo, arriba a la derecha del archivo.
+
+**Lo que vas a usar en Studio:**
+
+| Archivo | Para qué |
+|---|---|
+| `roblox/OmnivoraVFX.rbxmx` | El módulo con todos los efectos, también la ULTIMATE. |
+| `textures/` | Las 43 imágenes que hay que subir a Roblox. |
+| `roblox/CataclysmDemo.client.lua` | La escena de prueba de la ULTIMATE (opcional). |
+
+**Si ya tenías una versión anterior del módulo**, cópiate los IDs de su tabla `TEXTURES` antes de borrarlo. Los nombres no cambian, así que los pegas igual en el módulo nuevo y solo subes las imágenes que te falten (compara con `roblox/texturas_necesarias.txt`). La ULTIMATE no trae texturas nuevas: usa las mismas 43. Si usas también los módulos de Kaiju Zero o de Astral Colossus, actualízalos a la vez: los tres comparten la sacudida de cámara.
+
 ## Qué hay aquí
 
 | Carpeta / archivo | Para qué sirve |
 |---|---|
 | `roblox/OmnivoraVFX.rbxmx` | El ModuleScript listo para insertar en Studio. |
 | `roblox/OmnivoraVFX.lua` | El mismo código en texto, si prefieres copiar y pegar. |
+| `roblox/CataclysmDemo.client.lua` | La escena de prueba de la ULTIMATE: la ves completa sin el modelo de Omnívora, desde una cámara fija, y puedes saltar a cualquier fase. |
 | `roblox/texturas_necesarias.txt` | Las 43 imágenes que usa el módulo. |
 | `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 43). |
 | `preview/` | Videos simulados de los efectos. |
@@ -20,7 +46,9 @@ Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los mód
 | `BlackHole(boca, enemigos, escala, sacudida, radio)` | **Agujero negro**, la habilidad que **golpea a dos enemigos a la vez**. Se forma frente a la boca de Omnívora: la energía y las estrellas se absorben y nace un núcleo negro con su anillo de luz. Después **avanza creciendo** en un arco suave hacia los enemigos. Lleva un disco de acreción que gira (azul celeste y púrpura), materia y estrellas que caen hacia él, una estela de nebulosa oscura con estrellas y ondas de gravedad. **Distorsiona el fondo** detrás de él y levanta polvo y cubitos del suelo. Al llegar **implosiona y detona en medio de los enemigos**: destello, nebulosa que se expande, anillos, rayos, estrellas, ondas y grietas de luz en el suelo, y la **destrucción de cubos** (los que el agujero ya levantaba salen despedidos con los demás). | 3.5 s (los cubos se desvanecen hasta los 5.6 s) |
 | `CosmicBeam(origen, objetivo, escala, sacudida, ignorar)` | **Rayo cósmico** de 3 s que **se puede apuntar** mientras dura. La boca de Omnívora **devora energía y estrellas** un instante (estelas que caen hacia ella, un disco púrpura que gira) y suelta un rayo de **nebulosa**: un cuerpo denso de azul muy oscuro con venas celestes, manchas púrpura y estrellas, envuelto en hebras de energía celestes y púrpura, con el núcleo blanco. En la boca gira el disco púrpura y se abren anillos. A lo largo del rayo **viajan anillos y remolinos**, saltan relámpagos y suben auroras, y deja una **estela cósmica** de nebulosa y estrellas que se queda flotando cuando lo mueves. Se corta en la **primera superficie que toca** y, si no toca nada, llega a su **largo máximo de 124 studs** × escala. Donde pega: destello, halo, ondas, la nebulosa que estalla, estelas, **cubitos** que salen volando y **grietas de luz** en el suelo. Si **barres el suelo** deja una estela de grietas. | 3.6 s (las marcas del suelo se borran unos 3 s después de hechas) |
 | `CosmicAura(modelo, escala, duración, intensidad)` | **Aura cósmica** que se adapta a cualquier modelo. Delinea todo el cuerpo en celeste que respira hacia el púrpura y de toda su silueta emanan lenguas de nebulosa azul muy oscura con venas celestes, energía celeste y púrpura, estrellas y chispas; a los pies, anillos y destellos que suben. | hasta que la apagues |
-| `Shake(intensidad, duración)` | Sacudida de cámara corta. Solo funciona en el cliente. | — |
+| `GravitationalCataclysm(epicentro, víctimas, opciones)` | **ULTIMATE: Cataclismo gravitacional** en un radio de **500 m** (1786 studs). La gravedad desaparece y el terreno se levanta. La materia forma una tormenta cósmica colosal, sobre el epicentro nace una singularidad que se traga la tormenta y a las víctimas, acumula energía hasta un destello blanco y detona, y las víctimas se estrellan contra el suelo. Todo lo mueve **una sola fuerza gravitacional**. Tiene su propia sección más abajo. | 23 s: 17.6 s de habilidad y 5.4 s de secuelas |
+| `CataclysmImpact(cf, escala, sacudida)` | El impacto de una víctima contra el suelo. Lo usa la ULTIMATE, pero también lo puedes llamar tú. | 5.6 s |
+| `Shake(intensidad, duración)` | Sacudida de cámara corta. Solo funciona en el cliente. Si se juntan varias sacudidas, de este módulo o de los de Kaiju Zero y Astral Colossus, se suman y al terminar la cámara vuelve exacta a su sitio. | — |
 | `ShakeRamp(inicial, final, duración)` | Sacudida continua que crece de `inicial` a `final` y se detiene al terminar. La usan el pilar y el agujero negro. Solo funciona en el cliente. | — |
 
 **Paleta:** la del modelo de Omnívora. Domina el azul muy oscuro, que se aclara a azul y celeste, con destellos blancos. El púrpura intenso de su boca acompaña sin dominar: está en las vetas de la nebulosa, en estelas y auroras que suben entre las celestes, en destellos que giran, en los anillos de remolino y en algunos cubos. Es más oscura y densa que la de Astral Colossus (lavanda y blanco), para que se distingan.
@@ -288,7 +316,200 @@ end)
 
 ### Rendimiento
 
-En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 97 emisores. El agujero negro llega a unas 400 partículas y 180 cubos. El aura tiene unas 370 partículas encendidas y un emisor por capa en cada parte (hasta 30 partes). El rayo cósmico se mantiene en unas 370 partículas, con 6 Beams; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
+En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 97 emisores. El agujero negro llega a unas 400 partículas y 180 cubos. El aura tiene unas 370 partículas encendidas y un emisor por capa en cada parte (hasta 30 partes). El rayo cósmico se mantiene en unas 370 partículas, con 6 Beams; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. La ULTIMATE es mucho más grande: su sección tiene sus números. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
+
+## ULTIMATE: Cataclismo gravitacional
+
+Es una sola secuencia continua de 23 s: 17.6 s de habilidad y 5.4 s de secuelas. Las fases se encadenan sin cortes.
+
+**Todo responde a la misma fuerza.** El polvo, las rocas, las corrientes de energía, la nebulosa, las partículas y las víctimas no son efectos sueltos encimados. Los mueve un único campo gravitacional, que va cambiando con el tiempo:
+
+1. Primero anula la gravedad y levanta el terreno.
+2. Después lo hace girar todo alrededor del epicentro, más rápido cuanto más cerca del centro, en un embudo que sube.
+3. Luego tira de todo hacia la singularidad.
+4. En la detonación lo suelta de golpe.
+
+Por eso todo gira junto, se dobla junto hacia el agujero y desaparece en él.
+
+### Las fases
+
+| Segundo | Fase | Qué pasa |
+|---|---|---|
+| 0 – 3.6 | **1. Despertar gravitacional** | Una onda sale del epicentro y llega hasta los 500 m. El suelo se agrieta detrás de ella. Las piedras tiemblan, se despegan y flotan, y algunas se arrancan de golpe y salen disparadas hacia arriba. |
+| 2.4 – 10.6 | **2. Formación del vórtice** | La materia se organiza en una tormenta colosal con forma de embudo y el ambiente se oscurece. Tiene anillos de polvo y rocas que giran a distinta velocidad, corrientes de energía celestes y púrpura, remolinos secundarios y columnas de energía que suben. Las rocas chocan, se parten y se desintegran. **No es un cilindro sólido**: se ve a través de ella. |
+| 6.4 – 12.4 | **3. La singularidad emerge** | Sobre el epicentro nace un punto negro con un destello, para que se note desde el primer instante. Crece con su anillo de luz, su disco de acreción y su halo. El tornado la alimenta: los brazos de la tormenta y los escombros caen hacia ella en espiral. |
+| 10.6 – 14.4 | **4. Consumo total** | El vórtice colapsa dentro del agujero. Desde los 10.8 s las víctimas suben en espiral, una tras otra, y quedan atrapadas girando junto a él. El campo queda limpio: vacío y tensión. |
+| 14.4 – 16.6 | **5. Masa crítica** | El agujero se contrae y su brillo crece a pulsos cada vez más rápidos, con rayos y distorsión. Termina en un **destello blanco corto** (de 16.45 a 16.95 s) que no tapa la explosión. |
+| 16.62 | **6. Detonación cósmica** | Estalla en muchas capas: núcleo, dos cascarones de nebulosa, un anillo, distorsión, rayos, estrellas y un muro de polvo en el suelo. La cámara tiembla fuerte. Las víctimas salen disparadas **hacia abajo**, no hacia los lados. |
+| 17.17 | **7. Impacto planetario** | Cada víctima se estrella en su punto, una cada 0.06 s. Cada impacto trae destello, ondas de choque, un cráter con grietas de luz, rocas, una columna y un anillo de polvo, residuos cósmicos y su propio golpe de cámara. |
+| 17.6 – 23 | **8. Secuelas cósmicas** | Unos 5 s de polvo que se asienta, piedritas que caen, partículas que flotan y energía que se apaga. Al terminar se borra todo. |
+
+**La cámara no se mueve.** El efecto no toca la posición ni la orientación de la cámara: solo la sacude, cada vez más fuerte según la fase. Hay un golpe fuerte en la detonación y uno por cada impacto, y al terminar la cámara queda exacta donde estaba.
+
+### La escala: 500 m en studs
+
+En Roblox 1 stud = 0.28 m, así que **500 m = 1786 studs**. Ese es el radio por defecto. Si tu juego usa otra escala, cámbialo con la opción `Radius` y todo se escala con él: la altura de la singularidad, el agujero, las rocas, las partículas y las ondas. Por ejemplo, con `Radius = 893` todo queda a la mitad.
+
+La singularidad queda a **760 studs sobre el epicentro** (× `Radius` / 1786). Si tu cámara de combate no alcanza a verla, bájala con `Height`.
+
+### Cómo llamarla
+
+Igual que los demás efectos: el servidor avisa a todos los clientes con el RemoteEvent y cada cliente la reproduce. El daño y el movimiento de las víctimas los decide el servidor (más abajo está cómo).
+
+```lua
+-- LocalScript (el mismo que escucha el RemoteEvent de Omnívora)
+evento.OnClientEvent:Connect(function(habilidad: string, datos: any)
+	if habilidad == "Cataclismo" then
+		OmnivoraVFX.GravitationalCataclysm(datos.omnivora, datos.victimas, { Caster = datos.omnivora })
+	end
+end)
+```
+
+```lua
+-- Server: cuando Omnívora lanza la ULTIMATE
+evento:FireAllClients("Cataclismo", { omnivora = modeloDeOmnivora, victimas = { kaiju1, kaiju2, kaiju3 } })
+```
+
+- **`epicentro`**: el centro de la habilidad. Puede ser el modelo de Omnívora (o su `HumanoidRootPart`), una Part, un `Vector3` o un `CFrame`. El módulo busca el suelo debajo.
+- **`víctimas`**: los kaijus atrapados, en una lista de Models (o Parts, `Vector3`, `CFrame`). Cada uno sube a la singularidad y se estrella en el punto donde estaba. La lista puede ir vacía.
+- **`opciones`** (todas opcionales):
+
+| Opción | Qué hace |
+|---|---|
+| `Radius` | Radio en studs. Por defecto 1786 (500 m). Todo se escala con él. |
+| `Height` | Altura de la singularidad sobre el epicentro. Por defecto 760 × `Radius` / 1786. |
+| `Shake` | Intensidad de la sacudida: 1 normal, 2 fuerte, 0 sin sacudida. |
+| `MoveVictims` | `true`: el efecto mueve los modelos de las víctimas por su recorrido. Es para pruebas o para modelos que nadie más mueve. En el juego déjalo apagado y muévelas desde el servidor (ver abajo). |
+| `ImpactPoints` | `{ Vector3 }`: dónde cae cada víctima, en el mismo orden de la lista. Por defecto cae donde estaba. Si estaba a más de 418 studs del centro (× escala), cae a 418 en la misma dirección, para que la caída siga siendo hacia abajo. |
+| `AutoImpacts` | `false`: no dibuja los impactos. Los dibujas tú con `OmnivoraVFX.CataclysmImpact(CFrame.new(punto), escala, sacudida)`. |
+| `StartTime` | Empieza en ese segundo, para revisar una fase. El campo se adelanta sin dibujar nada, así que todo aparece donde debe estar. |
+| `Flash` | `false`: sin el destello blanco de pantalla. |
+| `Caster` | El modelo de Omnívora: se ignora al buscar el suelo. |
+| `OnEvent` | `function(nombre, ...)`: avisa de cada momento (ver la tabla de eventos). |
+
+Lo que devuelve:
+
+| | Para qué sirve |
+|---|---|
+| `ult.Time` | En qué segundo de la secuencia va. |
+| `ult.Phase` | El nombre de la fase actual ("Despertar gravitacional", "Formación del vórtice"…). |
+| `ult.Active` | `true` mientras dura. |
+| `ult.Center` | El epicentro, en el suelo. |
+| `ult.Singularity` | Dónde está la singularidad. |
+| `ult.SingularityRadius` | El radio del agujero en este momento, en studs. |
+| `ult:GetVictimCFrame(víctima, t)` | Dónde está una víctima en el segundo `t` (sin `t`, ahora). |
+| `ult:GetImpactPoint(víctima)` | Dónde se estrella esa víctima. |
+| `ult:Stop()` | La corta y borra todo. |
+| `ult.Holder` | La Part que contiene todo el efecto. |
+
+Eventos de `OnEvent`:
+
+| Evento | Cuándo | Qué trae |
+|---|---|---|
+| `"Phase"` | Empieza una fase | el nombre y el número (1 – 8) |
+| `"VictimLift"` | Una víctima empieza a subir | la víctima y su número |
+| `"VictimLaunch"` | Una víctima sale disparada hacia abajo (en la detonación) | la víctima y su número |
+| `"Detonation"` | Detona | la posición de la singularidad |
+| `"VictimImpact"` | Una víctima se estrella | la víctima, su número y el punto del suelo |
+| `"Finished"` | Terminó y se borró todo | — |
+
+Los eventos ocurren en cada cliente. Úsalos para sonidos, la interfaz o tu cámara. El daño va en el servidor, con los tiempos del plan.
+
+`OmnivoraVFX.GravitationalCataclysmTimes` tiene los segundos de cada momento, para coordinar animaciones y sonidos:
+
+| Campo | Segundo | Qué es |
+|---|---|---|
+| `Vortex` | 2.4 | Empieza a formarse el vórtice. |
+| `Singularity` | 6.4 | Nace la singularidad. |
+| `Consumption` | 10.6 | Empieza el consumo total. |
+| `VictimsLifted` | 10.8 | La primera víctima empieza a subir. Las demás le siguen cada 0.28 s. |
+| `VictimsHeld` | 13.6 | Todas las víctimas quedan atrapadas junto al agujero. |
+| `CriticalMass` | 14.4 | Empieza la masa crítica. |
+| `Flash` | 16.6 | El destello blanco en su punto más fuerte. |
+| `Detonation` | 16.62 | Detona y las víctimas salen disparadas hacia abajo. |
+| `FirstImpact` | 17.17 | Se estrella la primera víctima. Las demás caen cada 0.06 s. |
+| `Aftermath` | 17.6 | Empiezan las secuelas. |
+| `End` | 23 | Se borra todo. |
+
+### En el servidor: mover a las víctimas y el daño
+
+El efecto **solo dibuja**: no toca vida, Humanoids ni tu sistema de combate. Para el servidor está `GravitationalCataclysmPlan`, que calcula **exactamente el mismo recorrido** que dibujan los clientes, sin crear nada. No usa números al azar, así que el servidor y los clientes coinciden.
+
+```lua
+-- Server: la ULTIMATE en el turno de Omnívora
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local OmnivoraVFX = require(ReplicatedStorage.OmnivoraVFX)
+local Tm = OmnivoraVFX.GravitationalCataclysmTimes
+
+local function lanzarCataclismo(omnivora: Model, victimas: { Model })
+	local plan = OmnivoraVFX.GravitationalCataclysmPlan(omnivora, victimas, { Caster = omnivora })
+	evento:FireAllClients("Cataclismo", { omnivora = omnivora, victimas = victimas })
+
+	-- las víctimas siguen el mismo recorrido que dibujan los clientes
+	local t0 = os.clock()
+	local conexion
+	conexion = RunService.Heartbeat:Connect(function()
+		local t = os.clock() - t0
+		for _, v in victimas do
+			local cf = plan:GetVictimCFrame(v, t)
+			if cf then
+				v:PivotTo(cf)
+			end
+		end
+		if t > Tm.Aftermath then
+			conexion:Disconnect()
+		end
+	end)
+
+	-- el daño, cuando cada una se estrella
+	for _, v in victimas do
+		local tiempos = plan:GetVictimTimes(v) -- { Lift, Held, Launch, Impact }
+		task.delay(tiempos.Impact, function()
+			hacerDanio(v, 300) -- tu función y tus valores
+		end)
+	end
+end
+```
+
+- **Usa las mismas víctimas y opciones** en el servidor y en los clientes (`Radius`, `Height`, `ImpactPoints`, `Caster`). Llama al plan en el mismo momento en que avisas a los clientes, con las víctimas quietas, como en un combate por turnos.
+- Con `MoveVictims` apagado, los efectos de cada víctima (el aura que la rodea al subir, el lazo de energía y la estela de la caída) **siguen a su modelo real**. Así, cuando el servidor las mueve, todo coincide.
+- Si tus kaijus no están anclados, ancla su `HumanoidRootPart` mientras dura y suéltalo al final. Si no, la física los tira entre cuadro y cuadro. Si un jugador controla a la víctima, el anclaje también evita que su cliente la mueva.
+- Después del impacto, el plan las deja en el cráter, un poco hundidas y torcidas. Cuando tu combate siga, ponlas de pie con tu animación o con `PivotTo`.
+- `plan.Center`, `plan.Singularity` y `plan:GetImpactPoint(v)` te sirven para el daño en área o para tu cámara.
+
+### Probarla sin el modelo de Omnívora
+
+`roblox/CataclysmDemo.client.lua` arma una escena de prueba y reproduce la ULTIMATE completa desde una cámara fija:
+
+1. El módulo `OmnivoraVFX` tiene que estar en `ReplicatedStorage`, con los IDs de las texturas pegados.
+2. En `StarterPlayer` > `StarterPlayerScripts` crea un **LocalScript**, pega el contenido de `CataclysmDemo.client.lua` y dale **Play**. Mejor en un lugar vacío, como un Baseplate: la habilidad ocupa 500 m a la redonda.
+3. En el centro aparece un Omnívora de prueba (una figura azul oscuro de 90 studs) y a su alrededor tres kaijus de prueba (grises, de 60 studs, a unos 275 – 370 studs). A los 2 s la ULTIMATE empieza sola.
+
+| Tecla | Qué hace |
+|---|---|
+| R | Repetir desde el principio. |
+| 1 … 8 | Empezar en una fase: 1 despertar, 2 vórtice, 3 singularidad, 4 consumo, 5 masa crítica, 6 justo antes del destello, 7 el destello y la detonación, 8 impactos y secuelas. |
+| V | Cambiar de cámara: dentro del área, lejos (se ve todo el radio de 500 m) o cerca de un impacto. |
+| C | Devolver la cámara al jugador. Con otra C vuelve la cámara fija. |
+| H | Ocultar o mostrar el panel. |
+
+El panel de abajo a la izquierda muestra la fase, el segundo y dónde fue el último impacto. Así compruebas las transiciones, los escombros, la absorción, la detonación y que cada kaiju caiga en su punto. En la prueba el efecto mueve a los kaijus de prueba (`MoveVictims = true`). Todo es local, solo lo ves tú, y no toca tu sistema de combate.
+
+### Rendimiento de la ULTIMATE
+
+Es la habilidad más pesada, pero está pensada para Roblox:
+
+- **Lo colosal no son partículas.** La tormenta, las corrientes, el agujero y las ondas son Beams y Parts, porque Roblox no dibuja partículas de más de 100 studs.
+- **Números en el pico:**
+  - unas 5000 partículas, en la detonación;
+  - hasta unas 300 Parts (rocas y piezas del agujero), movidas todas juntas con `BulkMoveTo`;
+  - unos 275 Beams encendidos;
+  - unos 340 emisores encendidos.
+- **Las rocas no cargan la física.** Tienen un tope de rocas vivas, sus choques se calculan en el mismo bucle (un solo `Heartbeat`) y no chocan con nada ni detectan toques.
+- **Calidad.** `OmnivoraVFX.Quality = 0.6` baja las partículas y las rocas, por ejemplo en celulares.
+- **Pantalla.** El destello blanco (un `ScreenGui`) y el oscurecimiento del ambiente (un `ColorCorrectionEffect` en `Lighting`) solo existen en el cliente y se borran al terminar.
+- **Distorsión.** La distorsión alrededor del agujero es vidrio (`Glass`), y Roblox solo la dibuja con gráficos altos. `OmnivoraVFX.Lens = false` la quita, igual que en el agujero negro.
 
 ## Para que se vea como en el video
 
@@ -302,16 +523,31 @@ En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos 
 - Los muñecos grises del video solo marcan dónde estarían los dos enemigos (y, en el rayo, Omnívora y el rival).
 - El cuerpo del **rayo cósmico** son 6 **Beams** de Roblox entre la boca y la punta: el halo azul, el cuerpo de nebulosa (`om_beam_nebula`, que trae sus propios colores, por eso su `Color` es blanco), las hebras celestes y púrpura (`om_beam_flow`), el polvo de estrellas (`om_beam_stars`) y el núcleo blanco. Usan `FaceCamera` y sus texturas corren hacia la punta a distintas velocidades: la nebulosa deriva despacio y las hebras corren rápido. Cada cuadro, un Raycast desde la boca decide hasta dónde llega la punta; las piezas del efecto tienen `CanQuery` apagado, así que ni ese Raycast ni el mouse las tocan.
 - En el video, el rayo sigue un recorrido de prueba: pega en el rival, baja y barre el suelo (se acorta), sube al cielo (llega a su máximo) y vuelve al rival. Abajo a la izquierda se ve cuánto mide en cada momento.
+- **El video de la ULTIMATE** se ve desde las mismas tres cámaras fijas de `CataclysmDemo`: dentro del área, lejos (todo el radio de 500 m) y cerca de un impacto. Al final repite en cámara lenta desde la masa crítica hasta los impactos. Abajo se ve la fase, el segundo y una línea con las 8 fases. La sacudida del video es la misma que el módulo le aplica a la cámara.
+- En la ULTIMATE, el ambiente se oscurece durante la tormenta y se aclara en la masa crítica. Eso lo hace un `ColorCorrectionEffect` que el efecto pone en `Lighting` y quita al terminar. Si tu juego ya usa uno, los dos se combinan.
+- El agujero de la ULTIMATE es una esfera negra (`Neon` negro), con discos de acreción inclinados y anillos de luz que siempre miran a la cámara. Las corrientes de la tormenta, los brazos de polvo y las ondas son cadenas de Beams que se desvanecen solas cuando pasan muy cerca de la cámara, para no taparte la vista.
 
 ## Licencias de las texturas (todas libres para uso comercial)
 
 - **Kenney Particle Pack** (`kk_*`): CC0, de kenney.nl. El crédito es opcional. Ver `textures/KENNEY_LICENSE.txt`.
 - **Muestras oficiales de Effekseer** (`fx_*`): CC0. Agradecen el crédito a "Effekseer" y a los autores de las muestras. Ver `textures/EFFEKSEER_SAMPLES_LICENSE_CC0.txt`.
-- **`om_*` y `kz_*`**: generadas para este proyecto (los cubitos, las grietas, el cuerpo del pilar, el núcleo del agujero negro, la marca del suelo las del rayo cósmico, `om_beam_*`, y las del aura, `om_aura_wisp_2x2` y `fx_aura_tongue_2x2`), son tuyas.
+- **`om_*` y `kz_*`**: generadas para este proyecto (los cubitos, las grietas, el cuerpo del pilar, el núcleo del agujero negro, la marca del suelo, las del rayo cósmico (`om_beam_*`) y las del aura, `om_aura_wisp_2x2` y `fx_aura_tongue_2x2`), son tuyas.
 
 ## Si quieres cambiar algo
 
-El pilar está en `KaijuZero_VFX/tools/vfx_omnivora.py`: colores, tiempos de la carga y del pilar, cantidad y tamaño de los cubos (`CUBES`), oleadas, luces. El agujero negro está en `KaijuZero_VFX/tools/vfx_blackhole.py`: tiempos de la formación, del avance y de la detonación, tamaño, altura, arco, la lente, las capas del agujero y los cubos (`CUBES_BH`). El rayo cósmico está en `KaijuZero_VFX/tools/vfx_cosmicbeam.py`: arriba los tiempos (`START`, `GROW`, `STOP`, `FADE`), en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo, y al final, en `"beam"`, el largo máximo (`max_len`: 124), cada cuánto deja marcas al barrer (`trail_every`, `trail_move`) y el tiempo mínimo entre impactos (`rehit`). Sus texturas (`om_beam_*`) salen de `KaijuZero_VFX/tools/gen_cosmic_beam_textures.py`. El aura está en `KaijuZero_VFX/tools/vfx_aura.py` (la misma receta que el aura carmesí de Kaiju Zero; `COSMIC` es su paleta y en `aura_cfg` están el delineado, las oleadas y los tiempos) y sus texturas salen de `KaijuZero_VFX/tools/gen_aura_textures.py`. Después de editarlo, regenera los módulos desde la carpeta `KaijuZero_VFX`:
+El pilar está en `KaijuZero_VFX/tools/vfx_omnivora.py`: colores, tiempos de la carga y del pilar, cantidad y tamaño de los cubos (`CUBES`), oleadas, luces. El agujero negro está en `KaijuZero_VFX/tools/vfx_blackhole.py`: tiempos de la formación, del avance y de la detonación, tamaño, altura, arco, la lente, las capas del agujero y los cubos (`CUBES_BH`). El rayo cósmico está en `KaijuZero_VFX/tools/vfx_cosmicbeam.py`: arriba los tiempos (`START`, `GROW`, `STOP`, `FADE`), en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo, y al final, en `"beam"`, el largo máximo (`max_len`: 124), cada cuánto deja marcas al barrer (`trail_every`, `trail_move`) y el tiempo mínimo entre impactos (`rehit`). Sus texturas (`om_beam_*`) salen de `KaijuZero_VFX/tools/gen_cosmic_beam_textures.py`. El aura está en `KaijuZero_VFX/tools/vfx_aura.py` (la misma receta que el aura carmesí de Kaiju Zero; `COSMIC` es su paleta y en `aura_cfg` están el delineado, las oleadas y los tiempos) y sus texturas salen de `KaijuZero_VFX/tools/gen_aura_textures.py`.
+
+La ULTIMATE está en `KaijuZero_VFX/tools/vfx_cataclysm.py`. Arriba están:
+
+- los tiempos de cada fase: `T`, `PHASES` y `DET` (la detonación);
+- el radio y la altura: `R` y `H`;
+- el campo gravitacional, en `FIELD`: cuánto gira, cuánto atrae y la forma del embudo;
+- el agujero (`HOLE`), las rocas (`ROCKS`), los anillos de la tormenta (`RINGS`), las corrientes (`CURRENTS`) y las víctimas (`VICTIMS`);
+- la detonación (`DETO`), la sacudida (`SHAKE`), el oscurecimiento (`CC`) y el destello (`FLASH_T`).
+
+Más abajo están las capas de partículas (`LAYERS`) y el impacto (`IMPACT`). El simulador que hace sus videos es `vfx_cataclysm_sim.py`.
+
+Después de editar cualquiera de estos archivos, regenera los módulos desde la carpeta `KaijuZero_VFX`:
 
 ```
 python tools/gen_luau.py roblox
@@ -330,3 +566,14 @@ En el agujero negro prueba dos enemigos, enemigos como Parts y Models con escala
 En el rayo cósmico comprueba que sin nada delante llegue a su largo máximo (124), que se corte en el suelo, que se acorte y deje marcas al barrer el suelo, que vuelva a su máximo al apuntar al cielo, que siga a un objetivo que se mueve y a un origen nuevo, y que `Stop()` lo apague y se limpie todo.
 
 En el aura comprueba que salga de las partes visibles del cuerpo (no de la raíz ni de hitboxes invisibles), que su tamaño siga el alto del modelo, que haya oleadas, que siga al modelo si se mueve y que se limpie al apagarla, al acabar su duración o si el modelo desaparece.
+
+En la ULTIMATE corre la secuencia completa con tres víctimas y comprueba:
+- que se levanten las rocas;
+- que las víctimas lleguen a la singularidad;
+- que haya destello;
+- que cada víctima caiga en su punto (donde estaba);
+- que los tiempos del plan del servidor cuadren;
+- que lleguen todos los eventos y en orden (8 fases, 3 suben, 3 salen disparadas, 3 impactos y `Finished` al final);
+- que al terminar se borre todo, también el oscurecimiento y el destello.
+
+También prueba empezar en una fase (`StartTime`) y cortarla antes con `Stop()`. Además comprueba que las sacudidas juntas dejen la cámara exacta en su sitio.

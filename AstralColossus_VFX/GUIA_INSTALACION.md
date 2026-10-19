@@ -1,5 +1,24 @@
 # VFX cósmicos de ASTRAL COLOSSUS: guía de instalación
 
+## Cómo descargar los archivos
+
+Hay dos caminos y los dos te dan la misma carpeta `AstralColossus_VFX`.
+
+**A. El ZIP del chat (lo más fácil).** Descarga `AstralColossus_VFX.zip` y descomprímelo. En Windows: clic derecho > *Extraer todo…*. En Mac: doble clic. Te queda la carpeta `AstralColossus_VFX` con esta guía, `roblox/` y `textures/` (con sus licencias).
+
+**B. Desde GitHub.**
+
+1. Abre el repositorio `juanreyes4guti80-max/Valentine` en github.com.
+2. Arriba a la izquierda está el botón de la rama (dice `main`). Elige **`claude/inspiring-fermi-z0y6if`**, que es donde está la última versión.
+3. Botón verde **Code** > **Download ZIP**.
+4. Descomprime el ZIP. Lo de Kaiju Zero está en la carpeta `KaijuZero_VFX`, lo de Omnívora en `Omnivora_VFX` y lo de Astral Colossus en `AstralColossus_VFX`. Los videos de cada uno están en su carpeta `preview/`.
+
+Si solo quieres un archivo (por ejemplo el módulo actualizado), ábrelo en GitHub y toca **Download raw file**: es la flecha hacia abajo, arriba a la derecha del archivo.
+
+En Studio vas a usar `roblox/AstralColossusVFX.rbxmx` (el módulo) y las 21 imágenes de `textures/`.
+
+**Si ya tenías una versión anterior del módulo**, cópiate los IDs de su tabla `TEXTURES` antes de borrarlo. Los nombres no cambian, así que los pegas igual en el módulo nuevo y solo subes las imágenes que te falten (compara con `roblox/texturas_necesarias.txt`). Si usas varios de los tres módulos (Kaiju Zero, Omnívora, Astral Colossus), actualízalos a la vez: comparten la sacudida de cámara.
+
 ## Qué hay aquí
 
 | Carpeta / archivo | Para qué sirve |
@@ -17,7 +36,7 @@ Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los mód
 | Función | Qué es | Duración |
 |---|---|---|
 | `AstralClash(cf, largo, angulo, escala, sacudida)` | **H1, choque astral**: la lanza choca contra el escudo (destello estelar, anillos y relámpagos cósmicos) y salen hacia adelante **tres olas de aire en forma de triángulo**, cada una más débil que la anterior. La primera es **destructiva**: rompe el suelo con grietas de luz y marcas oscuras, arranca **rocas que salen volando** con estela cósmica, levanta esquirlas y estallidos de polvo, y empuja un muro de polvo por delante. Al final queda un **campo de nebulosa** con estrellas y polvo suspendidos, casi quietos y titilando: es la zona donde el tiempo se frena. | 2.6 s |
-| `Shake(intensidad, duración)` | Sacudida de cámara. Solo funciona en el cliente. | — |
+| `Shake(intensidad, duración)` | Sacudida de cámara. Solo funciona en el cliente. Si se juntan varias sacudidas, de este módulo o de los otros dos, se suman y al terminar la cámara vuelve exacta a su sitio. | — |
 
 Los colores son una mezcla de **morado, azul y blanco**. El efecto **cierra limpio**: el contenedor se destruye solo cuando ya murió la última partícula y la última roca.
 
