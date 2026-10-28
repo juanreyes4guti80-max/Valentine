@@ -53,10 +53,14 @@ def norm_layer(L):
         sp = dict(o["sprite"])
         o["rock"] = {"size": list(sp["size"]), "spin": list(sp.get("rot_speed", (0, 0))),
                      "material": sp.get("material", "Slate"),
-                     "color": list(sp.get("color", (95, 78, 70)))}
+                     "color": list(sp.get("color", (95, 78, 70))),
+                     # proporción de la pieza (ancho, alto, fondo), derecha (sin dar vueltas) y clavada en el suelo
+                     "aspect": list(sp.get("aspect", (1, 0.8, 0.9))), "upright": bool(sp.get("upright", False)),
+                     "stick": sp.get("stick", 0), "sink": sp.get("sink", 0.3)}
         del o["sprite"]
         o["trails"] = [norm_layer(T) for T in o.get("trails", [])]
         o["land"] = [norm_layer(T) for T in o.get("land", [])]
+        o["shatter"] = [norm_layer(T) for T in o.get("shatter", [])]     # al romperse la pieza clavada
         return o
     o.setdefault("speed", (0, 0))
     o.setdefault("spread", (0, 0))
@@ -114,6 +118,9 @@ def layer_end(L, jitter=0.0):
             after = max(after, T["lifetime"][1])
         for T in L.get("land", []):
             after = max(after, T["lifetime"][1] + max([w[1] for w in T.get("stream", [])] + [0]))
+        stick = L.get("sprite", L.get("rock", {})).get("stick", 0)
+        if stick:
+            after = max(after, stick + max([T["lifetime"][1] for T in L.get("shatter", [])] + [0]))
         life += after
     ends = [t + life for t in starts]
     delays = [0.0] if not (L.get("rock_stream") or L.get("final_stream")) else \
@@ -198,6 +205,21 @@ DOC_OMNIVORA = """	OmnivoraVFX — VFX cósmicos (azul muy oscuro, celeste y bla
 		OmnivoraVFX.CosmicPillar(CFrame.new(centroEnElSuelo), 18, 120, 1, 1)
 		-- agujero negro desde la boca hasta dos enemigos (detona a los OmnivoraVFX.BlackHoleImpact s)
 		OmnivoraVFX.BlackHole(bocaDeOmnivora, { enemigo1, enemigo2 }, 1, 1)"""
+
+DOC_MOONFANG = """	MoonfangVFX — VFX del lobo kaiju lunar de cristal (plata, hielo y azul cristal) para MOONFANG
+	(generado automáticamente desde vfx_moonfang.py; edita allí y regenera)
+
+	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
+		local MoonfangVFX = require(ReplicatedStorage.MoonfangVFX)
+		MoonfangVFX.MoonClaw(rival, 1, 1, 35)                    -- M1 golpes 1-3 (alterna el ángulo)
+		MoonfangVFX.MoonClawFinisher(rival, 1, 1)                -- M1 golpe 4
+		MoonfangVFX.MoonFang(rival, 1, 1)                        -- pesado
+		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
+		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado
+		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 110, 1, 1)   -- skill 1
+		MoonfangVFX.FangRain(CFrame.new(centroEnElSuelo), 1, 1)  -- skill 2
+		MoonfangVFX.LunarHowl(cabeza.CFrame, 1, 1)               -- skill 3 (y LunarAura para la mejora)
+		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), 26, 150, 1, 1)   -- skill 4"""
 
 DOC_ASTRAL = """	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
 	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
@@ -530,10 +552,10 @@ local function scheduleBursts(L: Layer, e: ParticleEmitter, carrier: Instance, h
 end
 
 -- rocas en llamas: vuelan con estela, y al caer levantan polvo y dejan fuego
-local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
+local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3, list: { Layer }?)
 	-- un ancla quieta en el punto donde cayó: lo que arde ahí no se mueve aunque el contenedor se mueva
 	local anchor = invisiblePart("Land", Vector3.new(0.2, 0.2, 0.2), CFrame.new(worldPos), holder)
-	for _, LL in L.land do
+	for _, LL in list or L.land do
 		if LL.decal then
 			playDecalAt(LL, holder, s, LL.emit[1][2], CFrame.new(worldPos))
 			continue
@@ -564,6 +586,12 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 				math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
 		local dir = (frame or holder.CFrame):VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
 		local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
+		local start = pos
+		if L.shape and L.shape.type == "Box" then -- cada pieza sale de un punto al azar de la caja
+			local b = L.shape.size
+			start = pos + (frame or holder.CFrame):VectorToWorldSpace(Vector3.new(rng:NextNumber(-0.5, 0.5) * b[1],
+				rng:NextNumber(-0.5, 0.5) * b[2], rng:NextNumber(-0.5, 0.5) * b[3]) * s)
+		end
 		local rock = Instance.new("Part")
 		rock.Name = "Rock"
 		rock.Anchored = true
@@ -573,8 +601,9 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		rock.CastShadow = false
 		rock.Material = (Enum.Material :: any)[L.rock.material or "Slate"]
 		rock.Color = Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
-		rock.Size = Vector3.new(sz, sz * 0.8, sz * 0.9)
-		rock.CFrame = CFrame.new(pos)
+		local asp = L.rock.aspect or { 1, 0.8, 0.9 }
+		rock.Size = Vector3.new(sz * asp[1], sz * asp[2], sz * asp[3])
+		rock.CFrame = CFrame.new(start)
 		rock.Parent = holder
 		local att = Instance.new("Attachment")
 		att.Parent = rock
@@ -589,9 +618,10 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		end
 		local spin = math.rad(rng:NextNumber(L.rock.spin[1], L.rock.spin[2]))
 		list[i] = {
-			rock = rock, pos = pos, vel = dir * rng:NextNumber(L.speed[1], L.speed[2]) * s,
+			rock = rock, pos = start, vel = dir * rng:NextNumber(L.speed[1], L.speed[2]) * s,
 			age = 0, life = rng:NextNumber(L.lifetime[1], L.lifetime[2]),
-			rot = CFrame.Angles(rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), 0),
+			rot = if L.rock.upright then CFrame.Angles(0, rng:NextNumber(0, 6.28), 0)
+				else CFrame.Angles(rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), 0),
 			spinAxis = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1)).Unit,
 			spin = spin, emitters = emitters, done = false,
 		}
@@ -618,8 +648,23 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 				for _, te in m.emitters do
 					te.Enabled = false
 				end
-				m.rock.Transparency = 1
-				if m.pos.Y <= groundY + 0.6 * s then
+				local onGround = m.pos.Y <= groundY + 0.6 * s
+				local stick = L.rock.stick or 0
+				if onGround and stick > 0 then
+					-- se queda clavada (hundida un poco) y después se rompe
+					local rock = m.rock
+					local sunk = rock.Size.Y * (0.5 - (L.rock.sink or 0.3))
+					rock.CFrame = CFrame.new(m.pos.X, groundY + sunk, m.pos.Z) * m.rot
+					task.delay(stick, function()
+						if rock.Parent and holder.Parent then
+							rock.Transparency = 1
+							landAt(L, holder, s, Vector3.new(m.pos.X, groundY + rock.Size.Y * 0.4, m.pos.Z), L.shatter)
+						end
+					end)
+				else
+					m.rock.Transparency = 1
+				end
+				if onGround then
 					landAt(L, holder, s, Vector3.new(m.pos.X, groundY + 0.4 * s, m.pos.Z))
 				end
 			end
@@ -4357,15 +4402,19 @@ def build(specs, name, doc):
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def main(out_kaiju, out_astral=None, out_omnivora=None):
-    """Genera los módulos: KaijuFireVFX (Kaiju Zero), AstralColossusVFX (Astral Colossus) y OmnivoraVFX (Omnívora)."""
+def main(out_kaiju, out_astral=None, out_omnivora=None, out_moonfang=None):
+    """Genera los módulos: KaijuFireVFX (Kaiju Zero), AstralColossusVFX (Astral Colossus), OmnivoraVFX (Omnívora) y
+    MoonfangVFX (Moonfang)."""
     import vfx_astral as VA
     import vfx_omnivora as VO
+    import vfx_moonfang as VM
     out_astral = out_astral or os.path.join(REPO, "AstralColossus_VFX", "roblox")
     out_omnivora = out_omnivora or os.path.join(REPO, "Omnivora_VFX", "roblox")
+    out_moonfang = out_moonfang or os.path.join(REPO, "Moonfang_VFX", "roblox")
     for out, specs, name, doc in ((out_kaiju, SP.SPECS, "KaijuFireVFX", DOC_KAIJU),
                                   (out_astral, VA.SPECS, "AstralColossusVFX", DOC_ASTRAL),
-                                  (out_omnivora, VO.SPECS, "OmnivoraVFX", DOC_OMNIVORA)):
+                                  (out_omnivora, VO.SPECS, "OmnivoraVFX", DOC_OMNIVORA),
+                                  (out_moonfang, VM.SPECS, "MoonfangVFX", DOC_MOONFANG)):
         os.makedirs(out, exist_ok=True)
         src, tex = build(specs, name, doc)
         write_outputs(out, src, tex, name)

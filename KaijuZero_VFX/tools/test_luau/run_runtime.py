@@ -8,6 +8,8 @@ astral = open(os.path.join(d, "..", "..", "..", "AstralColossus_VFX", "roblox", 
     .replace("--!nonstrict", "")
 omni = open(os.path.join(d, "..", "..", "..", "Omnivora_VFX", "roblox", "OmnivoraVFX.lua")).read() \
     .replace("--!nonstrict", "")
+moon = open(os.path.join(d, "..", "..", "..", "Moonfang_VFX", "roblox", "MoonfangVFX.lua")).read() \
+    .replace("--!nonstrict", "")
 G = ["Vector3", "Vector2", "CFrame", "Color3", "NumberRange", "NumberSequence", "NumberSequenceKeypoint",
      "ColorSequence", "ColorSequenceKeypoint", "TweenInfo", "Random", "Enum", "Instance", "workspace", "game", "task", "time",
      "typeof", "RaycastParams", "UDim2"]
@@ -470,6 +472,23 @@ do
 	assert(R.isDestroyed(u2.Holder) and hb2 == 0 and rs2 == 0, "ULTIMATE: Stop() no limpió")
 	print(("%-17s   empezar en una fase: t=%.2f (%s) | cortada antes: limpio"):format("", u2.Time, u2.Phase))
 end
+-- MOONFANG: todo el kit (golpes, bloqueo, medialuna, lluvia de colmillos, aullido, eclipse y las dos auras)
+local MOON = loadMoonfang()
+runHit("MoonClaw", function() return MOON.MoonClaw(victim, 1, 1, -35) end, 1.5, front(R.Vector3.new(0, 11, 0), 3), 1)
+runHit("MoonClawFinisher", function() return MOON.MoonClawFinisher(victim, 1, 1) end, 1.5,
+	front(R.Vector3.new(0, 11, 0), 3), 1)
+runHit("MoonFang", function() return MOON.MoonFang(victim, 1, 1) end, 2, front(R.Vector3.new(0, 11, 0), 3), 1)
+run("MoonGuardHit", function() return MOON.MoonGuardHit(victim, 1, 1) end, 1.5)
+run("CrescentWave", function()
+	return MOON.CrescentWave(R.CFrame.lookAt(R.Vector3.new(0, 0, 0), R.Vector3.new(0, 0, -1)), nil, 1, 1)
+end, 3, 110)
+run("FangRain", function() return MOON.FangRain(R.CFrame.new(0, 0, 0), 1, 1) end, 6)
+assert(R.stats.rocks >= 20, "FangRain: casi no cayeron colmillos")
+run("LunarHowl", function() return MOON.LunarHowl(R.CFrame.new(0, 14, 0), 1, 1) end, 5)
+run("Eclipse", function() return MOON.Eclipse(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 6)
+assert(R.stats.cubes > 40, "Eclipse: casi no hubo pedazos")
+runAura("MoonGuard", MOON, "MoonGuard")
+runAura("LunarAura", MOON, "LunarAura")
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"
@@ -478,7 +497,8 @@ for k in G:
     b += f"local {k} = R.{k}\n"
 b += "local function loadModule()\n" + mod + "\nend\n"
 b += "local function loadAstral()\n" + astral + "\nend\n"
-b += "local function loadOmnivora()\n" + omni + "\nend\n" + test
+b += "local function loadOmnivora()\n" + omni + "\nend\n"
+b += "local function loadMoonfang()\n" + moon + "\nend\n" + test
 with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as f:
     f.write(b)
 sys.exit(subprocess.run([luau, f.name]).returncode)

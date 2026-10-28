@@ -243,7 +243,7 @@ def apply_bloom(buf, threshold=0.92, intensity=0.55, sigmas=(4, 14)):
 
 
 class Meteor:
-    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "size", "frame", "L", "acc", "landed", "dead")
+    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "size", "frame", "L", "acc", "landed", "dead", "stuck_until")
 
 
 def spawn_meteor(L, origin, rng, scale, Rf):
@@ -256,14 +256,19 @@ def spawn_meteor(L, origin, rng, scale, Rf):
     d = rot_toward(d, ax2, math.radians(rng.uniform(-sy, sy)))
     d /= np.linalg.norm(d)
     m.pos = np.asarray(origin, float) + Rf @ (np.asarray(L.get("offset", (0, 0, 0)), float) * scale)
+    sh = L.get("shape")
+    if sh and sh.get("type") == "Box":           # cada pieza sale de un punto al azar de la caja
+        b = np.asarray(sh["size"], float)
+        m.pos = m.pos + Rf @ (np.array([rng.uniform(-0.5, 0.5) for _ in range(3)]) * b * scale)
     m.vel = d * rng.uniform(*L["speed"]) * scale
     m.age = 0.0
     m.life = rng.uniform(*L["lifetime"])
     sp = L["sprite"]
     m.size = rng.uniform(*sp["size"]) * scale
-    m.rot = rng.uniform(0, 360)
+    m.rot = 0.0 if sp.get("upright") else rng.uniform(0, 360)
     m.rots = rng.uniform(*sp.get("rot_speed", (0, 0)))
-    m.frame = rng.randrange(4)
+    m.frame = sp.get("frame", rng.randrange(4))
+    m.stuck_until = None
     m.L = L
     m.acc = [0.0] * len(L.get("trails", []))
     m.landed = False
@@ -649,6 +654,13 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         for m in meteors:
             if m.dead:
                 continue
+            if m.stuck_until is not None:          # clavada en el suelo: se rompe al terminar
+                if t >= m.stuck_until:
+                    for LL in m.L.get("shatter", []):
+                        for _ in range(LL["emit"][0][1]):
+                            parts.append(spawn(LL, m.pos.copy(), rng, scale, Rf))
+                    m.dead = True
+                continue
             if not m.landed:
                 for k, TL in enumerate(m.L.get("trails", [])):
                     m.acc[k] += TL["rate"] * dt
@@ -668,6 +680,13 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                             else:
                                 for _ in range(LL["emit"][0][1]):
                                     parts.append(spawn(LL, lp, rng, scale, Rf))
+                        stick = m.L["sprite"].get("stick", 0)
+                        if stick:
+                            asp = m.L["sprite"].get("aspect", (1, 0.8, 0.9))
+                            h = m.size * asp[1]
+                            m.pos = np.array([m.pos[0], ground_y + h * (0.5 - m.L["sprite"].get("sink", 0.3)), m.pos[2]])
+                            m.stuck_until = t + stick
+                            continue
                     m.dead = True
         # integrar (el primer frame de cada partícula se dibuja en su origen)
         alive = []
@@ -766,7 +785,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             stats.append(len(parts))
         # avanzar física
         for m in meteors:
-            if m.dead:
+            if m.dead or m.stuck_until is not None:
                 continue
             acc = np.asarray(m.L.get("accel", (0, -100, 0)), float) * scale
             m.vel = m.vel * (2.0 ** (-m.L.get("drag", 0.0) * dt)) + acc * dt

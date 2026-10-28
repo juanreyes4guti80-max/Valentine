@@ -14,7 +14,7 @@ Léelo completo antes de tocar nada. Lo que dice sobre el usuario y sus gustos i
 ## 1. El usuario y cómo trabajar con él
 
 - **Idioma:** español, tono cercano (tutéalo). Las guías, comentarios de código y mensajes van en español sencillo, sin jerga innecesaria.
-- **Proyecto:** un juego de kaijus por turnos en Roblox. Personajes con VFX hechos: **Kaiju Zero** (fuego y lava, rojo/carmesí), **Omnívora** (cósmica: azul muy oscuro, celeste y púrpura) y **Astral Colossus** (cósmico claro: lavanda y blanco).
+- **Proyecto:** un juego de kaijus en Roblox. Personajes con VFX hechos: **Kaiju Zero** (fuego y lava, rojo/carmesí), **Omnívora** (cósmica: azul muy oscuro, celeste y púrpura), **Astral Colossus** (cósmico claro: lavanda y blanco) y **Moonfang** (lobo lunar de cristal: plata, hielo y azul cristal; su kit completo de M1, bloqueo, pesado y skills 1-4 lo diseñé yo y el usuario lo aprobó).
 - **Qué valora:** que se vea espectacular y pulido, como VFX de anime o de juego AAA, pero hecho con lo que Roblox permite. Se fija mucho en:
   - que la paleta respete al personaje;
   - que nada se vea como un cilindro o una figura sólida y plana;
@@ -105,6 +105,7 @@ KaijuZero_VFX/
     vfx_omnivora.py          specs de Omnívora; SPECS -> OmnivoraVFX (importa vfx_blackhole, vfx_cosmicbeam,
                              vfx_aura, vfx_cataclysm)
     vfx_astral.py            specs de Astral Colossus; SPECS -> AstralColossusVFX
+    vfx_moonfang.py          specs de Moonfang (todo su kit); SPECS -> MoonfangVFX. Texturas: gen_moonfang_textures.py
     gen_luau.py              EL MOTOR Luau (texto dentro del .py) + el generador. Escribe los 3 módulos
     vfx_sim.py               simulador general (render, render_beam, render_aura, to_mp4)
     vfx_cataclysm_sim.py     simulador propio de la ULTIMATE de Omnívora
@@ -112,7 +113,7 @@ KaijuZero_VFX/
     import_kenney.py, import_effekseer.py, import_astral.py, import_omnivora.py  importan texturas CC0
     gen_plugin.py, plugin_studio/   el plugin que sube texturas
     test_luau/               pruebas: runtime_mock.luau (Roblox simulado), run_runtime.py, run_plugin_test.py
-Omnivora_VFX/, AstralColossus_VFX/   lo mismo por personaje (guía, roblox/, textures/, preview/)
+Omnivora_VFX/, AstralColossus_VFX/, Moonfang_VFX/   lo mismo por personaje (guía, roblox/, textures/, preview/)
 Plugin_Studio/               el plugin listo para la carpeta de Plugins de Studio
 KaijuZero_Habilidades/       desglose del video de referencia de las animaciones (pendientes)
 ```
@@ -173,7 +174,7 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 Otras claves frecuentes:
 
 - `"decal": True` hace una marca plana del suelo con Decal (sin límite de tamaño).
-- `"type": "meteor"` hace rocas de verdad (Parts) con estela y salpicadura al caer: `sprite`, `trails`, `land`.
+- `"type": "meteor"` hace rocas de verdad (Parts) con estela y salpicadura al caer: `sprite`, `trails`, `land`. En `sprite`, `aspect` estira la pieza, `upright` la deja derecha y `stick` la deja clavada esos segundos antes de romperse con las capas de `shatter`. `shape` de caja reparte de dónde sale cada pieza.
 - `"lit": True` hace que la capa reciba luz de la escena (humo y polvo).
 - `"spin": True` usa `LockedToPart`: la capa gira con su pieza y sube en espiral.
 - `"ground_mix"` mezcla el color del suelo en la capa (esquirlas).
@@ -348,6 +349,7 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
   - `CosmicAura`;
   - **ULTIMATE `GravitationalCataclysm`**: 23 s, radio de 500 m (1786 studs), 8 fases, plan para el servidor, escena de prueba `CataclysmDemo.client.lua`.
 - **Astral Colossus** (`AstralColossusVFX`): `AstralClash`.
+- **Moonfang** (`MoonfangVFX`): `MoonClaw` y `MoonClawFinisher` (M1), `MoonGuard` y `MoonGuardHit` (bloqueo), `MoonFang` (pesado), `CrescentWave` (skill 1), `FangRain` (skill 2), `LunarHowl` y `LunarAura` (skill 3) y `Eclipse` (skill 4). Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
 - **Plugin** `SubirTexturasVFX`.
 
 **Pendiente o por verificar (tu terreno):**

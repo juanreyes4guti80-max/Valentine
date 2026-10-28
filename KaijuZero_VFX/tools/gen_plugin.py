@@ -1,6 +1,6 @@
 """Genera el plugin de Studio "Subir texturas VFX" (Plugin_Studio/SubirTexturasVFX.rbxmx).
 
-Lleva dentro las texturas de los tres módulos (KaijuFireVFX, OmnivoraVFX, AstralColossusVFX) como PNG RGBA en
+Lleva dentro las texturas de los módulos (KaijuFireVFX, OmnivoraVFX, AstralColossusVFX, MoonfangVFX) como PNG RGBA en
 base64, el decodificador (plugin_studio/Png.luau) y el script del plugin (plugin_studio/main.server.luau).
 uso: python gen_plugin.py   (después de gen_luau.py, que escribe las listas texturas_necesarias.txt)"""
 import base64
@@ -14,7 +14,7 @@ from PIL import Image
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(TOOLS))
-FOLDERS = ["KaijuZero_VFX", "Omnivora_VFX", "AstralColossus_VFX"]
+FOLDERS = ["KaijuZero_VFX", "Omnivora_VFX", "AstralColossus_VFX", "Moonfang_VFX"]
 OUT = os.path.join(REPO, "Plugin_Studio")
 
 

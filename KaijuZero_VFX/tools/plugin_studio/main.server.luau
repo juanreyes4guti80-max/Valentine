@@ -1,6 +1,6 @@
 --!strict
 --[[
-	Subir texturas VFX: plugin de Studio para los módulos KaijuFireVFX, OmnivoraVFX y AstralColossusVFX.
+	Subir texturas VFX: plugin de Studio para los módulos KaijuFireVFX, OmnivoraVFX, AstralColossusVFX y MoonfangVFX.
 
 	Botón "Subir texturas": busca los módulos en tu juego, sube como Image a tu cuenta las texturas que les faltan
 	(el plugin ya las trae dentro) y pega los IDs en la tabla TEXTURES de cada módulo. Si un ID ya funciona, lo
@@ -174,7 +174,7 @@ local function upload(name: string, png64: string): (string?, string?)
 			local ok, result, value = pcall(function()
 				return (AssetService :: any):CreateAssetAsync(img, Enum.AssetType.Image, {
 					Name = "VFX_" .. name,
-					Description = "Textura de los VFX de Kaiju Zero / Omnívora / Astral Colossus",
+					Description = "Textura de los VFX de Kaiju Zero / Omnívora / Astral Colossus / Moonfang",
 					CreatorId = creatorId,
 					CreatorType = creatorType,
 				})
@@ -203,7 +203,7 @@ local function run(doUpload: boolean)
 	xpcall(function()
 		local modules = findModules()
 		if #modules == 0 then
-			log("No encontré ningún módulo de VFX en el juego. Inserta primero KaijuFireVFX, OmnivoraVFX o AstralColossusVFX.")
+			log("No encontré ningún módulo de VFX en el juego. Inserta primero KaijuFireVFX, OmnivoraVFX, AstralColossusVFX o MoonfangVFX.")
 			return
 		end
 		for _, m in modules do

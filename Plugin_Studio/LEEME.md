@@ -1,6 +1,6 @@
 # Plugin "Subir texturas VFX"
 
-Sube a Roblox las texturas de los módulos de VFX (KaijuFireVFX, OmnivoraVFX y AstralColossusVFX) y pega sus IDs en el módulo. Las texturas ya vienen dentro del plugin.
+Sube a Roblox las texturas de los módulos de VFX (KaijuFireVFX, OmnivoraVFX, AstralColossusVFX y MoonfangVFX) y pega sus IDs en el módulo. Las texturas ya vienen dentro del plugin.
 
 1. En Studio: pestaña *Plugins* > *Plugins Folder*. Copia `SubirTexturasVFX.rbxmx` en esa carpeta y reinicia Studio.
 2. Inserta los módulos de VFX en tu juego (por ejemplo, en `ReplicatedStorage`).

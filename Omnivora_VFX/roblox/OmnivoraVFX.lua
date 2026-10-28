@@ -375,10 +375,10 @@ local function scheduleBursts(L: Layer, e: ParticleEmitter, carrier: Instance, h
 end
 
 -- rocas en llamas: vuelan con estela, y al caer levantan polvo y dejan fuego
-local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3)
+local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3, list: { Layer }?)
 	-- un ancla quieta en el punto donde cayó: lo que arde ahí no se mueve aunque el contenedor se mueva
 	local anchor = invisiblePart("Land", Vector3.new(0.2, 0.2, 0.2), CFrame.new(worldPos), holder)
-	for _, LL in L.land do
+	for _, LL in list or L.land do
 		if LL.decal then
 			playDecalAt(LL, holder, s, LL.emit[1][2], CFrame.new(worldPos))
 			continue
@@ -409,6 +409,12 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 				math.rad(rng:NextNumber(-L.spread[2], L.spread[2])))
 		local dir = (frame or holder.CFrame):VectorToWorldSpace((spread :: CFrame):VectorToWorldSpace(baseDir))
 		local sz = rng:NextNumber(L.rock.size[1], L.rock.size[2]) * s
+		local start = pos
+		if L.shape and L.shape.type == "Box" then -- cada pieza sale de un punto al azar de la caja
+			local b = L.shape.size
+			start = pos + (frame or holder.CFrame):VectorToWorldSpace(Vector3.new(rng:NextNumber(-0.5, 0.5) * b[1],
+				rng:NextNumber(-0.5, 0.5) * b[2], rng:NextNumber(-0.5, 0.5) * b[3]) * s)
+		end
 		local rock = Instance.new("Part")
 		rock.Name = "Rock"
 		rock.Anchored = true
@@ -418,8 +424,9 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		rock.CastShadow = false
 		rock.Material = (Enum.Material :: any)[L.rock.material or "Slate"]
 		rock.Color = Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
-		rock.Size = Vector3.new(sz, sz * 0.8, sz * 0.9)
-		rock.CFrame = CFrame.new(pos)
+		local asp = L.rock.aspect or { 1, 0.8, 0.9 }
+		rock.Size = Vector3.new(sz * asp[1], sz * asp[2], sz * asp[3])
+		rock.CFrame = CFrame.new(start)
 		rock.Parent = holder
 		local att = Instance.new("Attachment")
 		att.Parent = rock
@@ -434,9 +441,10 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		end
 		local spin = math.rad(rng:NextNumber(L.rock.spin[1], L.rock.spin[2]))
 		list[i] = {
-			rock = rock, pos = pos, vel = dir * rng:NextNumber(L.speed[1], L.speed[2]) * s,
+			rock = rock, pos = start, vel = dir * rng:NextNumber(L.speed[1], L.speed[2]) * s,
 			age = 0, life = rng:NextNumber(L.lifetime[1], L.lifetime[2]),
-			rot = CFrame.Angles(rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), 0),
+			rot = if L.rock.upright then CFrame.Angles(0, rng:NextNumber(0, 6.28), 0)
+				else CFrame.Angles(rng:NextNumber(0, 6.28), rng:NextNumber(0, 6.28), 0),
 			spinAxis = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1)).Unit,
 			spin = spin, emitters = emitters, done = false,
 		}
@@ -463,8 +471,23 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 				for _, te in m.emitters do
 					te.Enabled = false
 				end
-				m.rock.Transparency = 1
-				if m.pos.Y <= groundY + 0.6 * s then
+				local onGround = m.pos.Y <= groundY + 0.6 * s
+				local stick = L.rock.stick or 0
+				if onGround and stick > 0 then
+					-- se queda clavada (hundida un poco) y después se rompe
+					local rock = m.rock
+					local sunk = rock.Size.Y * (0.5 - (L.rock.sink or 0.3))
+					rock.CFrame = CFrame.new(m.pos.X, groundY + sunk, m.pos.Z) * m.rot
+					task.delay(stick, function()
+						if rock.Parent and holder.Parent then
+							rock.Transparency = 1
+							landAt(L, holder, s, Vector3.new(m.pos.X, groundY + rock.Size.Y * 0.4, m.pos.Z), L.shatter)
+						end
+					end)
+				else
+					m.rock.Transparency = 1
+				end
+				if onGround then
 					landAt(L, holder, s, Vector3.new(m.pos.X, groundY + 0.4 * s, m.pos.Z))
 				end
 			end
@@ -15151,7 +15174,12 @@ local SPEC_CataclysmImpact = {
 				spin = {-360, 360},
 				material = "Slate",
 				color = {112, 116, 130},
+				aspect = {1, 0.8, 0.9},
+				upright = false,
+				stick = 0,
+				sink = 0.3,
 			},
+			shatter = {},
 		},
 		{
 			name = "ImpDust",
