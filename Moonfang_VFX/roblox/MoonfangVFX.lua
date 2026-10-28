@@ -4431,7 +4431,7 @@ end
 local SPEC_MoonBite = {
 	name = "MoonBite",
 	duration = 1.3,
-	cleanup = 2.13,
+	cleanup = 2.24,
 	layers = {
 		{
 			name = "Chomp",
@@ -4445,7 +4445,7 @@ local SPEC_MoonBite = {
 			emit = {
 				{0, 1},
 			},
-			lifetime = {0.36, 0.36},
+			lifetime = {0.4, 0.4},
 			size = {
 				{0, 26, 0},
 				{1, 27.04, 0},
@@ -4491,16 +4491,16 @@ local SPEC_MoonBite = {
 			name = "ChompGlow",
 			texture = "fx_glow",
 			emit = {
-				{0.1125, 1},
+				{0.1, 1},
 			},
 			lifetime = {0.24, 0.24},
 			size = {
-				{0, 13, 0},
-				{0.3, 23.4, 0},
-				{1, 26, 0},
+				{0, 10.4, 0},
+				{0.3, 19.5, 0},
+				{1, 22.1, 0},
 			},
 			transparency = {
-				{0, 0.45, 0},
+				{0, 0.7, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -4518,8 +4518,8 @@ local SPEC_MoonBite = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.9,
-			zoffset = 4,
+			brightness = 0.8,
+			zoffset = -1,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -4535,16 +4535,16 @@ local SPEC_MoonBite = {
 			name = "HitFlash",
 			texture = "fx_glow",
 			emit = {
-				{0.1125, 1},
+				{0.1, 1},
 			},
 			lifetime = {0.16, 0.18},
 			size = {
 				{0, 6, 0},
-				{0.3, 16, 0},
-				{1, 17.6, 0},
+				{0.3, 10, 0},
+				{1, 11, 0},
 			},
 			transparency = {
-				{0, 0.3625, 0},
+				{0, 0.6625, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -4562,7 +4562,7 @@ local SPEC_MoonBite = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.765,
+			brightness = 0.405,
 			zoffset = 6,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -4579,16 +4579,16 @@ local SPEC_MoonBite = {
 			name = "HitStar",
 			texture = "kk_star_06",
 			emit = {
-				{0.1125, 1},
+				{0.1, 1},
 			},
 			lifetime = {0.14, 0.14},
 			size = {
 				{0, 10, 0},
-				{0.4, 15.2, 0},
-				{1, 9.6, 0},
+				{0.4, 9.5, 0},
+				{1, 6, 0},
 			},
 			transparency = {
-				{0, 0.15, 0},
+				{0, 0.55, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -4606,7 +4606,7 @@ local SPEC_MoonBite = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.36,
+			brightness = 0.72,
 			rotation = {0, 360},
 			zoffset = 7,
 			speed = {0, 0},
@@ -4623,7 +4623,7 @@ local SPEC_MoonBite = {
 			name = "HitRing",
 			texture = "kz_beam_ring",
 			emit = {
-				{0.1125, 1},
+				{0.1, 1},
 			},
 			lifetime = {0.22, 0.24},
 			size = {
@@ -4680,8 +4680,8 @@ local SPEC_MoonBite = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.1025, 12},
-				{0.1325, 6},
+				{0.09, 12},
+				{0.12, 6},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -4730,8 +4730,8 @@ local SPEC_MoonBite = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.1025, 12},
-				{0.1325, 6},
+				{0.09, 12},
+				{0.12, 6},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -4779,7 +4779,7 @@ local SPEC_MoonBite = {
 				inout = "Outward",
 			},
 			emit = {
-				{0.1125, 10},
+				{0.22, 10},
 			},
 			direction = "Back",
 			spread = {70, 70},
@@ -4829,7 +4829,7 @@ local SPEC_MoonBite = {
 				inout = "Outward",
 			},
 			emit = {
-				{0.1225, 4},
+				{0.11, 4},
 			},
 			direction = "Back",
 			spread = {80, 40},
@@ -4869,7 +4869,7 @@ local SPEC_MoonBite = {
 			name = "FrostbiteWound",
 			texture = "mf_frost_cracks",
 			emit = {
-				{0.1325, 1},
+				{0.24, 1},
 			},
 			lifetime = {1, 1},
 			size = {
@@ -4925,7 +4925,7 @@ local SPEC_MoonBite = {
 				inout = "Outward",
 			},
 			stream = {
-				{0.1825, 1.1325, 14, 6},
+				{0.29, 1.24, 14, 6},
 			},
 			direction = "Bottom",
 			spread = {25, 25},
@@ -4980,7 +4980,7 @@ local SPEC_MoonBite = {
 				inout = "Outward",
 			},
 			emit = {
-				{0.1425, 6},
+				{0.13, 6},
 			},
 			direction = "Back",
 			spread = {80, 80},
@@ -5026,37 +5026,37 @@ local SPEC_MoonBite = {
 		},
 	},
 	shakes = {
-		{0.112, 0.4, 0.2},
+		{0.1, 0.4, 0.2},
 	},
 	light = {
 		color = {170, 210, 255},
 		brightness = 3,
 		range = 22,
 		time = 0.25,
-		delay = 0.112,
+		delay = 0.1,
 	},
 	hit = {
 		lift = 3,
 		ref = 22,
 		angle = 0,
 		angled = false,
-		impact = 0.112,
+		impact = 0.1,
 	},
 }
 
--- MOONFANG M1 (mordiscos 1 a 3): dos medias lunas de luz se cierran de golpe sobre el rival como una boca, chasquean en una línea que destella y sueltan chispas de hielo, esquirlas y vaho helado; queda una herida de escarcha que gotea cristalitos un segundo.
+-- MOONFANG M1 (mordiscos 1 a 3): dos filas de colmillos de cristal (solo los dientes, sin encía) se cierran de golpe sobre el rival y quedan trabadas; sueltan chispas de hielo, esquirlas y vaho helado, los colmillos se rompen y queda una herida de escarcha que gotea cristalitos un segundo.
 -- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
 -- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
 function MoonfangVFX.MoonBite(target: any, scale: number?, shake: number?): Part
 	return playHit(SPEC_MoonBite, target, scale, shake, 0)
 end
 -- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
-MoonfangVFX.MoonBiteImpact = 0.112
+MoonfangVFX.MoonBiteImpact = 0.1
 
 local SPEC_MoonBiteFinisher = {
 	name = "MoonBiteFinisher",
 	duration = 1.6,
-	cleanup = 2.47,
+	cleanup = 2.59,
 	layers = {
 		{
 			name = "LungeLines",
@@ -5120,7 +5120,7 @@ local SPEC_MoonBiteFinisher = {
 			emit = {
 				{0.03, 1},
 			},
-			lifetime = {0.4, 0.4},
+			lifetime = {0.44, 0.44},
 			size = {
 				{0, 34, 0},
 				{1, 35.36, 0},
@@ -5166,16 +5166,16 @@ local SPEC_MoonBiteFinisher = {
 			name = "ChompGlow",
 			texture = "fx_glow",
 			emit = {
-				{0.155, 1},
+				{0.14, 1},
 			},
 			lifetime = {0.24, 0.24},
 			size = {
-				{0, 17, 0},
-				{0.3, 30.6, 0},
-				{1, 34, 0},
+				{0, 13.6, 0},
+				{0.3, 25.5, 0},
+				{1, 28.9, 0},
 			},
 			transparency = {
-				{0, 0.45, 0},
+				{0, 0.7, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5193,8 +5193,8 @@ local SPEC_MoonBiteFinisher = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.9,
-			zoffset = 4,
+			brightness = 0.8,
+			zoffset = -1,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -5218,14 +5218,14 @@ local SPEC_MoonBiteFinisher = {
 			emit = {
 				{0.045, 1},
 			},
-			lifetime = {0.4, 0.4},
+			lifetime = {0.44, 0.44},
 			size = {
 				{0, 42, 0},
 				{1, 43.68, 0},
 			},
 			transparency = {
-				{0, 0.55, 0},
-				{0.8, 0.55, 0},
+				{0, 0.7, 0},
+				{0.8, 0.7, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5264,16 +5264,16 @@ local SPEC_MoonBiteFinisher = {
 			name = "ChompEchoGlow",
 			texture = "fx_glow",
 			emit = {
-				{0.17, 1},
+				{0.155, 1},
 			},
 			lifetime = {0.24, 0.24},
 			size = {
-				{0, 21, 0},
-				{0.3, 37.8, 0},
-				{1, 42, 0},
+				{0, 16.8, 0},
+				{0.3, 31.5, 0},
+				{1, 35.7, 0},
 			},
 			transparency = {
-				{0, 0.45, 0},
+				{0, 0.7, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5291,8 +5291,8 @@ local SPEC_MoonBiteFinisher = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.9,
-			zoffset = 4,
+			brightness = 0.8,
+			zoffset = -1,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -5308,16 +5308,16 @@ local SPEC_MoonBiteFinisher = {
 			name = "HitFlash",
 			texture = "fx_glow",
 			emit = {
-				{0.155, 1},
+				{0.14, 1},
 			},
 			lifetime = {0.16, 0.18},
 			size = {
 				{0, 6, 0},
-				{0.3, 26, 0},
-				{1, 28.6, 0},
+				{0.3, 14, 0},
+				{1, 15.4, 0},
 			},
 			transparency = {
-				{0, 0.475, 0},
+				{0, 0.625, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5335,7 +5335,7 @@ local SPEC_MoonBiteFinisher = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.63,
+			brightness = 0.45,
 			zoffset = 6,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -5352,16 +5352,16 @@ local SPEC_MoonBiteFinisher = {
 			name = "HitStar",
 			texture = "kk_star_06",
 			emit = {
-				{0.155, 1},
+				{0.14, 1},
 			},
 			lifetime = {0.14, 0.14},
 			size = {
 				{0, 10, 0},
-				{0.4, 24.7, 0},
-				{1, 15.6, 0},
+				{0.4, 13.3, 0},
+				{1, 8.4, 0},
 			},
 			transparency = {
-				{0, 0.3, 0},
+				{0, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5379,7 +5379,7 @@ local SPEC_MoonBiteFinisher = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.12,
+			brightness = 0.8,
 			rotation = {0, 360},
 			zoffset = 7,
 			speed = {0, 0},
@@ -5396,7 +5396,7 @@ local SPEC_MoonBiteFinisher = {
 			name = "HitRing",
 			texture = "kz_beam_ring",
 			emit = {
-				{0.155, 1},
+				{0.14, 1},
 			},
 			lifetime = {0.22, 0.24},
 			size = {
@@ -5440,16 +5440,16 @@ local SPEC_MoonBiteFinisher = {
 			name = "SnapStar",
 			texture = "kk_star_08",
 			emit = {
-				{0.155, 1},
+				{0.14, 1},
 			},
-			lifetime = {0.22, 0.22},
+			lifetime = {0.2, 0.2},
 			size = {
-				{0, 12, 0},
-				{0.3, 40, 0},
-				{1, 22, 0},
+				{0, 8, 0},
+				{0.3, 28, 0},
+				{1, 14, 0},
 			},
 			transparency = {
-				{0, 0.2, 0},
+				{0, 0.45, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5467,7 +5467,7 @@ local SPEC_MoonBiteFinisher = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.3,
+			brightness = 1.2,
 			rotation = {0, 0},
 			zoffset = 7,
 			speed = {0, 0},
@@ -5484,7 +5484,7 @@ local SPEC_MoonBiteFinisher = {
 			name = "CrystalRing",
 			texture = "kk_circle_02",
 			emit = {
-				{0.175, 1},
+				{0.16, 1},
 			},
 			lifetime = {0.32, 0.32},
 			size = {
@@ -5535,7 +5535,7 @@ local SPEC_MoonBiteFinisher = {
 				inout = "Outward",
 			},
 			emit = {
-				{0.155, 12},
+				{0.26, 12},
 			},
 			direction = "Back",
 			spread = {180, 180},
@@ -5593,8 +5593,8 @@ local SPEC_MoonBiteFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.145, 18},
-				{0.175, 8},
+				{0.13, 18},
+				{0.16, 8},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5643,8 +5643,8 @@ local SPEC_MoonBiteFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.145, 18},
-				{0.175, 8},
+				{0.13, 18},
+				{0.16, 8},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5693,8 +5693,8 @@ local SPEC_MoonBiteFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.145, 8},
-				{0.175, 4},
+				{0.13, 8},
+				{0.16, 4},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5743,8 +5743,8 @@ local SPEC_MoonBiteFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.145, 8},
-				{0.175, 4},
+				{0.13, 8},
+				{0.16, 4},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5792,7 +5792,7 @@ local SPEC_MoonBiteFinisher = {
 				inout = "Outward",
 			},
 			emit = {
-				{0.155, 24},
+				{0.26, 24},
 			},
 			direction = "Back",
 			spread = {70, 70},
@@ -5842,7 +5842,7 @@ local SPEC_MoonBiteFinisher = {
 				inout = "Outward",
 			},
 			emit = {
-				{0.165, 7},
+				{0.15, 7},
 			},
 			direction = "Back",
 			spread = {80, 40},
@@ -5882,7 +5882,7 @@ local SPEC_MoonBiteFinisher = {
 			name = "FrostbiteWound",
 			texture = "mf_frost_cracks",
 			emit = {
-				{0.175, 1},
+				{0.29, 1},
 			},
 			lifetime = {1.3, 1.3},
 			size = {
@@ -5938,7 +5938,7 @@ local SPEC_MoonBiteFinisher = {
 				inout = "Outward",
 			},
 			stream = {
-				{0.225, 1.475, 20, 8},
+				{0.34, 1.59, 20, 8},
 			},
 			direction = "Bottom",
 			spread = {25, 25},
@@ -5993,7 +5993,7 @@ local SPEC_MoonBiteFinisher = {
 				inout = "Outward",
 			},
 			emit = {
-				{0.175, 10},
+				{0.16, 10},
 			},
 			direction = "Back",
 			spread = {80, 80},
@@ -6040,32 +6040,32 @@ local SPEC_MoonBiteFinisher = {
 	},
 	shakes = {
 		{0.02, 0.25, 0.12},
-		{0.155, 0.8, 0.3},
+		{0.14, 0.8, 0.3},
 	},
 	light = {
 		color = {180, 215, 255},
 		brightness = 5,
 		range = 28,
 		time = 0.35,
-		delay = 0.155,
+		delay = 0.14,
 	},
 	hit = {
 		lift = 3,
 		ref = 22,
 		angle = 0,
 		angled = false,
-		impact = 0.155,
+		impact = 0.14,
 	},
 }
 
--- MOONFANG M1 (mordisco 4, remate): una embestida; líneas de velocidad se cierran sobre el rival, una mordida doble más grande chasquea y revienta en una flor de púas de hielo, esquirlas y vaho helado, y deja una herida de escarcha más grande.
+-- MOONFANG M1 (mordisco 4, remate): una embestida; líneas de velocidad se cierran sobre el rival y dos filas de colmillos más grandes (con su eco) se traban de golpe, se rompen y revientan en una flor de púas de hielo, esquirlas y vaho helado; deja una herida de escarcha más grande.
 -- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
 -- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
 function MoonfangVFX.MoonBiteFinisher(target: any, scale: number?, shake: number?): Part
 	return playHit(SPEC_MoonBiteFinisher, target, scale, shake, 0)
 end
 -- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
-MoonfangVFX.MoonBiteFinisherImpact = 0.155
+MoonfangVFX.MoonBiteFinisherImpact = 0.14
 
 local SPEC_MoonFang = {
 	name = "MoonFang",

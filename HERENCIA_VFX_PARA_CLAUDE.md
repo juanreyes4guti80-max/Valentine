@@ -369,7 +369,7 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
 3. Rocas de destrucción para Astral Colossus: el usuario iba a mandar detalles.
 4. Animaciones del kit de Kaiju Zero (A1–A4, ver `KaijuZero_Habilidades/REFERENCIA_VIDEO.md`): necesitan el `.blend` con el rig.
 5. **Moonfang, opinión del usuario: 3/10 al primer kit.** Solo le convenció la ulti (Eclipse). Pidió:
-   - M1 como **mordiscos** al estilo de Devil Dinosaur (Marvel Rivals), NO como mandíbulas con dientes ("eso es Pokémon"). Ya están: `MoonBite` es un flipbook (`mf_chomp_4x4`) de dos medias lunas de luz que se cierran como una boca y chasquean, más chispas, vaho y una herida de escarcha que gotea. No pude ver el video de Devil Dinosaur (red bloqueada); si tú puedes, compáralo;
+   - M1 como **mordiscos** al estilo de Devil Dinosaur (Marvel Rivals). Ojo con lo que quiere: **un buen mordisco muestra solo los dientes, no la encía**. No le gustaron ni las mandíbulas con encía y dientes ("eso es Pokémon") ni dos arcos de luz como una boca sin dientes ("solo veo la encía"). Ya están: `MoonBite` es un flipbook (`mf_chomp_4x4`) de dos filas de colmillos de cristal que se cierran, se traban, se rompen, más chispas, vaho y una herida de escarcha que gotea. No pude ver el video de Devil Dinosaur (red bloqueada); si tú puedes, compáralo;
    - el resto del kit, uno por uno cuando él diga. El pesado (`MoonFang`) todavía usa las mandíbulas con dientes (`kz_bite_4x4`) que no le gustaron.
 
    Las auras tampoco le convencieron en el juego.

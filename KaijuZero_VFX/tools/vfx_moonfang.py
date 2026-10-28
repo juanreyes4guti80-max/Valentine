@@ -90,18 +90,18 @@ def mist(t, n, box, name="Mist", size=(4, 11)):
                  rotation=(0, 360), rot_speed=(-40, 40), zoffset=-2)]
 
 
-def chomp(t, size, name="Chomp", bright=1.4, tr0=0.0, life=0.36):
-    """El mordisco de energía (flipbook que mira a la cámara): dos medias lunas de luz se cierran como una boca y
-    chasquean a los t + life·5/16 s; su resplandor sale en el chasquido."""
-    snap = t + life * 5 / 16
+def chomp(t, size, name="Chomp", bright=1.4, tr0=0.0, life=0.4):
+    """El mordisco (flipbook que mira a la cámara): SOLO los colmillos de cristal, sin encía. Las dos filas se cierran
+    y se traban a los t + life·4/16 s, se quedan clavadas un instante y se rompen; un resplandor suave detrás."""
+    snap = t + life * 4 / 16
     return [
         dict(name=name, texture="mf_chomp_4x4", flipbook=ONESHOT, emit=[(t, 1)], lifetime=(life, life),
              size=[(0, size), (1, size * 1.04)], transparency=[(0, tr0), (0.8, tr0), (1, 1)],
              color=[(0, (215, 235, 255)), (0.3, (255, 255, 255)), (0.6, (170, 210, 255)), (1, (120, 175, 255))],
              light_emission=0.8, brightness=bright, zoffset=5),
         dict(name=f"{name}Glow", texture="fx_glow", emit=[(snap, 1)], lifetime=(0.24, 0.24),
-             size=[(0, size * 0.5), (0.3, size * 0.9), (1, size * 1.0)], transparency=[(0, 0.45), (1, 1)],
-             color=CRYST, light_emission=1.0, brightness=0.9, zoffset=4),
+             size=[(0, size * 0.4), (0.3, size * 0.75), (1, size * 0.85)], transparency=[(0, 0.7), (1, 1)],
+             color=CRYST, light_emission=1.0, brightness=0.8, zoffset=-1),
     ]
 
 
@@ -137,29 +137,29 @@ CHOMPBOX = (18, 2, 1)       # la línea donde se juntan las dos medias lunas
 # de hielo hacia los lados, esquirlas, vaho helado y destellos. Deja una herida de escarcha que gotea cristalitos
 # (como el sangrado del Primal Bite de Devil Dinosaur). El 4.º es una embestida más fuerte (como el quinto mordisco
 # de su Frenzied Feast).
-T_BITE1 = 0.36 * 5 / 16      # chasquea
+T_BITE1 = 0.4 * 4 / 16       # los colmillos se traban
 MOON_BITE = {
     "name": "MoonBite",
-    "doc": ("MOONFANG M1 (mordiscos 1 a 3): dos medias lunas de luz se cierran de golpe sobre el rival como una boca, "
-            "chasquean en una línea que destella y sueltan chispas de hielo, esquirlas y vaho helado; queda una "
-            "herida de escarcha que gotea cristalitos un segundo."),
+    "doc": ("MOONFANG M1 (mordiscos 1 a 3): dos filas de colmillos de cristal (solo los dientes, sin encía) se "
+            "cierran de golpe sobre el rival y quedan trabadas; sueltan chispas de hielo, esquirlas y vaho helado, "
+            "los colmillos se rompen y queda una herida de escarcha que gotea cristalitos un segundo."),
     "duration": 1.3,
     "hit": {"lift": 3, "ref": 22, "angle": 0, "angled": False, "impact": round(T_BITE1, 3)},
     "light": {"color": (170, 210, 255), "brightness": 3, "range": 22, "time": 0.25, "delay": round(T_BITE1, 3)},
     "shakes": [(round(T_BITE1, 3), 0.4, 0.2)],
-    "layers": chomp(0.0, 26) + impact(T_BITE1, flash=16, ring_=30, glow=0.85)
-    + side_sparks(T_BITE1, CHOMPBOX, n=(12, 6)) + shards(T_BITE1, 10, CHOMPBOX, speed=(25, 55), size=1.3)
-    + breath(T_BITE1 + 0.01, 4, CHOMPBOX) + frostbite(T_BITE1 + 0.02, CHOMPBOX)
+    "layers": chomp(0.0, 26) + impact(T_BITE1, flash=10, ring_=30, glow=0.45)
+    + side_sparks(T_BITE1, CHOMPBOX, n=(12, 6)) + shards(T_BITE1 + 0.12, 10, CHOMPBOX, speed=(25, 55), size=1.3)
+    + breath(T_BITE1 + 0.01, 4, CHOMPBOX) + frostbite(T_BITE1 + 0.14, CHOMPBOX)
     + glints(T_BITE1 + 0.03, 6, (18, 8, 2)),
 }
 
 # ----------------------------------------------------------------------------- M1: mordisco 4 (remate)
-T_FIN = 0.03 + 0.4 * 5 / 16  # chasquea
+T_FIN = 0.03 + 0.44 * 4 / 16  # los colmillos se traban
 MOON_BITE_FINISHER = {
     "name": "MoonBiteFinisher",
-    "doc": ("MOONFANG M1 (mordisco 4, remate): una embestida; líneas de velocidad se cierran sobre el rival, una "
-            "mordida doble más grande chasquea y revienta en una flor de púas de hielo, esquirlas y vaho helado, y "
-            "deja una herida de escarcha más grande."),
+    "doc": ("MOONFANG M1 (mordisco 4, remate): una embestida; líneas de velocidad se cierran sobre el rival y dos "
+            "filas de colmillos más grandes (con su eco) se traban de golpe, se rompen y revientan en una flor de "
+            "púas de hielo, esquirlas y vaho helado; deja una herida de escarcha más grande."),
     "duration": 1.6,
     "hit": {"lift": 3, "ref": 22, "angle": 0, "angled": False, "impact": round(T_FIN, 3)},
     "light": {"color": (180, 215, 255), "brightness": 5, "range": 28, "time": 0.35, "delay": round(T_FIN, 3)},
@@ -171,23 +171,23 @@ MOON_BITE_FINISHER = {
              speed=(150, 200), lifetime=(0.09, 0.11), size=[(0, 9, 2), (1, 4)], transparency=[(0, 0.3), (1, 1)],
              color=ICE, light_emission=1.0, brightness=1.4),
     ]
-    + chomp(0.03, 34, bright=1.5, life=0.4) + chomp(0.045, 42, name="ChompEcho", bright=1.0, tr0=0.55, life=0.4)
-    + impact(T_FIN, flash=26, ring_=52, glow=0.7)
-    + [dict(name="SnapStar", texture="kk_star_08", emit=[(T_FIN, 1)], lifetime=(0.22, 0.22),
-            size=[(0, 12), (0.3, 40), (1, 22)], transparency=[(0, 0.2), (1, 1)], color=GLINT, light_emission=1.0,
-            brightness=1.3, rotation=(0, 0), zoffset=7),
+    + chomp(0.03, 34, bright=1.5, life=0.44) + chomp(0.045, 42, name="ChompEcho", bright=1.0, tr0=0.7, life=0.44)
+    + impact(T_FIN, flash=14, ring_=52, glow=0.5)
+    + [dict(name="SnapStar", texture="kk_star_08", emit=[(T_FIN, 1)], lifetime=(0.2, 0.2),
+            size=[(0, 8), (0.3, 28), (1, 14)], transparency=[(0, 0.45), (1, 1)], color=GLINT, light_emission=1.0,
+            brightness=1.2, rotation=(0, 0), zoffset=7),
        dict(name="CrystalRing", texture="kk_circle_02", emit=[(T_FIN + 0.02, 1)], lifetime=(0.32, 0.32),
             size=[(0, 10), (1, 58)], transparency=[(0, 0.15), (0.6, 0.5), (1, 1)], color=ICE, light_emission=1.0,
             brightness=1.2, zoffset=2),
        # la flor de púas de hielo que revienta de la mordida
        dict(name="IceBloom", texture="mf_spike", orientation="VelocityParallel",
-            shape={"type": "Sphere", "radius": 1.5}, emit=[(T_FIN, 12)], direction="Back", spread=(180, 180),
+            shape={"type": "Sphere", "radius": 1.5}, emit=[(T_FIN + 0.12, 12)], direction="Back", spread=(180, 180),
             speed=(40, 70), drag=10, lifetime=(0.45, 0.6), size=[(0, 1), (0.15, 7, 1.5), (0.8, 7.5, 1.5), (1, 0)],
             transparency=[(0, 0), (0.8, 0.1), (1, 1)], color=SHARD, light_emission=0.5, brightness=1.6, zoffset=4)]
     + side_sparks(T_FIN, (22, 2, 1), n=(18, 8)) + side_sparks(T_FIN, (22, 2, 1), n=(8, 4), dirs=("Top", "Bottom"),
                                                                name="SparksV")
-    + shards(T_FIN, 24, (22, 4, 1), speed=(35, 75), size=1.7) + breath(T_FIN + 0.01, 7, (22, 3, 1), size=(4, 13))
-    + frostbite(T_FIN + 0.02, (22, 2, 1), wound=20, drips=(20, 8), dur=1.3)
+    + shards(T_FIN + 0.12, 24, (22, 4, 1), speed=(35, 75), size=1.7) + breath(T_FIN + 0.01, 7, (22, 3, 1), size=(4, 13))
+    + frostbite(T_FIN + 0.15, (22, 2, 1), wound=20, drips=(20, 8), dur=1.3)
     + glints(T_FIN + 0.02, 10, (24, 12, 2), k=1.4),
 }
 

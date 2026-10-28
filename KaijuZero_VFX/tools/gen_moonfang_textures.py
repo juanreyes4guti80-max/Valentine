@@ -1,8 +1,8 @@
 """Texturas propias de MOONFANG (lobo kaiju lunar de cristal). Todas en blanco/gris con alfa: el color lo pone
 la capa (Color), así una misma textura sirve en plata, hielo o azul cristal.
   mf_crescent        media luna con borde brillante (cortes, ondas, el escudo del bloqueo)
-  mf_chomp_4x4       el mordisco de energía (16 cuadros): dos arcos de luz se cierran como una boca, chasquean en
-                     una línea que destella y se apagan (sin dientes)
+  mf_chomp_4x4       el mordisco (16 cuadros): SOLO los colmillos de cristal, sin encía; las dos filas se cierran,
+                     quedan trabadas, destellan y se rompen en pedazos
   mf_shard_2x2       cuatro esquirlas de cristal facetadas
   mf_moon            luna llena con cráteres
   mf_frost_cracks    grietas de cristal que salen del centro (Decal del suelo)
@@ -69,71 +69,103 @@ def spike(n):
     return v, a
 
 
-def chomp_frame(n, i, nf=16, k_close=5):
-    """Un cuadro del mordisco de energía (sin dientes): dos medias lunas de luz, la de arriba y la de abajo, se cierran
-    como una boca, con su barrido y sus líneas de velocidad (cuadros 0..k_close-1). En k_close chasquean en una
-    línea que destella; después la línea se encoge hacia el centro, suelta astillas de luz y se apaga."""
+# colmillos de cada fila: (x de la base, largo, ancho de la base); la de abajo va corrida para que se traben
+UPPER_TEETH = [(0.075, 0.17, 0.075), (0.19, 0.18, 0.08), (0.30, 0.42, 0.13), (0.45, 0.22, 0.10), (0.58, 0.17, 0.09)]
+LOWER_TEETH = [(0.04, 0.13, 0.065), (0.12, 0.14, 0.07), (0.22, 0.34, 0.12), (0.38, 0.20, 0.10), (0.52, 0.16, 0.09)]
+
+
+def fang_halves(cx, by, dirn, length, width, curve=0.22, n=14):
+    """Un colmillo curvo: dos mitades (izquierda y derecha de su lomo) en coordenadas -1..1 (y hacia arriba).
+    dirn = -1 apunta hacia abajo (fila de arriba), +1 hacia arriba; la punta se curva hacia el centro."""
+    spine, left, right = [], [], []
+    for k in range(n + 1):
+        s = k / n
+        sx = cx - math.copysign(curve * length * s * s, cx) if cx != 0 else 0.0
+        sy = by + dirn * length * s
+        w = width / 2 * (1 - s) ** 0.8
+        spine.append((sx, sy))
+        left.append((sx - w, sy))
+        right.append((sx + w, sy))
+    return left + spine[::-1], spine + right[::-1]
+
+
+def fang_rows(n, h, scale=1.0, open_k=1.0):
+    """Las dos filas de colmillos con la abertura h (de la línea del medio a la base de cada fila).
+    Devuelve (valor, alfa) con las caras de cristal (una mitad más clara que la otra) y el filo brillante."""
+    from PIL import ImageDraw
+    S = n
+    val = Image.new("L", (S, S), 0)
+    alp = Image.new("L", (S, S), 0)
+    dv, da = ImageDraw.Draw(val), ImageDraw.Draw(alp)
+
+    def px(p):
+        return ((p[0] * scale * 0.5 + 0.5) * S, (0.5 - p[1] * scale * 0.5) * S)
+
+    for row, dirn in ((UPPER_TEETH, -1), (LOWER_TEETH, 1)):
+        for x0, ln, wd in row:
+            for sgn in ((-1, 1) if x0 > 0 else (1,)):
+                cx = sgn * x0
+                by = -dirn * (h + 0.07 * (cx / 0.6) ** 2)     # las bases forman un arco suave
+                L_, R_ = fang_halves(cx, by, dirn, ln, wd)
+                hi, lo = (L_, R_) if cx <= 0 else (R_, L_)  # la cara que da al centro, más clara
+                da.polygon([px(p) for p in L_ + R_], fill=255)
+                dv.polygon([px(p) for p in hi], fill=255)
+                dv.polygon([px(p) for p in lo], fill=170)
+                outline = [px(p) for p in L_[:len(L_) // 2 + 1]] + [px(p) for p in R_[len(R_) // 2:]]
+                dv.line([px(p) for p in L_[: len(L_) // 2 + 1]], fill=255, width=max(2, S // 200))
+                dv.line([px(p) for p in R_[len(R_) // 2:]], fill=255, width=max(2, S // 200))
+    v = np.asarray(val, np.float32) / 255
+    a = np.asarray(alp.filter(ImageFilter.GaussianBlur(S / 700)), np.float32) / 255
+    return v, a
+
+
+def vblur(img, r):
+    """Desenfoque vertical (el barrido de los colmillos al cerrarse)."""
+    if r < 1:
+        return img
+    k = np.ones(int(r) * 2 + 1, np.float32) / (int(r) * 2 + 1)
+    return np.apply_along_axis(lambda c: np.convolve(c, k, mode="same"), 0, img)
+
+
+def chomp_frame(n, i, nf=16, k_close=4):
+    """Un cuadro del mordisco: SOLO los colmillos (de cristal), sin encía ni contorno de boca. La fila de arriba
+    (apunta hacia abajo) y la de abajo (hacia arriba) se cierran de golpe con su barrido (cuadros 0..k_close-1) y
+    quedan trabadas, con los caninos cruzados; en k_close destellan; se quedan clavados un instante y se rompen en
+    pedazos que se apagan."""
     x, y = grid(n)
-    y = -y                                                   # y hacia arriba
-    W = 0.88
-    ax = np.abs(x)
-    prof = np.sqrt(np.clip(1 - (ax / W) ** 2, 0, 1))         # 1 en el centro .. 0 en las comisuras
-    rng = np.random.default_rng(13)
-    stre = np.clip(0.55 + 0.45 * (noise(n, 23, 5) * 2 - 1), 0, 1)[0:1, :].repeat(n, 0)   # vetas verticales
-    v = np.zeros_like(x)
-    a = np.zeros_like(x)
+    y = -y
+    H_CLOSED = 0.2
     if i < k_close:
         p = i / k_close
-        h = 0.62 * (1 - p ** 1.5) + 0.03
-        Wt = W * 0.94
-        tip = np.clip(1 - (ax / Wt) ** 2, 0, 1)
-        th = 0.11 * tip ** 0.9 + 0.004                       # media luna: gruesa al centro, puntas afiladas
-        blur = 0.05 + 0.28 * p                               # el barrido crece con la velocidad
-        for sgn in (1, -1):
-            d = sgn * (y - sgn * h * prof)                   # > 0: del lado de donde viene
-            body = smooth(-0.01, 0.0, d) * smooth(th + 0.012, th, d) * (ax < Wt)     # d en [0, th]
-            smear = np.where(d > th, np.exp(-(d - th) / blur), 0) * tip * 0.8 * stre
-            echo = np.zeros_like(x)
-            for e in (1, 2):                                 # líneas de velocidad detrás de cada media luna
-                o = th + e * (0.05 + 0.12 * p)
-                echo = np.maximum(echo, smooth(0.018, 0.007, np.abs(d - o)) * tip ** 1.5 * (0.8 / e) * p ** 0.4)
-            a = np.maximum.reduce([a, body, smear, echo])
-            v = np.maximum.reduce([v, body, smear * 0.6, echo * 0.85])
-        inner = smooth(h * prof + 0.02, h * prof - 0.06, np.abs(y)) * prof * 0.14 * (ax < W)   # la boca brilla
-        a = np.maximum(a, inner)
-        v = np.maximum(v, inner * 0.7)
-    elif i == k_close:
-        th = 0.1 * prof ** 0.7 + 0.004                       # se juntan: una lente brillante
-        lens = smooth(th + 0.014, th, np.abs(y)) * (ax < W)
-        flare = np.exp(-(x / 0.28) ** 2 - (y / 0.12) ** 2)
-        streak = np.exp(-(y / 0.035) ** 2) * smooth(1.0, 0.7, ax)            # el chasquido se estira a los lados
-        glow = np.exp(-(np.abs(y) / 0.18) ** 2) * prof * 0.45
-        a = np.maximum.reduce([lens, flare, streak, glow])
-        v = np.maximum.reduce([lens, flare, streak, glow * 0.8])
-    else:
-        q = (i - k_close) / (nf - 1 - k_close)               # 0 recién cerrada .. 1 al final
-        L = W * (1.06 - 0.8 * q ** 1.3)                      # la línea se encoge hacia el centro
-        lp = np.sqrt(np.clip(1 - (ax / L) ** 2, 0, 1))
-        th = 0.075 * (1 - q) ** 1.2 * lp ** 0.7 + 0.004
-        fade = (1 - q) ** 1.1
-        line = smooth(th + 0.014, th, np.abs(y)) * (ax < L) * fade
-        glow = np.exp(-(np.abs(y) / (0.06 + 0.22 * q)) ** 2) * lp * 0.45 * (1 - q) ** 2
-        flare = np.exp(-(x / (0.22 - 0.12 * q)) ** 2 - (y / (0.08 + 0.2 * q)) ** 2) * (1 - q) ** 2.2
-        a = np.maximum.reduce([line, glow, flare])
-        v = np.maximum.reduce([line, glow * 0.8, flare])
-        for _ in range(10):                                  # astillas de luz que salen de las comisuras
-            side = rng.choice([-1, 1])
-            ang = rng.uniform(-0.6, 0.6)
-            dist = W * 0.8 + q * rng.uniform(0.2, 0.45)
-            ux, uy = side * math.cos(ang), math.sin(ang)
-            cx, cy = ux * dist, uy * dist * 0.5
-            ln = 0.08 * (1 - q) + 0.015
-            along = (x - cx) * ux + (y - cy) * uy
-            across = -(x - cx) * uy + (y - cy) * ux
-            frag = smooth(ln, ln * 0.3, np.abs(along)) * smooth(0.013, 0.004, np.abs(across)) * (1 - q) ** 1.4
-            a = np.maximum(a, frag)
-            v = np.maximum(v, frag)
-    return np.clip(v, 0, 1), np.clip(a, 0, 1)
+        h = H_CLOSED + 0.62 * (1 - p ** 1.5)
+        v, a = fang_rows(n, h)
+        # el barrido: copias desde donde venían, desenfocadas en vertical
+        ga = np.zeros_like(a)
+        span = 0.1 + 0.32 * p                                # el barrido es más largo cuanto más rápido van
+        for j in range(1, 11):
+            _, aj = fang_rows(n, h + span * j / 10)
+            ga = np.maximum(ga, aj * 0.42 * (1 - j / 11) ** 1.3)
+        ga = vblur(ga, n * span / 10 * 1.2)
+        a = np.maximum(a * min(1.0, 0.55 + i * 0.3), ga)
+        v = np.maximum(v, smooth(0.0, 0.3, ga))                # vetas claras
+        return np.clip(v, 0, 1), np.clip(a, 0, 1)
+    q = (i - k_close) / (nf - 1 - k_close)                    # 0 al cerrarse .. 1 al final
+    h = H_CLOSED + 0.05 * q ** 1.5                             # se separan apenas al soltar
+    v, a = fang_rows(n, h, scale=1.0 + 0.05 * (1 - q) ** 3)    # el golpe los infla un poco
+    if i == k_close:                                           # el chasquido: un destello corto donde se traban
+        flash = np.exp(-(y / 0.09) ** 2) * np.exp(-(x / 0.45) ** 2) * 0.55
+        a = np.maximum(a, flash)
+        v = np.maximum(v, flash)
+        return np.clip(v, 0, 1), np.clip(a, 0, 1)
+    # se quedan clavados y se rompen en pedazos que se apagan
+    crack = noise(n, 18, 21) * 0.65 + noise(n, 47, 22) * 0.35
+    thr = max(0.0, (q - 0.35) / 0.65) ** 0.9                  # se quedan clavados y después se rompen
+    keep = smooth(thr - 0.04, thr + 0.04, crack)
+    lines = smooth(0.035, 0.0, np.abs(crack - 0.52)) * smooth(0.0, 0.3, q) * 0.6   # grietas que se marcan antes
+    a = a * keep * (1 - 0.35 * q)
+    v = np.clip(v * (1 - lines) + lines * 0.3, 0, 1)
+    glow = np.exp(-(y / 0.3) ** 2) * np.exp(-(x / 0.6) ** 2) * 0.25 * (1 - q) ** 2
+    return np.clip(np.maximum(v, glow * 0.8), 0, 1), np.clip(np.maximum(a, glow), 0, 1)
 
 
 def shard(n, kind, seed):
@@ -319,7 +351,7 @@ def main(out, omni_tex):
     N = 512 * SS
     v, a = crescent(N)
     save(v, a, os.path.join(out, "mf_crescent.png"), 512)
-    # flipbook 4x4 del mordisco: las medias lunas se cierran (cuadros 0-4), chasquean (5) y la línea se apaga (6-15)
+    # flipbook 4x4 del mordisco: los colmillos se cierran (cuadros 0-4), destellan (5) y se rompen (6-15)
     n = 256 * SS
     fv = np.zeros((4 * n, 4 * n), np.float32)
     fa = np.zeros_like(fv)
