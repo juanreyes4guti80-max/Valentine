@@ -46,12 +46,14 @@ En Studio vas a usar:
 | **Pesado** | `MoonFang(rival, escala, sacudida)` | Unas mandíbulas de luz plateada se cierran de golpe sobre el rival. De la mordida brotan agujas de cristal que crecen y **estallan**, con dos ondas de media luna. | muerde a los **0.14 s**; los cristales estallan a los **0.62 s** |
 | **Bloqueo** (mientras bloquea) | `MoonGuard(moonfang, escala, duración, intensidad)` | Aura de escarcha que delinea todo su cuerpo en hielo y plata, con esquirlas de cristal flotando. | se enciende en 0.15 s |
 | **Bloqueo** (cada golpe bloqueado) | `MoonGuardHit(moonfang, escala, sacudida)` | Una media luna de luz aparece como escudo delante de él, con esquirlas que rebotan a los lados. | 0.02 s |
-| **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | De un zarpazo lanza una media luna gigante de luz que vuela a ras del suelo. Abre una cicatriz de grietas de cristal, deja púas de hielo y al final se rompe en esquirlas. | llega al final a los **0.63 s** |
+| **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | De un zarpazo lanza una **media luna de luz que vuela con la punta hacia adelante** y los cuernos atrás. Está hecha de geometría (no de partículas), así que se lee bien desde cualquier cámara. Su cuerno de abajo **corta el suelo**: deja una zanja con grietas de escarcha y cristales, sale una lluvia de chispas hacia atrás y **arranca rocas** que salen volando a los lados. Al llegar al final **detona en hielo**: destello, ondas, una nube de aire helado, ráfagas de viento frío que giran y corren por el suelo, una corona de púas, pedazos de hielo que se quedan clavados y escarcha que flota. | llega al final y detona a los **0.76 s** (`MoonfangVFX.CrescentWaveImpact`) |
 | **Skill 2: Lluvia de colmillos** | `FangRain(cf, escala, sacudida)` | Se marca un círculo de escarcha y del cielo caen 20 colmillos de cristal gigantes que se clavan, brillan y estallan en esquirlas. | caen entre los **0.85 y 1.7 s**; estallan 0.85 s después de clavarse |
 | **Skill 3: Aullido lunar** | `LunarHowl(cabeza, escala, sacudida)` + `LunarAura(moonfang, …)` | La luz se junta en su hocico, aúlla con ondas de sonido y una luna llena enorme aparece detrás de él y lo baña de luz. Después, el aura de luz de luna mientras dure la mejora. | aúlla a los **0.3 s** |
 | **Skill 4: Eclipse** | `Eclipse(cf, radio, altura, escala, sacudida)` | Una luna llena aparece sobre la zona y se va eclipsando. La zona se agrieta en escarcha y los pedazos del suelo levitan. Al quedar cubierta cae una columna de luz de luna que hace volar tierra y cristal. Al final queda un anillo de cristal roto. | el golpe es a los **1.15 s**; la columna dura hasta los 2.6 s |
 
-El daño, el knockback y la duración de la mejora los pones tú en tu sistema de combate. Los momentos de la tabla también están en el módulo: `MoonfangVFX.MoonClawImpact`, `MoonfangVFX.MoonClawFinisherImpact`, `MoonfangVFX.MoonFangImpact` y `MoonfangVFX.MoonGuardHitImpact`.
+El daño, el knockback y la duración de la mejora los pones tú en tu sistema de combate. Los momentos de la tabla también están en el módulo: `MoonfangVFX.MoonClawImpact`, `MoonfangVFX.MoonClawFinisherImpact`, `MoonfangVFX.MoonFangImpact`, `MoonfangVFX.MoonGuardHitImpact` y `MoonfangVFX.CrescentWaveImpact`.
+
+**En revisión:** los M1 van a cambiar a **mordiscos**, y el resto del kit lo vamos rehaciendo uno por uno. La Medialuna ya es la versión nueva.
 
 ## Cómo llamarlo
 
@@ -84,7 +86,7 @@ evento.OnClientEvent:Connect(function(que: string, d: any)
 		MoonfangVFX.MoonGuardHit(d.moonfang, d.escala, 1)
 	elseif que == "Medialuna" then
 		-- cf en el suelo, mirando hacia donde sale la media luna
-		MoonfangVFX.CrescentWave(CFrame.lookAt(d.origen, d.origen + d.direccion), 110 * d.escala, d.escala, 1)
+		MoonfangVFX.CrescentWave(CFrame.lookAt(d.origen, d.origen + d.direccion), 130 * d.escala, d.escala, 1)
 	elseif que == "Lluvia" then
 		MoonfangVFX.FangRain(CFrame.new(d.centro), d.escala, 1)
 	elseif que == "Aullido" then
@@ -116,6 +118,7 @@ end)
 - El video es de mi simulador, de noche y con Bloom. El lobo y el rival son cajas de prueba: el lobo azul oscuro con su cresta de cristal y el rival gris.
 - Los golpes salen delante de lo que ve la cámara y miran hacia ella, como los golpes de Kaiju Zero.
 - La luna del aullido aparece **detrás y arriba** de la cabeza. Si en tu juego queda tapada o muy alta, cambia `MOON_OFF` en `vfx_moonfang.py`.
+- La media luna de la skill 1 son cadenas de **Beams** que miran a la cámara a lo largo de un arco en 3D, más una luz que la sigue por el suelo. Vista justo desde atrás se ve como un trazo curvo (es una hoja plana que va hacia adelante).
 - La columna del Eclipse es luz que **cae** y es transparente (al revés que el pilar de Omnívora, que sube y es denso).
 - La luna del Eclipse está a 150 studs × escala sobre la zona. Si tu cámara no la ve, baja la altura (el 3.er parámetro).
 

@@ -170,6 +170,9 @@ def spec_end(spec):
         end = max(end, cubes_end(spec["cubes"]))
     if spec.get("beam"):
         end = max(end, spec["beam"]["stop"] + spec["beam"]["fade"])
+    if spec.get("blade"):
+        Bd = spec["blade"]
+        end = max(end, Bd["t0"] + Bd["travel"] + Bd["fade"])
     return end
 
 
@@ -216,7 +219,7 @@ DOC_MOONFANG = """	MoonfangVFX — VFX del lobo kaiju lunar de cristal (plata, h
 		MoonfangVFX.MoonFang(rival, 1, 1)                        -- pesado
 		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
 		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado
-		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 110, 1, 1)   -- skill 1
+		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 130, 1, 1)   -- skill 1
 		MoonfangVFX.FangRain(CFrame.new(centroEnElSuelo), 1, 1)  -- skill 2
 		MoonfangVFX.LunarHowl(cabeza.CFrame, 1, 1)               -- skill 3 (y LunarAura para la mejora)
 		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), 26, 150, 1, 1)   -- skill 4"""
@@ -2599,6 +2602,154 @@ local function playAura(spec: Layer, model: Instance, scale: number?, duration: 
 	return ctl
 end
 
+-- ---------------------------------------------------------------- la hoja que vuela (Moonfang: Medialuna)
+-- Una media luna hecha con cadenas de Beams que miran a la cámara, a lo largo de un arco en 3D: la punta va
+-- adelante y los cuernos atrás, así se lee bien desde cualquier cámara. Se mueve por la línea a velocidad
+-- constante (llega al final a los t0 + travel s), crece al salir y se desvanece al final. Cada capa tiene su
+-- textura, ancho y color, y puede llevar "fantasmas" que la siguen un poco atrás (la estela).
+type BladeChain = { atts: { Attachment }, beams: { Beam }, L: any, lag: number, xtr: number, tr: number }
+local function runBlade(B: any, holder: BasePart, s: number, len: number)
+	local n = B.n
+	local chains: { BladeChain } = {}
+	for _, L in B.layers do
+		local ghosts = { { 0, 0 } }
+		for _, gh in L.ghosts or {} do
+			table.insert(ghosts, gh)
+		end
+		for gi, gh in ghosts do
+			if gi > 1 and KaijuFireVFX.Quality < 0.7 then
+				break
+			end
+			local atts: { Attachment } = {}
+			for i = 1, n do
+				local a = Instance.new("Attachment")
+				a.Parent = holder
+				atts[i] = a
+			end
+			local beams: { Beam } = {}
+			for i = 1, n - 1 do
+				local b = Instance.new("Beam")
+				b.Attachment0 = atts[i]
+				b.Attachment1 = atts[i + 1]
+				b.FaceCamera = true
+				b.Segments = 1
+				b.Texture = KaijuFireVFX.TEXTURES[L.texture] or ""
+				b.TextureMode = Enum.TextureMode.Stretch
+				b.TextureLength = 1
+				b.LightEmission = L.light_emission
+				b.LightInfluence = 0
+				b.Brightness = L.brightness
+				b.ZOffset = (L.zoffset or 0) * s
+				b.Color = ColorSequence.new(evalColor(L.color, (i - 0.5) / (n - 1)))
+				b.Transparency = NumberSequence.new(1)
+				b.Enabled = false
+				b.Parent = holder
+				beams[i] = b
+			end
+			table.insert(chains, { atts = atts, beams = beams, L = L, lag = gh[1], xtr = gh[2], tr = -1 })
+		end
+	end
+	local light: PointLight? = nil
+	local lightAtt: Attachment? = nil
+	if B.light and KaijuFireVFX.UseLight then
+		local la = Instance.new("Attachment")
+		la.Parent = holder
+		local pl = Instance.new("PointLight")
+		pl.Color = Color3.fromRGB(B.light.color[1], B.light.color[2], B.light.color[3])
+		pl.Range = math.min(B.light.range * s, 60)
+		pl.Brightness = 0
+		pl.Shadows = false
+		pl.Parent = la
+		light, lightAtt = pl, la
+	end
+	local arc, tl = math.rad(B.arc), math.rad(B.tilt)
+	local axis = Vector3.new(math.sin(tl), math.cos(tl), 0) -- el eje de la hoja: arriba, inclinado hacia un lado
+	local bowAxis = Vector3.new(math.cos(tl), -math.sin(tl), 0) -- los cuernos se curvan hacia aquí (se lee desde atrás)
+	local bow = B.bow or 0
+	-- lo más bajo del arco (a escala 1): ahí roza el suelo
+	local ymin = 0
+	for i = 1, n do
+		local th = -arc + 2 * arc * (i - 1) / (n - 1)
+		ymin = math.min(ymin, math.sin(th) * axis.Y + bow * (1 - math.cos(th)) * bowAxis.Y)
+	end
+	local widths = table.create(n, 0)
+	local t0 = time()
+	local conn: RBXScriptConnection
+	local function stop()
+		conn:Disconnect()
+		for _, c in chains do
+			for _, b in c.beams do
+				b:Destroy()
+			end
+			for _, a in c.atts do
+				a:Destroy()
+			end
+		end
+		if lightAtt then
+			lightAtt:Destroy()
+		end
+	end
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > B.t0 + B.travel + B.fade then
+			stop()
+			return
+		end
+		if t < B.t0 then
+			return
+		end
+		local u = math.clamp((t - B.t0) / B.travel, 0, 1)
+		local gr = math.clamp((t - B.t0) / math.max(B.grow, 1e-3), 0, 1)
+		gr = gr * gr * (3 - 2 * gr)
+		local k = s * (B.start_k + (1 - B.start_k) * gr) * (1 + B.swell * u)
+		local fz = math.clamp((t - B.t0 - B.travel) / math.max(B.fade, 1e-3), 0, 1)
+		local fade = fz * fz * (3 - 2 * fz)
+		local R = B.radius * k
+		local h = B.lift * s - R * ymin
+		for _, c in chains do
+			local L = c.L
+			local d = len * u - ((L.back or 0) + c.lag) * s
+			local tr = 1 - (1 - L.transparency) * (1 - c.xtr) * (1 - fade)
+			if d < 0 then
+				tr = 1
+				d = 0
+			end
+			for i = 1, n do
+				local sm = (i - 1) / (n - 1)
+				local th = -arc + 2 * arc * sm
+				-- adelante = -Z local: la punta (th = 0) va delante y los cuernos se quedan atrás
+				c.atts[i].Position = Vector3.new(0, h, -d + R * (1 - math.cos(th))) + axis * (R * math.sin(th))
+					+ bowAxis * (bow * R * (1 - math.cos(th)))
+				widths[i] = L.width * k * math.max(math.sin(math.pi * sm), 0) ^ B.taper
+			end
+			local changed = math.abs(tr - c.tr) > 0.01
+			for i, b in c.beams do
+				b.Width0 = widths[i]
+				b.Width1 = widths[i + 1]
+				if changed then
+					b.Transparency = NumberSequence.new(tr)
+					b.Enabled = tr < 0.995
+				end
+			end
+			if changed then
+				c.tr = tr
+			end
+		end
+		if light and lightAtt then
+			lightAtt.Position = Vector3.new(0, h * 0.6, -len * u)
+			light.Brightness = B.light.brightness * (1 - fade)
+		end
+	end)
+end
+
+local function playBlade(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local len = length or spec.line * s
+	local holder = play(spec, cf, scale, len, shake)
+	runBlade(spec.blade, holder, s, len)
+	return holder
+end
+
 -- ---------------------------------------------------------------- ULTIMATE: cataclismo gravitacional
 -- (vfx_cataclysm.py) Una sola secuencia continua sobre un campo gravitacional único. Todo lo que se levanta (rocas,
 -- portadores de partículas, corrientes de energía, brazos de polvo y las víctimas) se mueve con la misma fuerza: sin
@@ -4242,7 +4393,7 @@ def build(specs, name, doc):
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
         for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb", "beam", "hit",
-                  "aura", "cataclysm"):
+                  "aura", "cataclysm", "line"):
             if spec.get(k):
                 data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         if spec.get("cubes"):
@@ -4254,6 +4405,12 @@ def build(specs, name, doc):
             data["aura"]["outline"] = [list(c) for c in a["outline"]]
         if spec.get("beams"):
             data["beams"] = [norm_beam(B) for B in spec["beams"]]
+        if spec.get("blade"):
+            Bd = dict(spec["blade"])
+            Bd["layers"] = [dict(L, color=[[c[0], list(c[1])] for c in L["color"]],
+                                 ghosts=[list(gh) for gh in L.get("ghosts", [])]) for L in Bd["layers"]]
+            Bd["light"] = dict(Bd["light"], color=list(Bd["light"]["color"])) if Bd.get("light") else None
+            data["blade"] = Bd
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"
         doc_k = spec.get("doc", "")
         head = f"-- {doc_k}\n" if doc_k else ""
@@ -4372,6 +4529,15 @@ def build(specs, name, doc):
                 f"height = altura del pilar (por defecto {z['height']:g} × escala).\n" + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, radius: number?, height: number?, scale: number?, shake: number?): Part\n" \
                 f"\treturn playZone(SPEC_{key}, cf, scale, radius, height, shake)\nend\n\n"
+        elif spec.get("blade"):
+            B = spec["blade"]
+            out += head + \
+                f"-- cf = el punto del suelo de donde sale, mirando hacia donde va. length = cuánto recorre (por defecto " \
+                f"{spec['line']} × escala).\n" + \
+                f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, scale: number?, shake: number?): Part\n" \
+                f"\treturn playBlade(SPEC_{key}, cf, scale, length or {spec['line']} * (scale or 1), shake)\nend\n" \
+                "-- segundo (desde la llamada) en que llega al final y detona: para sincronizar el daño\n" \
+                f"KaijuFireVFX.{key}Impact = {round(B['t0'] + B['travel'], 3):g}\n\n"
         elif spec.get("line"):
             out += head + \
                 f"-- length = largo de la línea en studs (por defecto {spec['line']} × escala).\n" + \

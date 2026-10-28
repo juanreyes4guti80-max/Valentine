@@ -1,11 +1,14 @@
 fx_aura_tongue_2x2.png
 fx_beam.png
 fx_glow.png
+fx_halo.png
 fx_laser_thin.png
 fx_particle02.png
 fx_spark002.png
+fx_wind_swirl.png
 kk_circle_02.png
 kk_smoke_04.png
+kk_smoke_07.png
 kk_spark_05.png
 kk_star_06.png
 kk_star_08.png
@@ -14,7 +17,9 @@ kk_trace_01.png
 kk_trace_03.png
 kz_beam_ring.png
 kz_bite_4x4.png
+kz_debris_2x2.png
 kz_scorch.png
+kz_wind_arcs.png
 mf_aura_wisp_2x2.png
 mf_claw_4x4.png
 mf_claw_glow.png

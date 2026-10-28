@@ -124,7 +124,12 @@ M.NumberSequence = { new = function(k)
 	end
 	checkSeq(k, "NumberSequence"); return { Keypoints = k }
 end }
-M.ColorSequence = { new = function(k) checkSeq(k, "ColorSequence"); return { Keypoints = k } end }
+M.ColorSequence = { new = function(k, k2)
+	if type(k) == "table" and k.R ~= nil then -- un color (o dos): como en Roblox
+		return { Keypoints = { { Time = 0, Value = k }, { Time = 1, Value = k2 or k } } }
+	end
+	checkSeq(k, "ColorSequence"); return { Keypoints = k }
+end }
 M.TweenInfo = { new = function(...) return { ... } end }
 M.Random = { new = function() return {
 	NextNumber = function(_, a, b) a = a or 0; b = b or 1; return a + (b - a) * math.random() end,

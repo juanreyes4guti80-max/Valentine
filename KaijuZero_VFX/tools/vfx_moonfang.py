@@ -13,6 +13,7 @@ estrella. Formas cortantes y brillantes (Omnívora, en cambio, es nebulosa suave
 Los golpes sobre el rival usan el marco de playHit (X = derecha de la pantalla, Y = arriba, +Z hacia la cámara;
 tamaño 1 = rival de 22 studs). Las demás se escalan con `scale`.
 """
+import math
 import random
 
 import vfx_aura as AU
@@ -279,92 +280,233 @@ LUNAR_AURA = {
 }
 
 # ----------------------------------------------------------------------------- SKILL 1: Medialuna
-TW = 0.55                  # la media luna recorre la línea en 0.55 s
-T0 = 0.08                  # sale del zarpazo
-NP = 12
+# Una media luna de luz (geometría: cadenas de Beams en un arco 3D) que vuela con la PUNTA hacia adelante y los
+# cuernos atrás. Su cuerno de abajo roza el suelo: lo corta (zanja oscura, grietas de escarcha, cristales que crecen
+# en el corte) y arranca rocas que salen volando a los lados. Al llegar al final detona en hielo: destello, ondas,
+# una nube de aire helado, ráfagas de viento frío que giran y corren por el suelo, una corona de púas, pedazos de
+# hielo que se quedan clavados y escarcha que flota.
+LW = 130.0                 # largo por defecto (escala 1)
+T0 = 0.14                  # sale del zarpazo
+TW = 0.62                  # tarda en recorrer la línea (la punta llega al final a los T0 + TW s)
+TD = T0 + TW               # detona
+BR, BARC, BTILT, BBOW = 20.0, 72.0, 18.0, 0.45         # radio del arco, medio ángulo, inclinación y curva de los cuernos
+_ca, _sa = math.cos(math.radians(BARC)), math.sin(math.radians(BARC))
+_ct, _st = math.cos(math.radians(BTILT)), math.sin(math.radians(BTILT))
+CUT_LAG = BR * (1 - _ca) / LW                          # el cuerno de abajo va detrás de la punta (en fracción)
+CUT_SIDE = -BR * _sa * _st + BBOW * BR * (1 - _ca) * _ct   # y corrido hacia un lado
+NP = 26                    # puntos a lo largo del camino
 
 
-def path(t0, n, per, up=0.0, side=0.0, jitter=0.0, seed=1, u0=0.04, u1=1.0):
+def path(t0, n, per, up=0.0, side=0.0, jitter=0.0, seed=1, u0=0.03, u1=0.97, lag=0.0, jitter_up=0.0):
+    """Eventos (t, n, u, lado, alto) a lo largo del camino, cuando pasa la hoja (lag = cuánto va detrás)."""
     g = random.Random(seed)
     out = []
     for i in range(n):
         u = u0 + (u1 - u0) * i / max(1, n - 1)
-        out.append((round(t0 + TW * u, 3), per, round(u, 3), round(side + g.uniform(-jitter, jitter), 2), up))
+        out.append((round(t0 + TW * min(u + lag, 1.0), 3), per, round(u, 3), round(side + g.uniform(-jitter, jitter), 2),
+                    round(up + g.uniform(-jitter_up, jitter_up), 2)))
     return out
+
+
+def cut(n, per, seed, jitter=1.5, up=0.2, u0=0.04, u1=0.94, side=0.0):
+    """En el corte del suelo (donde pasa el cuerno de abajo)."""
+    return path(T0, n, per, up=up, side=CUT_SIDE + side, jitter=jitter, seed=seed, u0=u0, u1=u1, lag=CUT_LAG)
+
+
+BLADE = {
+    "t0": T0, "travel": TW, "fade": 0.1, "grow": 0.1, "start_k": 0.35, "swell": 0.15,
+    "radius": BR, "arc": BARC, "tilt": BTILT, "bow": BBOW, "lift": 0.6, "n": 19, "taper": 0.75,
+    "light": {"color": (170, 210, 255), "brightness": 6, "range": 40},
+    "layers": [
+        # halo azul ancho (con su estela)
+        {"name": "BladeGlow", "texture": "mf_blade_glow", "width": 17, "back": 1.5, "transparency": 0.35,
+         "color": [(0, (40, 80, 210)), (0.5, (90, 150, 255)), (1, (40, 80, 210))], "light_emission": 1.0,
+         "brightness": 1.0, "zoffset": -1, "ghosts": [(5, 0.35), (10, 0.6), (16, 0.8)]},
+        # cuerpo de escarcha
+        {"name": "BladeFrost", "texture": "mf_blade_frost", "width": 9, "back": 0.8, "transparency": 0.1,
+         "color": [(0, (120, 175, 255)), (0.5, (200, 232, 255)), (1, (120, 175, 255))], "light_emission": 1.0,
+         "brightness": 1.25, "ghosts": [(4, 0.4), (8, 0.7)]},
+        # núcleo blanco y el filo de adelante
+        {"name": "BladeCore", "texture": "mf_blade_core", "width": 3.4, "transparency": 0.0,
+         "color": [(0, (190, 220, 255)), (0.5, (255, 255, 255)), (1, (190, 220, 255))], "light_emission": 1.0,
+         "brightness": 1.8, "zoffset": 1, "ghosts": [(2.5, 0.5)]},
+        {"name": "BladeEdge", "texture": "mf_blade_core", "width": 1.3, "back": -0.7, "transparency": 0.0,
+         "color": [(0, (230, 245, 255)), (0.5, (255, 255, 255)), (1, (230, 245, 255))], "light_emission": 1.0,
+         "brightness": 2.4, "zoffset": 2},
+    ],
+}
+
+FROSTMIST = [(0, (220, 236, 255)), (1, (175, 200, 240))]
+STONE = (98, 96, 108)
+ROCK_LAND = [dict(name="RockPuff", texture="kk_smoke_04", emit=[(0, 2)], direction="Top", spread=(70, 70),
+                  speed=(4, 10), drag=2, accel=(0, 3, 0), lifetime=(0.5, 0.8), size=[(0, 3, 1), (1, 8, 2)],
+                  transparency=[(0, 0.5), (0.4, 0.6), (1, 1)], color=MIST, rotation=(0, 360), zoffset=-2)]
+ROCK_CRUMBLE = [dict(name="RockCrumble", texture="kz_debris_2x2", flipbook=STATIC2x2, emit=[(0, 5)],
+                     shape={"type": "Box", "size": (3, 2, 3)}, direction="Top", spread=(70, 70), speed=(6, 16),
+                     drag=0.5, accel=(0, -110, 0), lifetime=(0.35, 0.55), size=[(0, 0.9, 0.3), (1, 0.7, 0.2)],
+                     color=[(0, (120, 118, 128)), (1, (96, 94, 104))], rotation=(0, 360), rot_speed=(-400, 400)),
+                dict(name="RockDust", texture="kk_smoke_04", emit=[(0, 2)], direction="Top", spread=(60, 60),
+                     speed=(2, 6), drag=2, lifetime=(0.4, 0.6), size=[(0, 2, 0.5), (1, 6, 1)],
+                     transparency=[(0, 0.6), (0.4, 0.65), (1, 1)], color=MIST, rotation=(0, 360), zoffset=-2)]
+
+
+def rocks(name, direction, n_ev, per, size, speed, spread, seed, side=0.0, up=0.3):
+    """Rocas del suelo que el corte arranca (Parts que vuelan, caen, se quedan un momento y se desmoronan)."""
+    return dict(name=name, type="meteor", emit=cut(n_ev, per, seed, jitter=1.2, up=up, side=side),
+                direction=direction, spread=spread, speed=speed, accel=(0, -196, 0), drag=0.1, lifetime=(2.2, 2.2),
+                sprite={"texture": "kz_debris_2x2", "layout": "Grid2x2", "size": size, "aspect": (1.0, 0.75, 0.9),
+                        "rot_speed": (-420, 420), "color": STONE, "material": "Slate", "stick": 0.55, "sink": 0.25},
+                trails=[{"name": name + "Dust", "rate": 14, "texture": "kk_smoke_04", "speed": (0, 2),
+                         "direction": "Top", "spread": (180, 180), "drag": 2, "lifetime": (0.4, 0.6),
+                         "size": [(0, 1.5, 0.5), (1, 4, 1)], "transparency": [(0, 0.55), (0.5, 0.65), (1, 1)],
+                         "color": MIST, "rotation": (0, 360)}],
+                land=ROCK_LAND, shatter=ROCK_CRUMBLE)
+
+
+def det(t, n=1):
+    return [(round(TD + t, 3), n, 1.0, 0.0, 0.0)]
+
+
+def det_up(t, n, up):
+    return [(round(TD + t, 3), n, 1.0, 0.0, up)]
 
 
 CRESCENT_WAVE = {
     "name": "CrescentWave",
-    "doc": ("MOONFANG SKILL 1 (Medialuna): de un zarpazo lanza una media luna gigante de luz que vuela a ras del suelo "
-            "(llega al final en 0.55 s), abre una cicatriz de grietas de cristal, deja púas de hielo y al final se "
-            "rompe en esquirlas. MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + dirección), largo, escala)."),
-    "duration": 1.9,
-    "line": 110,
-    "light": {"color": (170, 210, 255), "brightness": 4, "range": 40, "time": 0.6},
-    "shakes": [(0.0, 0.45, 0.25), (T0 + TW, 0.4, 0.25)],
+    "doc": ("MOONFANG SKILL 1 (Medialuna): de un zarpazo lanza una media luna de luz que vuela con la punta hacia "
+            "adelante; su cuerno de abajo corta el suelo y arranca rocas que salen volando a los lados; al llegar al "
+            "final (0.76 s) detona en hielo: nube de aire helado, ráfagas de viento frío, púas, pedazos de hielo y "
+            "escarcha flotando. MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + dirección), largo, escala)."),
+    "duration": 3.4,
+    "line": LW,
+    "blade": BLADE,
+    "light": {"color": (180, 215, 255), "brightness": 5, "range": 40, "time": 0.3},
+    "shakes": [(0.02, 0.45, 0.25), (T0 + 0.1, 0.25, TW), (TD, 1.0, 0.45)],
     "layers": [
-        # el zarpazo que la lanza
-        dict(name="SwipeFlash", texture="mf_crescent", emit=[(0.0, 1, 0.0, 0.0, 9)], lifetime=(0.2, 0.2),
-             size=[(0, 14), (0.4, 30), (1, 34)], transparency=[(0, 0.1), (0.5, 0.4), (1, 1)], color=SILVER,
-             light_emission=1.0, brightness=1.3, rotation=(180, 180), zoffset=4),
-        dict(name="SwipeGlow", texture="fx_glow", emit=[(0.0, 1, 0.0, 0.0, 9)], lifetime=(0.25, 0.25),
-             size=[(0, 10), (1, 34)], transparency=[(0, 0.5), (1, 1)], color=CRYST, light_emission=1.0,
-             brightness=1.0),
-        # la media luna que vuela (núcleo, resplandor y tres estelas que la siguen)
-        dict(name="Wave", texture="mf_crescent", orientation=UP, direction="Front",
-             speed_len=(1 / TW, 1 / TW), emit=[(T0, 1, 0.0, 0.0, 12)], lifetime=(TW, TW),
-             size=[(0, 18), (0.12, 38), (1, 40)], transparency=[(0, 0), (0.9, 0), (1, 1)], color=SILVER,
-             light_emission=1.0, brightness=1.5, zoffset=4),
-        dict(name="WaveGlow", texture="fx_glow", direction="Front", speed_len=(1 / TW, 1 / TW),
-             emit=[(T0, 1, 0.0, 0.0, 12)], lifetime=(TW, TW), size=[(0, 22), (0.12, 46), (1, 48)],
-             transparency=[(0, 0.5), (0.9, 0.5), (1, 1)], color=CRYST, light_emission=1.0, brightness=1.0),
-    ] + [
-        dict(name=f"WaveGhost{k}", texture="mf_crescent", orientation=UP, direction="Front",
-             speed_len=(1 / TW, 1 / TW), emit=[(round(T0 + 0.035 * (k + 1), 3), 1, 0.0, 0.0, 10)],
-             lifetime=(TW, TW), size=[(0, 16), (0.12, 35 - 3 * k), (1, 36 - 3 * k)],
-             transparency=[(0, 0.35 + 0.15 * k), (0.9, 0.35 + 0.15 * k), (1, 1)], color=ICE, light_emission=1.0,
-             brightness=1.1, zoffset=3 - k) for k in range(3)
-    ] + [
-        # rayas de velocidad junto a la media luna
-        dict(name="SpeedLines", texture="kk_trace_01", orientation="VelocityParallel", direction="Front",
-             speed_len=(1.4 / TW, 1.8 / TW), drag=3, emit=path(T0, NP, 2, up=6, jitter=7, seed=2),
-             lifetime=(0.12, 0.2), size=[(0, 6, 2), (1, 3)], color=ICE, light_emission=1.0, brightness=1.6),
-        # la cicatriz: grietas de cristal que brillan y se apagan, y una marca oscura debajo
-        dict(name="ScarDark", texture="kz_scorch", lifetime=(1.3, 1.4), rotation=(0, 360),
-             size=[(0, 8), (0.1, 15), (1, 16)], transparency=[(0, 0.4), (0.7, 0.5), (1, 1)], color=NIGHT,
-             emit=path(T0, NP, 1, up=0.15, jitter=1.5, seed=3), **DECAL),
-        dict(name="ScarCracks", texture="mf_frost_cracks", lifetime=(1.2, 1.3), rotation=(0, 360),
-             size=[(0, 8), (0.08, 24), (1, 25)], transparency=[(0, 0), (0.25, 0.1), (0.8, 0.45), (1, 1)],
-             color=FROST, light_emission=0.9, emit=path(T0, NP, 1, up=0.2, jitter=1.5, seed=4), **DECAL),
-        # púas de hielo que asoman detrás
-        dict(name="IceSpikes", texture="mf_shard_2x2", flipbook=STATIC2x2, orientation="VelocityParallel",
-             direction="Top", spread=(25, 25), speed=(14, 22), drag=14, lifetime=(0.75, 0.9),
-             size=[(0, 0.5), (0.15, 5, 1.2), (0.8, 5.2, 1.2), (1, 0)], transparency=[(0, 0), (0.8, 0.1), (1, 1)],
-             color=SHARD, light_emission=0.5, brightness=1.5,
-             emit=path(T0 + 0.03, NP, 1, up=0.5, side=4.5, jitter=1.5, seed=5)
-             + path(T0 + 0.03, NP, 1, up=0.5, side=-4.5, jitter=1.5, seed=6)),
-        dict(name="Kick", texture="kk_smoke_04", direction="Top", spread=(60, 60), speed=(8, 16), drag=2,
-             accel=(0, 4, 0), lifetime=(0.5, 0.75), size=[(0, 4, 1), (1, 12, 2)],
-             transparency=[(0, 0.55), (0.4, 0.6), (1, 1)], color=MIST, rotation=(0, 360), rot_speed=(-40, 40),
-             emit=path(T0, NP, 2, up=1.0, jitter=3, seed=7), zoffset=-2),
-        dict(name="TrailGlints", texture="kk_star_06", direction="Top", spread=(40, 40), speed=(3, 10), drag=1,
-             lifetime=(0.5, 0.9), size=twinkle(1.0), color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45),
-             emit=path(T0 + 0.02, NP, 2, up=4, jitter=6, seed=8)),
-        # al final se rompe en esquirlas
-        dict(name="EndFlash", texture="fx_glow", emit=[(T0 + TW, 1, 1.0, 0.0, 10)], lifetime=(0.18, 0.2),
-             size=[(0, 12), (0.3, 34), (1, 36)], transparency=[(0, 0.3), (1, 1)], color=ICE, light_emission=1.0,
-             brightness=1.1, zoffset=5),
-        dict(name="EndStar", texture="kk_star_08", emit=[(T0 + TW, 1, 1.0, 0.0, 10)], lifetime=(0.22, 0.22),
-             size=[(0, 10), (0.3, 40), (1, 20)], transparency=[(0, 0.1), (1, 1)], color=GLINT, light_emission=1.0,
+        # ---------------- el zarpazo que la lanza ----------------
+        dict(name="SwipeFlash", texture="mf_crescent", emit=[(0.0, 1, 0.0, 0.0, 10)], lifetime=(0.18, 0.18),
+             size=[(0, 12), (0.4, 32), (1, 36)], transparency=[(0, 0.1), (0.5, 0.45), (1, 1)], color=SILVER,
+             light_emission=1.0, brightness=1.3, rotation=(160, 160), zoffset=4),
+        dict(name="SwipeGlow", texture="fx_glow", emit=[(0.02, 1, 0.0, 0.0, 10)], lifetime=(0.26, 0.26),
+             size=[(0, 10), (1, 40)], transparency=[(0, 0.5), (1, 1)], color=CRYST, light_emission=1.0, brightness=1.0),
+        dict(name="SwipeWind", texture="kz_wind_arcs", emit=[(0.03, 2, 0.02, 0.0, 6)], lifetime=(0.25, 0.3),
+             size=[(0, 10), (1, 42)], transparency=[(0, 0.35), (0.6, 0.6), (1, 1)], color=ICE, light_emission=0.7,
+             brightness=1.1, rotation=(0, 360), rot_speed=(-160, 160)),
+        dict(name="SwipeDust", texture="kk_smoke_04", emit=[(0.04, 8, 0.03, 0.0, 1)], direction="Front",
+             spread=(180, 6), speed=(30, 55), drag=4, accel=(0, 4, 0), lifetime=(0.5, 0.7), size=[(0, 4, 1), (1, 12, 2)],
+             transparency=[(0, 0.5), (0.4, 0.6), (1, 1)], color=MIST, rotation=(0, 360), zoffset=-2),
+        # ---------------- el camino: lo que suelta la hoja ----------------
+        dict(name="BladeMist", texture="kk_smoke_04", direction="Back", spread=(30, 30), speed=(3, 8), drag=2,
+             accel=(0, 2, 0), lifetime=(0.6, 0.9), size=[(0, 6, 1.5), (1, 15, 3)],
+             transparency=[(0, 0.62), (0.4, 0.68), (1, 1)], color=FROSTMIST, rotation=(0, 360), rot_speed=(-40, 40),
+             zoffset=-3, emit=path(T0 + 0.02, NP, 1, up=12, jitter=6, jitter_up=7, seed=11)),
+        dict(name="BladeShards", texture="mf_shard_2x2", flipbook=STATIC2x2, direction="Back", spread=(40, 40),
+             speed=(8, 20), drag=0.6, accel=(0, -110, 0), lifetime=(0.5, 0.8), size=[(0, 1.2, 0.4), (1, 0.8, 0.3)],
+             transparency=[(0, 0), (0.8, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.4,
+             rotation=(0, 360), rot_speed=(-500, 500), emit=path(T0 + 0.01, NP, 2, up=14, jitter=9, jitter_up=8, seed=12)),
+        dict(name="BladeGlints", texture="kk_star_06", direction="Back", spread=(60, 60), speed=(4, 10), drag=1.5,
+             lifetime=(0.4, 0.7), size=twinkle(1.1), color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45),
+             emit=path(T0 + 0.01, NP, 2, up=13, jitter=10, jitter_up=9, seed=13)),
+        # ---------------- el corte del suelo ----------------
+        dict(name="CutTrench", texture="kz_scorch", lifetime=(1.9, 2.1), rotation=(0, 360),
+             size=[(0, 6), (0.06, 15), (1, 16)], transparency=[(0, 0.3), (0.75, 0.4), (1, 1)], color=NIGHT,
+             emit=cut(NP, 1, 21, jitter=0.8, up=0.12), **DECAL),
+        dict(name="CutCracks", texture="mf_frost_cracks", lifetime=(1.7, 1.9), rotation=(0, 360),
+             size=[(0, 8), (0.06, 24), (1, 25)], transparency=[(0, 0), (0.3, 0.1), (0.8, 0.45), (1, 1)], color=FROST,
+             light_emission=0.9, emit=cut(20, 1, 22, jitter=1.2, up=0.18), **DECAL),
+        dict(name="CutGlow", texture="fx_glow", lifetime=(0.9, 1.1), size=[(0, 6), (0.1, 12), (1, 13)],
+             transparency=[(0, 0.2), (0.6, 0.55), (1, 1)], color=ICE, light_emission=1.0,
+             emit=cut(NP, 1, 23, jitter=0.5, up=0.24), **DECAL),
+        dict(name="CutSparks", texture="kk_trace_01", orientation="VelocityParallel", direction="Back",
+             spread=(30, 25), speed=(60, 110), drag=4, accel=(0, -30, 0), lifetime=(0.18, 0.3),
+             size=[(0, 6, 1.5), (1, 2)], color=ICE, light_emission=1.0, brightness=2.0,
+             emit=cut(NP, 3, 24, jitter=1.0, up=0.6)),
+        dict(name="CutDebris", texture="kz_debris_2x2", flipbook=STATIC2x2, direction="Top", spread=(60, 60),
+             speed=(30, 65), drag=0.4, accel=(0, -130, 0), lifetime=(0.6, 0.9), size=[(0, 1.1, 0.4), (1, 0.9, 0.3)],
+             color=[(0, (130, 128, 138)), (1, (100, 98, 108))], rotation=(0, 360), rot_speed=(-500, 500),
+             emit=cut(NP, 4, 25, jitter=1.5, up=0.5)),
+        dict(name="CutDust", texture="kk_smoke_04", direction="Top", spread=(70, 70), speed=(8, 18), drag=2,
+             accel=(0, 4, 0), lifetime=(0.6, 0.9), size=[(0, 5, 1), (1, 14, 3)],
+             transparency=[(0, 0.5), (0.4, 0.6), (1, 1)], color=MIST, rotation=(0, 360), rot_speed=(-40, 40),
+             zoffset=-2, emit=cut(NP, 2, 26, jitter=2.0, up=1.0)),
+        dict(name="CutCrystals", texture="mf_spike", orientation="VelocityParallel", direction="Top", spread=(30, 30),
+             speed=(14, 24), drag=13, lifetime=(1.0, 1.25), size=[(0, 0.5), (0.12, 5.5, 1.5), (0.8, 5.8, 1.5), (1, 0)],
+             transparency=[(0, 0), (0.8, 0.1), (1, 1)], color=SHARD, light_emission=0.5, brightness=1.5,
+             emit=cut(16, 1, 27, jitter=2.2, up=0.4, u1=0.9)),
+        rocks("RocksOut", "Left", 16, 1, (3.5, 8.0), (50, 95), (40, 25), 31, side=-1.5),
+        rocks("RocksIn", "Right", 12, 1, (3.0, 6.5), (45, 85), (40, 25), 32, side=1.5),
+        rocks("RocksUp", "Top", 10, 1, (4.0, 9.0), (55, 90), (22, 22), 33),
+        # ---------------- la detonación de hielo ----------------
+        dict(name="DetFlash", texture="fx_glow", emit=det_up(0.0, 1, 10), lifetime=(0.2, 0.22),
+             size=[(0, 12), (0.3, 56), (1, 60)], transparency=[(0, 0.45), (0.5, 0.65), (1, 1)], color=CRYST,
+             light_emission=1.0, brightness=1.0, zoffset=5),
+        dict(name="DetStar", texture="kk_star_09", emit=det_up(0.0, 1, 10), lifetime=(0.26, 0.26),
+             size=[(0, 16), (0.2, 70), (1, 24)], transparency=[(0, 0.05), (1, 1)], color=GLINT, light_emission=1.0,
              brightness=1.3, rotation=(0, 90), zoffset=6),
-        dict(name="EndRing", texture="kk_circle_02", emit=[(T0 + TW, 1, 1.0, 0.0, 0.3)], lifetime=(0.4, 0.4),
-             size=[(0, 10), (1, 60)], transparency=[(0, 0.2), (0.6, 0.5), (1, 1)], color=ICE, light_emission=0.9,
+        dict(name="DetHalo", texture="fx_halo", emit=det_up(0.02, 1, 10), lifetime=(0.35, 0.35),
+             size=[(0, 10), (1, 86)], transparency=[(0, 0.3), (0.5, 0.55), (1, 1)], color=CRYST, light_emission=1.0,
+             brightness=1.1, rotation=(0, 360), zoffset=3),
+        dict(name="DetRing", texture="kk_circle_02", emit=det_up(0.0, 1, 0.3), lifetime=(0.5, 0.5),
+             size=[(0, 12), (1, 150)], transparency=[(0, 0.15), (0.5, 0.45), (1, 1)], color=ICE, light_emission=0.8,
              **DECAL),
-        dict(name="EndShards", texture="mf_shard_2x2", flipbook=STATIC2x2, shape={"type": "Sphere", "radius": 4},
-             emit=[(T0 + TW, 26, 1.0, 0.0, 10)], direction="Top", spread=(180, 180), speed=(30, 70), drag=0.5,
-             accel=(0, -110, 0), lifetime=(0.5, 0.85), size=[(0, 1.8, 0.6), (1, 1.2, 0.4)],
+        dict(name="DetRingSharp", texture="kk_circle_02", emit=det_up(0.03, 1, 0.32), lifetime=(0.34, 0.34),
+             size=[(0, 10), (1, 120)], transparency=[(0, 0.05), (0.6, 0.4), (1, 1)], color=SILVER, light_emission=1.0,
+             **DECAL),
+        # el aire helado: una nube fría que se expande, ráfagas que giran y viento que corre por el suelo
+        dict(name="ColdCloud", texture="kk_smoke_07", emit=det_up(0.01, 16, 8), shape={"type": "Sphere", "radius": 6},
+             direction="Top", spread=(180, 180), speed=(25, 55), drag=3.2, accel=(0, 3, 0), lifetime=(1.3, 1.8),
+             size=[(0, 10, 2), (0.3, 26, 4), (1, 34, 4)], transparency=[(0, 0.35), (0.3, 0.5), (0.8, 0.75), (1, 1)],
+             color=FROSTMIST, rotation=(0, 360), rot_speed=(-30, 30), zoffset=-3),
+        dict(name="ColdSwirl", texture="fx_wind_swirl", emit=det_up(0.0, 2, 10) + det_up(0.1, 1, 12),
+             lifetime=(0.6, 0.8), size=[(0, 14), (1, 76)], transparency=[(0, 0.3), (0.5, 0.55), (1, 1)], color=ICE,
+             light_emission=0.6, brightness=1.0, rotation=(0, 360), rot_speed=(-220, 220), zoffset=2),
+        dict(name="ColdArcs", texture="kz_wind_arcs", emit=det_up(0.04, 3, 9), lifetime=(0.4, 0.55),
+             size=[(0, 16), (1, 64)], transparency=[(0, 0.3), (0.6, 0.6), (1, 1)], color=SILVER, light_emission=0.7,
+             brightness=1.1, rotation=(0, 360), rot_speed=(-180, 180), zoffset=2),
+        dict(name="GroundGust", texture="kk_trace_03", orientation="VelocityParallel", emit=det_up(0.02, 26, 1.2),
+             direction="Front", spread=(180, 5), speed=(90, 150), drag=3, lifetime=(0.4, 0.6),
+             size=[(0, 10, 2), (0.4, 14, 3), (1, 4)], transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=ICE,
+             light_emission=1.0, brightness=1.4),
+        dict(name="GroundMist", texture="kk_smoke_04", emit=det_up(0.03, 14, 1), direction="Front", spread=(180, 4),
+             speed=(45, 80), drag=3.5, accel=(0, 2, 0), lifetime=(0.9, 1.3), size=[(0, 6, 1), (1, 18, 3)],
+             transparency=[(0, 0.45), (0.4, 0.6), (1, 1)], color=FROSTMIST, rotation=(0, 360), zoffset=-2),
+        # el hielo: esquirlas, una corona de púas y pedazos que se quedan clavados
+        dict(name="DetShards", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=det_up(0.0, 40, 8),
+             shape={"type": "Sphere", "radius": 4}, direction="Top", spread=(180, 180), speed=(45, 95), drag=0.5,
+             accel=(0, -110, 0), lifetime=(0.6, 1.0), size=[(0, 2.0, 0.6), (1, 1.4, 0.4)],
              transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.4,
              rotation=(0, 360), rot_speed=(-500, 500)),
+        dict(name="IceCrown", texture="mf_spike", orientation="VelocityParallel", emit=det_up(0.04, 18, 0.5),
+             shape={"type": "Box", "size": (26, 1, 26)}, direction="Top", spread=(25, 25), speed=(25, 40), drag=12,
+             lifetime=(1.3, 1.5), size=[(0, 0.6), (0.1, 9, 2.5), (0.8, 9.5, 2.5), (1, 0)],
+             transparency=[(0, 0), (0.8, 0.1), (1, 1)], color=SHARD, light_emission=0.5, brightness=1.6),
+        dict(name="IceChunks", type="meteor", emit=det_up(0.02, 9, 4), direction="Top", spread=(70, 70),
+             speed=(60, 105), accel=(0, -196, 0), drag=0.1, lifetime=(2.4, 2.4),
+             sprite={"texture": "mf_shard_2x2", "layout": "Grid2x2", "size": (4, 8), "aspect": (0.7, 1.6, 0.7),
+                     "rot_speed": (-300, 300), "color": CRYSTAL_RGB, "material": "Ice", "stick": 0.9, "sink": 0.3},
+             trails=[{"name": "ChunkSparkle", "rate": 16, "texture": "fx_spark002", "speed": (0, 4),
+                      "direction": "Top", "spread": (180, 180), "lifetime": (0.3, 0.5), "size": twinkle(0.5),
+                      "color": GLINT, "light_emission": 1.0, "brightness": 1.8, "rotation": (0, 45)}],
+             land=[dict(name="ChunkCracks", texture="mf_frost_cracks", emit=[(0, 1)], lifetime=(1.2, 1.4),
+                        rotation=(0, 360), size=[(0, 3), (0.1, 11), (1, 12)],
+                        transparency=[(0, 0), (0.3, 0.15), (0.8, 0.45), (1, 1)], color=FROST, light_emission=0.9,
+                        **DECAL)],
+             shatter=[dict(name="ChunkBreak", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0, 8)],
+                           shape={"type": "Box", "size": (3, 6, 3)}, direction="Top", spread=(90, 90),
+                           speed=(12, 30), drag=0.5, accel=(0, -110, 0), lifetime=(0.4, 0.65),
+                           size=[(0, 1.3, 0.4), (1, 0.9, 0.3)], color=SHARD, light_emission=0.45, brightness=1.4,
+                           rotation=(0, 360), rot_speed=(-500, 500))]),
+        # la escarcha que queda: grietas, un velo frío en el suelo y cristalitos que flotan y caen
+        dict(name="DetCracks", texture="mf_frost_cracks", emit=det_up(0.02, 1, 0.22), lifetime=(2.3, 2.5),
+             rotation=(0, 360), size=[(0, 20), (0.06, 70), (1, 74)],
+             transparency=[(0, 0), (0.25, 0.1), (0.8, 0.4), (1, 1)], color=FROST, light_emission=0.9, **DECAL),
+        dict(name="DetFrost", texture="fx_glow", emit=det_up(0.05, 1, 0.16), lifetime=(2.2, 2.4),
+             size=[(0, 30), (0.1, 72), (1, 76)], transparency=[(0, 0.5), (0.7, 0.6), (1, 1)], color=ICE,
+             light_emission=0.4, **DECAL),
+        dict(name="Snow", texture="fx_spark002", shape={"type": "Sphere", "radius": 26}, direction="Top",
+             spread=(180, 180), speed=(2, 6), drag=1, accel=(0, -3, 0), lifetime=(1.4, 2.2), size=twinkle(0.55),
+             color=GLINT, light_emission=1.0, brightness=1.8, rotation=(0, 45),
+             emit=det_up(0.05, 40, 14)),
     ],
 }
 

@@ -145,6 +145,7 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 | `orb` | proyectil que nace, vuela creciendo y detona sobre enemigos | `vfx_blackhole.py` |
 | `beam`, `beams`, `hit` | rayo apuntable (Beams + Raycast cada cuadro) | `vfx_beam.py`, `vfx_cosmicbeam.py` |
 | `rocks` | efecto que sale de las rocas que le pasas | `vfx_pillars.py` (H3) |
+| `line` + `blade` | una hoja (media luna) hecha con cadenas de Beams en un arco 3D que vuela por la línea; lo demás se sincroniza con eventos a lo largo del camino | `vfx_moonfang.py` (`CRESCENT_WAVE`) |
 | `cone` | onda en forma de triángulo hacia adelante | `vfx_astral.py` |
 | `aura` | aura que se adapta a cualquier modelo (Highlight + emisores por parte) | `vfx_aura.py` |
 | `cataclysm` | la ULTIMATE de Omnívora (campo gravitacional, geometría, plan para el servidor) | `vfx_cataclysm.py` |
@@ -359,6 +360,12 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
    - fuego que se lava con cielos claros (bajar `LightEmission` y subir `Brightness`).
 3. Rocas de destrucción para Astral Colossus: el usuario iba a mandar detalles.
 4. Animaciones del kit de Kaiju Zero (A1–A4, ver `KaijuZero_Habilidades/REFERENCIA_VIDEO.md`): necesitan el `.blend` con el rig.
-5. Mantener este documento al día con lo que aprendas en Studio. Sobre todo las diferencias entre el simulador y Roblox, para que el siguiente no tropiece.
+5. **Moonfang, opinión del usuario: 3/10 al primer kit.** Solo le convenció la ulti (Eclipse). Pidió:
+   - M1 como **mordiscos** al estilo de Devil Dinosaur (Marvel Rivals), NO como mandíbulas con dientes ("eso es Pokémon");
+   - la skill 1 rehecha: ya está (media luna que vuela con la punta adelante, corta el suelo y arranca rocas, detonación de hielo);
+   - el resto del kit, uno por uno cuando él diga.
+
+   Las auras tampoco le convencieron en el juego.
+6. Mantener este documento al día con lo que aprendas en Studio. Sobre todo las diferencias entre el simulador y Roblox, para que el siguiente no tropiece.
 
 Suerte. El usuario es exigente pero agradecido, y le encanta ver el resultado: muéstraselo seguido.

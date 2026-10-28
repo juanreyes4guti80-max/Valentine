@@ -493,6 +493,50 @@ def draw_beam(buf, tb, cam, Bm, A, Bp, w, fade, t, scale):
     dst += rgb * a
 
 
+
+def blade_chains(B, t, o0, Rf, length, scale):
+    """La media luna que vuela (lo mismo que runBlade en el módulo): por capa y por fantasma,
+    (puntos, anchos, transparencia, capa). Adelante = -Z local; la punta va delante y los cuernos atrás."""
+    t0, tw, fd = B["t0"], B["travel"], B["fade"]
+    if t < t0 or t > t0 + tw + fd:
+        return []
+    u = min(max((t - t0) / tw, 0.0), 1.0)
+    gr = min(max((t - t0) / max(B["grow"], 1e-3), 0.0), 1.0)
+    gr = gr * gr * (3 - 2 * gr)
+    k = scale * (B["start_k"] + (1 - B["start_k"]) * gr) * (1 + B["swell"] * u)
+    fz = min(max((t - t0 - tw) / max(fd, 1e-3), 0.0), 1.0)
+    fade = fz * fz * (3 - 2 * fz)
+    R = B["radius"] * k
+    arc, tl = math.radians(B["arc"]), math.radians(B["tilt"])
+    axis = np.array([math.sin(tl), math.cos(tl), 0.0])
+    bow_axis = np.array([math.cos(tl), -math.sin(tl), 0.0])
+    bow = B.get("bow", 0.0)
+    n = B["n"]
+    ymin = 0.0
+    for i in range(n):
+        th = -arc + 2 * arc * i / (n - 1)
+        ymin = min(ymin, math.sin(th) * axis[1] + bow * (1 - math.cos(th)) * bow_axis[1])
+    h = B["lift"] * scale - R * ymin
+    o0 = np.asarray(o0, float)
+    out = []
+    for L in B["layers"]:
+        for lag, xtr in [(0.0, 0.0)] + [tuple(gh) for gh in L.get("ghosts", [])]:
+            d = length * u - (L.get("back", 0.0) + lag) * scale
+            if d < 0:
+                continue
+            tr = 1 - (1 - L["transparency"]) * (1 - xtr) * (1 - fade)
+            pts, ws = [], []
+            for i in range(n):
+                sm = i / (n - 1)
+                th = -arc + 2 * arc * sm
+                loc = np.array([0.0, h, -d + R * (1 - math.cos(th))]) + axis * (R * math.sin(th)) \
+                    + bow_axis * (bow * R * (1 - math.cos(th)))
+                pts.append(o0 + Rf @ loc)
+                ws.append(L["width"] * k * max(math.sin(math.pi * sm), 0.0) ** B["taper"])
+            out.append((pts, ws, tr, L))
+    return out
+
+
 def draw_box(buf, cam, pr_):
     """Caja sombreada de referencia (p. ej. un enemigo) apoyada en pos (centro de la base)."""
     from PIL import ImageDraw
@@ -735,6 +779,20 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 if w > 0.02 and bfade < 0.999 and kg > 0:
                     dz = cam.to_cam((bA + bB) * 0.5)[2] - Bm.get("zoffset", 0.0) * scale
                     items.append((dz, 4, (Bm, bA, bB, w, bfade), None, None))
+        if draw and spec.get("blade"):           # la media luna que vuela (cadenas de Beams que miran a la cámara)
+            for pts, ws, tr, BL in blade_chains(spec["blade"], t, o0, Rf, length, scale):
+                if tr >= 0.995:
+                    continue
+                nb = len(pts)
+                for i in range(nb - 1):
+                    c = eval_color(BL["color"], (i + 0.5) / (nb - 1)) * 255
+                    Bm = {"texture": BL["texture"], "mode": "Stretch", "tex_len": 1.0, "speed": 0.0,
+                          "light_emission": BL["light_emission"], "brightness": BL["brightness"],
+                          "color": [(0, tuple(c)), (1, tuple(c))], "w0": ws[i], "w1": ws[i + 1],
+                          "transparency": [(0, tr), (1, tr)]}
+                    dz = cam.to_cam((pts[i] + pts[i + 1]) * 0.5)[2] - BL.get("zoffset", 0.0) * scale
+                    if dz > 0.6:
+                        items.append((dz, 4, (Bm, pts[i], pts[i + 1], 1.0, 0.0), None, None))
         items.sort(key=lambda x: -x[0])
         for _, kind, obj, d, wp in items:
             if kind == 1:

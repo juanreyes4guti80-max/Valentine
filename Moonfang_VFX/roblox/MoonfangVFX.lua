@@ -10,7 +10,7 @@
 		MoonfangVFX.MoonFang(rival, 1, 1)                        -- pesado
 		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
 		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado
-		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 110, 1, 1)   -- skill 1
+		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 130, 1, 1)   -- skill 1
 		MoonfangVFX.FangRain(CFrame.new(centroEnElSuelo), 1, 1)  -- skill 2
 		MoonfangVFX.LunarHowl(cabeza.CFrame, 1, 1)               -- skill 3 (y LunarAura para la mejora)
 		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), 26, 150, 1, 1)   -- skill 4
@@ -36,11 +36,14 @@ MoonfangVFX.TEXTURES = {
 	fx_aura_tongue_2x2 = "rbxassetid://0",
 	fx_beam = "rbxassetid://0",
 	fx_glow = "rbxassetid://0",
+	fx_halo = "rbxassetid://0",
 	fx_laser_thin = "rbxassetid://0",
 	fx_particle02 = "rbxassetid://0",
 	fx_spark002 = "rbxassetid://0",
+	fx_wind_swirl = "rbxassetid://0",
 	kk_circle_02 = "rbxassetid://0",
 	kk_smoke_04 = "rbxassetid://0",
+	kk_smoke_07 = "rbxassetid://0",
 	kk_spark_05 = "rbxassetid://0",
 	kk_star_06 = "rbxassetid://0",
 	kk_star_08 = "rbxassetid://0",
@@ -49,7 +52,9 @@ MoonfangVFX.TEXTURES = {
 	kk_trace_03 = "rbxassetid://0",
 	kz_beam_ring = "rbxassetid://0",
 	kz_bite_4x4 = "rbxassetid://0",
+	kz_debris_2x2 = "rbxassetid://0",
 	kz_scorch = "rbxassetid://0",
+	kz_wind_arcs = "rbxassetid://0",
 	mf_aura_wisp_2x2 = "rbxassetid://0",
 	mf_claw_4x4 = "rbxassetid://0",
 	mf_claw_glow = "rbxassetid://0",
@@ -2408,6 +2413,154 @@ local function playAura(spec: Layer, model: Instance, scale: number?, duration: 
 		end
 	end)
 	return ctl
+end
+
+-- ---------------------------------------------------------------- la hoja que vuela (Moonfang: Medialuna)
+-- Una media luna hecha con cadenas de Beams que miran a la cámara, a lo largo de un arco en 3D: la punta va
+-- adelante y los cuernos atrás, así se lee bien desde cualquier cámara. Se mueve por la línea a velocidad
+-- constante (llega al final a los t0 + travel s), crece al salir y se desvanece al final. Cada capa tiene su
+-- textura, ancho y color, y puede llevar "fantasmas" que la siguen un poco atrás (la estela).
+type BladeChain = { atts: { Attachment }, beams: { Beam }, L: any, lag: number, xtr: number, tr: number }
+local function runBlade(B: any, holder: BasePart, s: number, len: number)
+	local n = B.n
+	local chains: { BladeChain } = {}
+	for _, L in B.layers do
+		local ghosts = { { 0, 0 } }
+		for _, gh in L.ghosts or {} do
+			table.insert(ghosts, gh)
+		end
+		for gi, gh in ghosts do
+			if gi > 1 and MoonfangVFX.Quality < 0.7 then
+				break
+			end
+			local atts: { Attachment } = {}
+			for i = 1, n do
+				local a = Instance.new("Attachment")
+				a.Parent = holder
+				atts[i] = a
+			end
+			local beams: { Beam } = {}
+			for i = 1, n - 1 do
+				local b = Instance.new("Beam")
+				b.Attachment0 = atts[i]
+				b.Attachment1 = atts[i + 1]
+				b.FaceCamera = true
+				b.Segments = 1
+				b.Texture = MoonfangVFX.TEXTURES[L.texture] or ""
+				b.TextureMode = Enum.TextureMode.Stretch
+				b.TextureLength = 1
+				b.LightEmission = L.light_emission
+				b.LightInfluence = 0
+				b.Brightness = L.brightness
+				b.ZOffset = (L.zoffset or 0) * s
+				b.Color = ColorSequence.new(evalColor(L.color, (i - 0.5) / (n - 1)))
+				b.Transparency = NumberSequence.new(1)
+				b.Enabled = false
+				b.Parent = holder
+				beams[i] = b
+			end
+			table.insert(chains, { atts = atts, beams = beams, L = L, lag = gh[1], xtr = gh[2], tr = -1 })
+		end
+	end
+	local light: PointLight? = nil
+	local lightAtt: Attachment? = nil
+	if B.light and MoonfangVFX.UseLight then
+		local la = Instance.new("Attachment")
+		la.Parent = holder
+		local pl = Instance.new("PointLight")
+		pl.Color = Color3.fromRGB(B.light.color[1], B.light.color[2], B.light.color[3])
+		pl.Range = math.min(B.light.range * s, 60)
+		pl.Brightness = 0
+		pl.Shadows = false
+		pl.Parent = la
+		light, lightAtt = pl, la
+	end
+	local arc, tl = math.rad(B.arc), math.rad(B.tilt)
+	local axis = Vector3.new(math.sin(tl), math.cos(tl), 0) -- el eje de la hoja: arriba, inclinado hacia un lado
+	local bowAxis = Vector3.new(math.cos(tl), -math.sin(tl), 0) -- los cuernos se curvan hacia aquí (se lee desde atrás)
+	local bow = B.bow or 0
+	-- lo más bajo del arco (a escala 1): ahí roza el suelo
+	local ymin = 0
+	for i = 1, n do
+		local th = -arc + 2 * arc * (i - 1) / (n - 1)
+		ymin = math.min(ymin, math.sin(th) * axis.Y + bow * (1 - math.cos(th)) * bowAxis.Y)
+	end
+	local widths = table.create(n, 0)
+	local t0 = time()
+	local conn: RBXScriptConnection
+	local function stop()
+		conn:Disconnect()
+		for _, c in chains do
+			for _, b in c.beams do
+				b:Destroy()
+			end
+			for _, a in c.atts do
+				a:Destroy()
+			end
+		end
+		if lightAtt then
+			lightAtt:Destroy()
+		end
+	end
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > B.t0 + B.travel + B.fade then
+			stop()
+			return
+		end
+		if t < B.t0 then
+			return
+		end
+		local u = math.clamp((t - B.t0) / B.travel, 0, 1)
+		local gr = math.clamp((t - B.t0) / math.max(B.grow, 1e-3), 0, 1)
+		gr = gr * gr * (3 - 2 * gr)
+		local k = s * (B.start_k + (1 - B.start_k) * gr) * (1 + B.swell * u)
+		local fz = math.clamp((t - B.t0 - B.travel) / math.max(B.fade, 1e-3), 0, 1)
+		local fade = fz * fz * (3 - 2 * fz)
+		local R = B.radius * k
+		local h = B.lift * s - R * ymin
+		for _, c in chains do
+			local L = c.L
+			local d = len * u - ((L.back or 0) + c.lag) * s
+			local tr = 1 - (1 - L.transparency) * (1 - c.xtr) * (1 - fade)
+			if d < 0 then
+				tr = 1
+				d = 0
+			end
+			for i = 1, n do
+				local sm = (i - 1) / (n - 1)
+				local th = -arc + 2 * arc * sm
+				-- adelante = -Z local: la punta (th = 0) va delante y los cuernos se quedan atrás
+				c.atts[i].Position = Vector3.new(0, h, -d + R * (1 - math.cos(th))) + axis * (R * math.sin(th))
+					+ bowAxis * (bow * R * (1 - math.cos(th)))
+				widths[i] = L.width * k * math.max(math.sin(math.pi * sm), 0) ^ B.taper
+			end
+			local changed = math.abs(tr - c.tr) > 0.01
+			for i, b in c.beams do
+				b.Width0 = widths[i]
+				b.Width1 = widths[i + 1]
+				if changed then
+					b.Transparency = NumberSequence.new(tr)
+					b.Enabled = tr < 0.995
+				end
+			end
+			if changed then
+				c.tr = tr
+			end
+		end
+		if light and lightAtt then
+			lightAtt.Position = Vector3.new(0, h * 0.6, -len * u)
+			light.Brightness = B.light.brightness * (1 - fade)
+		end
+	end)
+end
+
+local function playBlade(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local len = length or spec.line * s
+	local holder = play(spec, cf, scale, len, shake)
+	runBlade(spec.blade, holder, s, len)
+	return holder
 end
 
 -- ---------------------------------------------------------------- ULTIMATE: cataclismo gravitacional
@@ -7479,24 +7632,24 @@ MoonfangVFX.MoonGuardHitImpact = 0.02
 
 local SPEC_CrescentWave = {
 	name = "CrescentWave",
-	duration = 1.9,
-	cleanup = 2.33,
+	duration = 3.4,
+	cleanup = 5.03,
 	layers = {
 		{
 			name = "SwipeFlash",
 			texture = "mf_crescent",
 			emit = {
-				{0, 1, 0, 0, 9},
+				{0, 1, 0, 0, 10},
 			},
-			lifetime = {0.2, 0.2},
+			lifetime = {0.18, 0.18},
 			size = {
-				{0, 14, 0},
-				{0.4, 30, 0},
-				{1, 34, 0},
+				{0, 12, 0},
+				{0.4, 32, 0},
+				{1, 36, 0},
 			},
 			transparency = {
 				{0, 0.1, 0},
-				{0.5, 0.4, 0},
+				{0.5, 0.45, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -7515,7 +7668,7 @@ local SPEC_CrescentWave = {
 			},
 			light_emission = 1,
 			brightness = 1.3,
-			rotation = {180, 180},
+			rotation = {160, 160},
 			zoffset = 4,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -7531,12 +7684,12 @@ local SPEC_CrescentWave = {
 			name = "SwipeGlow",
 			texture = "fx_glow",
 			emit = {
-				{0, 1, 0, 0, 9},
+				{0.02, 1, 0, 0, 10},
 			},
-			lifetime = {0.25, 0.25},
+			lifetime = {0.26, 0.26},
 			size = {
 				{0, 10, 0},
-				{1, 34, 0},
+				{1, 40, 0},
 			},
 			transparency = {
 				{0, 0.5, 0},
@@ -7571,24 +7724,245 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "Wave",
-			texture = "mf_crescent",
-			orientation = "FacingCameraWorldUp",
-			direction = "Front",
-			speed_len = {1.8182, 1.8182},
+			name = "SwipeWind",
+			texture = "kz_wind_arcs",
 			emit = {
-				{0.08, 1, 0, 0, 12},
+				{0.03, 2, 0.02, 0, 6},
 			},
-			lifetime = {0.55, 0.55},
+			lifetime = {0.25, 0.3},
 			size = {
-				{0, 18, 0},
-				{0.12, 38, 0},
-				{1, 40, 0},
+				{0, 10, 0},
+				{1, 42, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.6, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.1,
+			rotation = {0, 360},
+			rot_speed = {-160, 160},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "SwipeDust",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.04, 8, 0.03, 0, 1},
+			},
+			direction = "Front",
+			spread = {180, 6},
+			speed = {30, 55},
+			drag = 4,
+			accel = {0, 4, 0},
+			lifetime = {0.5, 0.7},
+			size = {
+				{0, 4, 1},
+				{1, 12, 2},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.4, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 228, 248},
+				},
+				{
+					1,
+					{175, 190, 222},
+				},
+			},
+			rotation = {0, 360},
+			zoffset = -2,
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "BladeMist",
+			texture = "kk_smoke_04",
+			direction = "Back",
+			spread = {30, 30},
+			speed = {3, 8},
+			drag = 2,
+			accel = {0, 2, 0},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 6, 1.5},
+				{1, 15, 3},
+			},
+			transparency = {
+				{0, 0.62, 0},
+				{0.4, 0.68, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 236, 255},
+				},
+				{
+					1,
+					{175, 200, 240},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -3,
+			emit = {
+				{0.179, 1, 0.03, -0.57, 12.84},
+				{0.202, 1, 0.068, 5.09, 11.52},
+				{0.225, 1, 0.105, 0.09, 13.22},
+				{0.249, 1, 0.143, -3.78, 12.17},
+				{0.272, 1, 0.18, 1.56, 16.1},
+				{0.295, 1, 0.218, -4.87, 9.25},
+				{0.318, 1, 0.256, -4.91, 16.34},
+				{0.342, 1, 0.293, 2.32, 5.59},
+				{0.365, 1, 0.331, 5.79, 18.51},
+				{0.388, 1, 0.368, 1.85, 13.62},
+				{0.412, 1, 0.406, -4.11, 5.21},
+				{0.435, 1, 0.444, 0.34, 5.83},
+				{0.458, 1, 0.481, -3.72, 8.39},
+				{0.482, 1, 0.519, -5.64, 11.5},
+				{0.505, 1, 0.556, -0.71, 16.79},
+				{0.528, 1, 0.594, 0.23, 13.96},
+				{0.552, 1, 0.632, 0, 14.27},
+				{0.575, 1, 0.669, -0.51, 8.89},
+				{0.598, 1, 0.707, 5.97, 18.94},
+				{0.622, 1, 0.744, 4.08, 14.91},
+				{0.645, 1, 0.782, -2.22, 8.22},
+				{0.668, 1, 0.82, -2.53, 5.98},
+				{0.691, 1, 0.857, 3.2, 10.61},
+				{0.715, 1, 0.895, 4.16, 10.41},
+				{0.738, 1, 0.932, 5.5, 16.86},
+				{0.761, 1, 0.97, -5.99, 7.94},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "BladeShards",
+			texture = "mf_shard_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Back",
+			spread = {40, 40},
+			speed = {8, 20},
+			drag = 0.6,
+			accel = {0, -110, 0},
+			lifetime = {0.5, 0.8},
+			size = {
+				{0, 1.2, 0.4},
+				{1, 0.8, 0.3},
 			},
 			transparency = {
 				{0, 0, 0},
-				{0.9, 0, 0},
+				{0.8, 0.1, 0},
 				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-500, 500},
+			emit = {
+				{0.169, 2, 0.03, -0.46, 16.52},
+				{0.192, 2, 0.068, 3, 8.28},
+				{0.215, 2, 0.105, -8.8, 12},
+				{0.239, 2, 0.143, -4.07, 18.97},
+				{0.262, 2, 0.18, 3.43, 15.62},
+				{0.285, 2, 0.218, 1.05, 16.58},
+				{0.308, 2, 0.256, -6.38, 13.04},
+				{0.332, 2, 0.293, -6.08, 20.5},
+				{0.355, 2, 0.331, -7.94, 19.1},
+				{0.378, 2, 0.368, -7.66, 16.99},
+				{0.402, 2, 0.406, -2.93, 12.47},
+				{0.425, 2, 0.444, 6.16, 6.3},
+				{0.448, 2, 0.481, -7.91, 20.64},
+				{0.472, 2, 0.519, 0.16, 7.46},
+				{0.495, 2, 0.556, 8.77, 21.15},
+				{0.518, 2, 0.594, -6.97, 12.77},
+				{0.542, 2, 0.632, -6.57, 11},
+				{0.565, 2, 0.669, 2.19, 8.62},
+				{0.588, 2, 0.707, 3.54, 6.82},
+				{0.612, 2, 0.744, -5.92, 19.05},
+				{0.635, 2, 0.782, -1.79, 12.7},
+				{0.658, 2, 0.82, 1.73, 13.63},
+				{0.681, 2, 0.857, -2.08, 6.49},
+				{0.705, 2, 0.895, 4.07, 21.48},
+				{0.728, 2, 0.932, 8.57, 16.62},
+				{0.751, 2, 0.97, -2.59, 11.81},
+			},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "BladeGlints",
+			texture = "kk_star_06",
+			direction = "Back",
+			spread = {60, 60},
+			speed = {4, 10},
+			drag = 1.5,
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 0, 0},
+				{0.08, 3.52, 0},
+				{0.22, 1.54, 0},
+				{0.38, 3.74, 0},
+				{0.55, 1.32, 0},
+				{0.72, 3.08, 0},
+				{1, 0, 0},
 			},
 			color = {
 				{
@@ -7597,65 +7971,49 @@ local SPEC_CrescentWave = {
 				},
 				{
 					0.5,
-					{220, 232, 255},
+					{225, 240, 255},
 				},
 				{
 					1,
-					{165, 195, 250},
+					{170, 205, 255},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.5,
-			zoffset = 4,
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "WaveGlow",
-			texture = "fx_glow",
-			direction = "Front",
-			speed_len = {1.8182, 1.8182},
+			brightness = 2,
+			rotation = {0, 45},
 			emit = {
-				{0.08, 1, 0, 0, 12},
+				{0.169, 2, 0.03, -4.82, 16.33},
+				{0.192, 2, 0.068, 3.68, 19.29},
+				{0.215, 2, 0.105, -6.29, 8.15},
+				{0.239, 2, 0.143, -7.06, 8.05},
+				{0.262, 2, 0.18, 4.68, 6.34},
+				{0.285, 2, 0.218, 0.63, 7.85},
+				{0.308, 2, 0.256, -4.11, 11.77},
+				{0.332, 2, 0.293, 6.75, 14.95},
+				{0.355, 2, 0.331, -9.71, 8.97},
+				{0.378, 2, 0.368, -7.07, 19.68},
+				{0.402, 2, 0.406, 6.19, 18.51},
+				{0.425, 2, 0.444, 6.53, 17.41},
+				{0.448, 2, 0.481, 8.99, 18.29},
+				{0.472, 2, 0.519, -4.87, 19.3},
+				{0.495, 2, 0.556, -0.26, 17.59},
+				{0.518, 2, 0.594, 1.28, 11.73},
+				{0.542, 2, 0.632, -2.72, 11.74},
+				{0.565, 2, 0.669, -3.72, 6.11},
+				{0.588, 2, 0.707, 6.39, 18.37},
+				{0.612, 2, 0.744, 9.71, 16.44},
+				{0.635, 2, 0.782, 1.08, 17.47},
+				{0.658, 2, 0.82, -7.3, 16.18},
+				{0.681, 2, 0.857, -1.13, 7.18},
+				{0.705, 2, 0.895, -5.95, 13.41},
+				{0.728, 2, 0.932, -4.93, 12.27},
+				{0.751, 2, 0.97, 2.11, 11.12},
 			},
-			lifetime = {0.55, 0.55},
-			size = {
-				{0, 22, 0},
-				{0.12, 46, 0},
-				{1, 48, 0},
-			},
-			transparency = {
-				{0, 0.5, 0},
-				{0.9, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 1,
-			speed = {0, 0},
-			spread = {0, 0},
 			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
 			rot_speed = {0, 0},
 			zoffset = 0,
 			orientation = "FacingCamera",
@@ -7663,211 +8021,18 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "WaveGhost0",
-			texture = "mf_crescent",
-			orientation = "FacingCameraWorldUp",
-			direction = "Front",
-			speed_len = {1.8182, 1.8182},
-			emit = {
-				{0.115, 1, 0, 0, 10},
-			},
-			lifetime = {0.55, 0.55},
-			size = {
-				{0, 16, 0},
-				{0.12, 35, 0},
-				{1, 36, 0},
-			},
-			transparency = {
-				{0, 0.35, 0},
-				{0.9, 0.35, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.1,
-			zoffset = 3,
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "WaveGhost1",
-			texture = "mf_crescent",
-			orientation = "FacingCameraWorldUp",
-			direction = "Front",
-			speed_len = {1.8182, 1.8182},
-			emit = {
-				{0.15, 1, 0, 0, 10},
-			},
-			lifetime = {0.55, 0.55},
-			size = {
-				{0, 16, 0},
-				{0.12, 32, 0},
-				{1, 33, 0},
-			},
-			transparency = {
-				{0, 0.5, 0},
-				{0.9, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.1,
-			zoffset = 2,
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "WaveGhost2",
-			texture = "mf_crescent",
-			orientation = "FacingCameraWorldUp",
-			direction = "Front",
-			speed_len = {1.8182, 1.8182},
-			emit = {
-				{0.185, 1, 0, 0, 10},
-			},
-			lifetime = {0.55, 0.55},
-			size = {
-				{0, 16, 0},
-				{0.12, 29, 0},
-				{1, 30, 0},
-			},
-			transparency = {
-				{0, 0.65, 0},
-				{0.9, 0.65, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.1,
-			zoffset = 1,
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "SpeedLines",
-			texture = "kk_trace_01",
-			orientation = "VelocityParallel",
-			direction = "Front",
-			speed_len = {2.5455, 3.2727},
-			drag = 3,
-			emit = {
-				{0.102, 2, 0.04, 6.38, 6},
-				{0.15, 2, 0.127, 6.27, 6},
-				{0.198, 2, 0.215, -6.21, 6},
-				{0.246, 2, 0.302, -5.81, 6},
-				{0.294, 2, 0.389, 4.7, 6},
-				{0.342, 2, 0.476, 3.3, 6},
-				{0.39, 2, 0.564, 2.38, 6},
-				{0.438, 2, 0.651, -2.69, 6},
-				{0.486, 2, 0.738, 1.48, 6},
-				{0.534, 2, 0.825, 1.5, 6},
-				{0.582, 2, 0.913, 1.14, 6},
-				{0.63, 2, 1, -4.78, 6},
-			},
-			lifetime = {0.12, 0.2},
-			size = {
-				{0, 6, 2},
-				{1, 3, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.6,
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "ScarDark",
+			name = "CutTrench",
 			texture = "kz_scorch",
-			lifetime = {1.3, 1.4},
+			lifetime = {1.9, 2.1},
 			rotation = {0, 360},
 			size = {
-				{0, 8, 0},
-				{0.1, 15, 0},
+				{0, 6, 0},
+				{0.06, 15, 0},
 				{1, 16, 0},
 			},
 			transparency = {
-				{0, 0.4, 0},
-				{0.7, 0.5, 0},
+				{0, 0.3, 0},
+				{0.75, 0.4, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -7881,18 +8046,32 @@ local SPEC_CrescentWave = {
 				},
 			},
 			emit = {
-				{0.102, 1, 0.04, -0.79, 0.15},
-				{0.15, 1, 0.127, 0.13, 0.15},
-				{0.198, 1, 0.215, -0.39, 0.15},
-				{0.246, 1, 0.302, 0.31, 0.15},
-				{0.294, 1, 0.389, 0.38, 0.15},
-				{0.342, 1, 0.476, -1.3, 0.15},
-				{0.39, 1, 0.564, -1.46, 0.15},
-				{0.438, 1, 0.651, 1.01, 0.15},
-				{0.486, 1, 0.738, -0.72, 0.15},
-				{0.534, 1, 0.825, -0.8, 0.15},
-				{0.582, 1, 0.913, 1.49, 0.15},
-				{0.63, 1, 1, -0.09, 0.15},
+				{0.231, 1, 0.04, -0.5, 0.12},
+				{0.253, 1, 0.076, 0.25, 0.12},
+				{0.275, 1, 0.112, -0.42, 0.12},
+				{0.298, 1, 0.148, 0.53, 0.12},
+				{0.32, 1, 0.184, 0.04, 0.12},
+				{0.342, 1, 0.22, -0.76, 0.12},
+				{0.365, 1, 0.256, 0.17, 0.12},
+				{0.387, 1, 0.292, 0.51, 0.12},
+				{0.409, 1, 0.328, -0.39, 0.12},
+				{0.432, 1, 0.364, 0.83, 0.12},
+				{0.454, 1, 0.4, 0.64, 0.12},
+				{0.476, 1, 0.436, -0.71, 0.12},
+				{0.499, 1, 0.472, 0.03, 0.12},
+				{0.521, 1, 0.508, 0.76, 0.12},
+				{0.543, 1, 0.544, -0.52, 0.12},
+				{0.566, 1, 0.58, -0.56, 0.12},
+				{0.588, 1, 0.616, -0.04, 0.12},
+				{0.61, 1, 0.652, -0.21, 0.12},
+				{0.632, 1, 0.688, -0.46, 0.12},
+				{0.655, 1, 0.724, 0.62, 0.12},
+				{0.677, 1, 0.76, 0.49, 0.12},
+				{0.699, 1, 0.796, 0.79, 0.12},
+				{0.722, 1, 0.832, 0.44, 0.12},
+				{0.744, 1, 0.868, 0.17, 0.12},
+				{0.76, 1, 0.904, -0.57, 0.12},
+				{0.76, 1, 0.94, 0.56, 0.12},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7909,18 +8088,18 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "ScarCracks",
+			name = "CutCracks",
 			texture = "mf_frost_cracks",
-			lifetime = {1.2, 1.3},
+			lifetime = {1.7, 1.9},
 			rotation = {0, 360},
 			size = {
 				{0, 8, 0},
-				{0.08, 24, 0},
+				{0.06, 24, 0},
 				{1, 25, 0},
 			},
 			transparency = {
 				{0, 0, 0},
-				{0.25, 0.1, 0},
+				{0.3, 0.1, 0},
 				{0.8, 0.45, 0},
 				{1, 1, 0},
 			},
@@ -7944,18 +8123,26 @@ local SPEC_CrescentWave = {
 			},
 			light_emission = 0.9,
 			emit = {
-				{0.102, 1, 0.04, -0.79, 0.2},
-				{0.15, 1, 0.127, -1.19, 0.2},
-				{0.198, 1, 0.215, -0.31, 0.2},
-				{0.246, 1, 0.302, -1.04, 0.2},
-				{0.294, 1, 0.389, -1.3, 0.2},
-				{0.342, 1, 0.476, -0.3, 0.2},
-				{0.39, 1, 0.564, 1.25, 0.2},
-				{0.438, 1, 0.651, 0.9, 0.2},
-				{0.486, 1, 0.738, 0.8, 0.2},
-				{0.534, 1, 0.825, -0.83, 0.2},
-				{0.582, 1, 0.913, 0.11, 0.2},
-				{0.63, 1, 1, -0.67, 0.2},
+				{0.231, 1, 0.04, 1.14, 0.18},
+				{0.26, 1, 0.087, -1.11, 0.18},
+				{0.289, 1, 0.135, -0.72, 0.18},
+				{0.319, 1, 0.182, 0.4, 0.18},
+				{0.348, 1, 0.229, 0.97, 0.18},
+				{0.378, 1, 0.277, 1.14, 0.18},
+				{0.407, 1, 0.324, 0.28, 0.18},
+				{0.436, 1, 0.372, 0.48, 0.18},
+				{0.466, 1, 0.419, 0.54, 0.18},
+				{0.495, 1, 0.466, 0.95, 0.18},
+				{0.524, 1, 0.514, -0.42, 0.18},
+				{0.554, 1, 0.561, 0.88, 0.18},
+				{0.583, 1, 0.608, 1.09, 0.18},
+				{0.612, 1, 0.656, 1.14, 0.18},
+				{0.642, 1, 0.703, 0.51, 0.18},
+				{0.671, 1, 0.751, -0.54, 0.18},
+				{0.701, 1, 0.798, -0.41, 0.18},
+				{0.73, 1, 0.845, 1.13, 0.18},
+				{0.759, 1, 0.893, -0.82, 0.18},
+				{0.76, 1, 0.94, 0.44, 0.18},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -7971,24 +8158,292 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "IceSpikes",
-			texture = "mf_shard_2x2",
+			name = "CutGlow",
+			texture = "fx_glow",
+			lifetime = {0.9, 1.1},
+			size = {
+				{0, 6, 0},
+				{0.1, 12, 0},
+				{1, 13, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 1,
+			emit = {
+				{0.231, 1, 0.04, 0.46, 0.24},
+				{0.253, 1, 0.076, 0.43, 0.24},
+				{0.275, 1, 0.112, 0.13, 0.24},
+				{0.298, 1, 0.148, 0.07, 0.24},
+				{0.32, 1, 0.184, -0.27, 0.24},
+				{0.342, 1, 0.22, -0.24, 0.24},
+				{0.365, 1, 0.256, -0.44, 0.24},
+				{0.387, 1, 0.292, 0.25, 0.24},
+				{0.409, 1, 0.328, 0.05, 0.24},
+				{0.432, 1, 0.364, -0.1, 0.24},
+				{0.454, 1, 0.4, 0.32, 0.24},
+				{0.476, 1, 0.436, 0.19, 0.24},
+				{0.499, 1, 0.472, 0.51, 0.24},
+				{0.521, 1, 0.508, 0.3, 0.24},
+				{0.543, 1, 0.544, 0.11, 0.24},
+				{0.566, 1, 0.58, -0.15, 0.24},
+				{0.588, 1, 0.616, 0.01, 0.24},
+				{0.61, 1, 0.652, 0.13, 0.24},
+				{0.632, 1, 0.688, 0.18, 0.24},
+				{0.655, 1, 0.724, -0.28, 0.24},
+				{0.677, 1, 0.76, 0.35, 0.24},
+				{0.699, 1, 0.796, -0.35, 0.24},
+				{0.722, 1, 0.832, -0.42, 0.24},
+				{0.744, 1, 0.868, 0.11, 0.24},
+				{0.76, 1, 0.904, -0.13, 0.24},
+				{0.76, 1, 0.94, -0.17, 0.24},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "CutSparks",
+			texture = "kk_trace_01",
+			orientation = "VelocityParallel",
+			direction = "Back",
+			spread = {30, 25},
+			speed = {60, 110},
+			drag = 4,
+			accel = {0, -30, 0},
+			lifetime = {0.18, 0.3},
+			size = {
+				{0, 6, 1.5},
+				{1, 2, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			emit = {
+				{0.231, 3, 0.04, 0.46, 0.6},
+				{0.253, 3, 0.076, -0.6, 0.6},
+				{0.275, 3, 0.112, -0.58, 0.6},
+				{0.298, 3, 0.148, -0.78, 0.6},
+				{0.32, 3, 0.184, -0.66, 0.6},
+				{0.342, 3, 0.22, 0.49, 0.6},
+				{0.365, 3, 0.256, -0.08, 0.6},
+				{0.387, 3, 0.292, 1.01, 0.6},
+				{0.409, 3, 0.328, 0.07, 0.6},
+				{0.432, 3, 0.364, 0.51, 0.6},
+				{0.454, 3, 0.4, -0.35, 0.6},
+				{0.476, 3, 0.436, -0.79, 0.6},
+				{0.499, 3, 0.472, 0.72, 0.6},
+				{0.521, 3, 0.508, -0.31, 0.6},
+				{0.543, 3, 0.544, 0.12, 0.6},
+				{0.566, 3, 0.58, 0.82, 0.6},
+				{0.588, 3, 0.616, -0.33, 0.6},
+				{0.61, 3, 0.652, -0.82, 0.6},
+				{0.632, 3, 0.688, 0.37, 0.6},
+				{0.655, 3, 0.724, 0.67, 0.6},
+				{0.677, 3, 0.76, 0.76, 0.6},
+				{0.699, 3, 0.796, 0.52, 0.6},
+				{0.722, 3, 0.832, -0.78, 0.6},
+				{0.744, 3, 0.868, -0.65, 0.6},
+				{0.76, 3, 0.904, 0, 0.6},
+				{0.76, 3, 0.94, 0.98, 0.6},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "CutDebris",
+			texture = "kz_debris_2x2",
 			flipbook = {
 				layout = "Grid2x2",
 				mode = "Loop",
 				fps = 0.001,
 				startRandom = true,
 			},
+			direction = "Top",
+			spread = {60, 60},
+			speed = {30, 65},
+			drag = 0.4,
+			accel = {0, -130, 0},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 1.1, 0.4},
+				{1, 0.9, 0.3},
+			},
+			color = {
+				{
+					0,
+					{130, 128, 138},
+				},
+				{
+					1,
+					{100, 98, 108},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-500, 500},
+			emit = {
+				{0.231, 4, 0.04, -0.33, 0.5},
+				{0.253, 4, 0.076, 1.07, 0.5},
+				{0.275, 4, 0.112, 1.15, 0.5},
+				{0.298, 4, 0.148, -1.34, 0.5},
+				{0.32, 4, 0.184, -0.7, 0.5},
+				{0.342, 4, 0.22, -0.19, 0.5},
+				{0.365, 4, 0.256, -1.09, 0.5},
+				{0.387, 4, 0.292, 1.03, 0.5},
+				{0.409, 4, 0.328, 0.92, 0.5},
+				{0.432, 4, 0.364, 1.01, 0.5},
+				{0.454, 4, 0.4, -0.39, 0.5},
+				{0.476, 4, 0.436, -1.15, 0.5},
+				{0.499, 4, 0.472, 0.44, 0.5},
+				{0.521, 4, 0.508, 0.28, 0.5},
+				{0.543, 4, 0.544, -0.9, 0.5},
+				{0.566, 4, 0.58, -0.08, 0.5},
+				{0.588, 4, 0.616, 0.23, 0.5},
+				{0.61, 4, 0.652, -1.08, 0.5},
+				{0.632, 4, 0.688, -1.34, 0.5},
+				{0.655, 4, 0.724, 0.99, 0.5},
+				{0.677, 4, 0.76, -0.19, 0.5},
+				{0.699, 4, 0.796, -0.16, 0.5},
+				{0.722, 4, 0.832, 0.05, 0.5},
+				{0.744, 4, 0.868, -1.29, 0.5},
+				{0.76, 4, 0.904, -0.61, 0.5},
+				{0.76, 4, 0.94, -0.24, 0.5},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "CutDust",
+			texture = "kk_smoke_04",
+			direction = "Top",
+			spread = {70, 70},
+			speed = {8, 18},
+			drag = 2,
+			accel = {0, 4, 0},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 5, 1},
+				{1, 14, 3},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.4, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 228, 248},
+				},
+				{
+					1,
+					{175, 190, 222},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			zoffset = -2,
+			emit = {
+				{0.231, 2, 0.04, 1.03, 1},
+				{0.253, 2, 0.076, -1.14, 1},
+				{0.275, 2, 0.112, -1.74, 1},
+				{0.298, 2, 0.148, 1.09, 1},
+				{0.32, 2, 0.184, 0.77, 1},
+				{0.342, 2, 0.22, 0.58, 1},
+				{0.365, 2, 0.256, 1.98, 1},
+				{0.387, 2, 0.292, 1.41, 1},
+				{0.409, 2, 0.328, 1.92, 1},
+				{0.432, 2, 0.364, 1.79, 1},
+				{0.454, 2, 0.4, -1.45, 1},
+				{0.476, 2, 0.436, 1.39, 1},
+				{0.499, 2, 0.472, -0.51, 1},
+				{0.521, 2, 0.508, -1.84, 1},
+				{0.543, 2, 0.544, -0.79, 1},
+				{0.566, 2, 0.58, -1.47, 1},
+				{0.588, 2, 0.616, -1.93, 1},
+				{0.61, 2, 0.652, 0.28, 1},
+				{0.632, 2, 0.688, 1.44, 1},
+				{0.655, 2, 0.724, 1.43, 1},
+				{0.677, 2, 0.76, 1.56, 1},
+				{0.699, 2, 0.796, 1.8, 1},
+				{0.722, 2, 0.832, -0.25, 1},
+				{0.744, 2, 0.868, -1.73, 1},
+				{0.76, 2, 0.904, 0.22, 1},
+				{0.76, 2, 0.94, -1.78, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "CutCrystals",
+			texture = "mf_spike",
 			orientation = "VelocityParallel",
 			direction = "Top",
-			spread = {25, 25},
-			speed = {14, 22},
-			drag = 14,
-			lifetime = {0.75, 0.9},
+			spread = {30, 30},
+			speed = {14, 24},
+			drag = 13,
+			lifetime = {1, 1.25},
 			size = {
 				{0, 0.5, 0},
-				{0.15, 5, 1.2},
-				{0.8, 5.2, 1.2},
+				{0.12, 5.5, 1.5},
+				{0.8, 5.8, 1.5},
 				{1, 0, 0},
 			},
 			transparency = {
@@ -8013,30 +8468,22 @@ local SPEC_CrescentWave = {
 			light_emission = 0.5,
 			brightness = 1.5,
 			emit = {
-				{0.132, 1, 0.04, 4.87, 0.5},
-				{0.18, 1, 0.127, 5.23, 0.5},
-				{0.228, 1, 0.215, 5.39, 0.5},
-				{0.276, 1, 0.302, 5.83, 0.5},
-				{0.324, 1, 0.389, 5.22, 0.5},
-				{0.372, 1, 0.476, 5.77, 0.5},
-				{0.42, 1, 0.564, 3.09, 0.5},
-				{0.468, 1, 0.651, 4.4, 0.5},
-				{0.516, 1, 0.738, 5.83, 0.5},
-				{0.564, 1, 0.825, 4.95, 0.5},
-				{0.612, 1, 0.913, 5.7, 0.5},
-				{0.66, 1, 1, 3.34, 0.5},
-				{0.132, 1, 0.04, -3.62, 0.5},
-				{0.18, 1, 0.127, -3.53, 0.5},
-				{0.228, 1, 0.215, -4.54, 0.5},
-				{0.276, 1, 0.302, -5.22, 0.5},
-				{0.324, 1, 0.389, -6, 0.5},
-				{0.372, 1, 0.476, -4.01, 0.5},
-				{0.42, 1, 0.564, -4.59, 0.5},
-				{0.468, 1, 0.651, -3.72, 0.5},
-				{0.516, 1, 0.738, -4.88, 0.5},
-				{0.564, 1, 0.825, -3.69, 0.5},
-				{0.612, 1, 0.913, -5.18, 0.5},
-				{0.66, 1, 1, -3.59, 0.5},
+				{0.231, 1, 0.04, 0.69, 0.4},
+				{0.266, 1, 0.097, 2.05, 0.4},
+				{0.302, 1, 0.155, -1.88, 0.4},
+				{0.337, 1, 0.212, -0.7, 0.4},
+				{0.373, 1, 0.269, 1.42, 0.4},
+				{0.408, 1, 0.327, 1.84, 0.4},
+				{0.444, 1, 0.384, -1.85, 0.4},
+				{0.48, 1, 0.441, 0.36, 0.4},
+				{0.515, 1, 0.499, 1.53, 0.4},
+				{0.551, 1, 0.556, 1.09, 0.4},
+				{0.586, 1, 0.613, 2.2, 0.4},
+				{0.622, 1, 0.671, 2.12, 0.4},
+				{0.657, 1, 0.728, -1.05, 0.4},
+				{0.693, 1, 0.785, -0.68, 0.4},
+				{0.728, 1, 0.843, 0.94, 0.4},
+				{0.76, 1, 0.9, -1.73, 0.4},
 			},
 			accel = {0, 0, 0},
 			rotation = {0, 0},
@@ -8046,147 +8493,673 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "Kick",
-			texture = "kk_smoke_04",
-			direction = "Top",
-			spread = {60, 60},
-			speed = {8, 16},
-			drag = 2,
-			accel = {0, 4, 0},
-			lifetime = {0.5, 0.75},
-			size = {
-				{0, 4, 1},
-				{1, 12, 2},
-			},
-			transparency = {
-				{0, 0.55, 0},
-				{0.4, 0.6, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{215, 228, 248},
-				},
-				{
-					1,
-					{175, 190, 222},
-				},
-			},
-			rotation = {0, 360},
-			rot_speed = {-40, 40},
+			name = "RocksOut",
+			type = "meteor",
 			emit = {
-				{0.102, 2, 0.04, -1.06, 1},
-				{0.15, 2, 0.127, -2.09, 1},
-				{0.198, 2, 0.215, 0.91, 1},
-				{0.246, 2, 0.302, -2.57, 1},
-				{0.294, 2, 0.389, 0.22, 1},
-				{0.342, 2, 0.476, -0.81, 1},
-				{0.39, 2, 0.564, -2.65, 1},
-				{0.438, 2, 0.651, 0.04, 1},
-				{0.486, 2, 0.738, -2.78, 1},
-				{0.534, 2, 0.825, -0.4, 1},
-				{0.582, 2, 0.913, -2.58, 1},
-				{0.63, 2, 1, -2.46, 1},
+				{0.231, 1, 0.04, -2.63, 0.3},
+				{0.268, 1, 0.1, -1.72, 0.3},
+				{0.305, 1, 0.16, -2.33, 0.3},
+				{0.342, 1, 0.22, -2.11, 0.3},
+				{0.38, 1, 0.28, -2.31, 0.3},
+				{0.417, 1, 0.34, -1.07, 0.3},
+				{0.454, 1, 0.4, -1.38, 0.3},
+				{0.491, 1, 0.46, -1.67, 0.3},
+				{0.528, 1, 0.52, -2.44, 0.3},
+				{0.566, 1, 0.58, -0.41, 0.3},
+				{0.603, 1, 0.64, -2.19, 0.3},
+				{0.64, 1, 0.7, -1.79, 0.3},
+				{0.677, 1, 0.76, -2.16, 0.3},
+				{0.714, 1, 0.82, -1.26, 0.3},
+				{0.752, 1, 0.88, -0.37, 0.3},
+				{0.76, 1, 0.94, -1.81, 0.3},
 			},
-			zoffset = -2,
-			light_emission = 0,
-			brightness = 1,
-			orientation = "FacingCamera",
+			direction = "Left",
+			spread = {40, 25},
+			speed = {50, 95},
+			accel = {0, -196, 0},
+			drag = 0.1,
+			lifetime = {2.2, 2.2},
+			trails = {
+				{
+					name = "RocksOutDust",
+					rate = 14,
+					texture = "kk_smoke_04",
+					speed = {0, 2},
+					direction = "Top",
+					spread = {180, 180},
+					drag = 2,
+					lifetime = {0.4, 0.6},
+					size = {
+						{0, 1.5, 0.5},
+						{1, 4, 1},
+					},
+					transparency = {
+						{0, 0.55, 0},
+						{0.5, 0.65, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					accel = {0, 0, 0},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+			},
+			land = {
+				{
+					name = "RockPuff",
+					texture = "kk_smoke_04",
+					emit = {
+						{0, 2},
+					},
+					direction = "Top",
+					spread = {70, 70},
+					speed = {4, 10},
+					drag = 2,
+					accel = {0, 3, 0},
+					lifetime = {0.5, 0.8},
+					size = {
+						{0, 3, 1},
+						{1, 8, 2},
+					},
+					transparency = {
+						{0, 0.5, 0},
+						{0.4, 0.6, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					zoffset = -2,
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			shatter = {
+				{
+					name = "RockCrumble",
+					texture = "kz_debris_2x2",
+					flipbook = {
+						layout = "Grid2x2",
+						mode = "Loop",
+						fps = 0.001,
+						startRandom = true,
+					},
+					emit = {
+						{0, 5},
+					},
+					shape = {
+						type = "Box",
+						size = {3, 2, 3},
+						style = "Volume",
+						inout = "Outward",
+					},
+					direction = "Top",
+					spread = {70, 70},
+					speed = {6, 16},
+					drag = 0.5,
+					accel = {0, -110, 0},
+					lifetime = {0.35, 0.55},
+					size = {
+						{0, 0.9, 0.3},
+						{1, 0.7, 0.2},
+					},
+					color = {
+						{
+							0,
+							{120, 118, 128},
+						},
+						{
+							1,
+							{96, 94, 104},
+						},
+					},
+					rotation = {0, 360},
+					rot_speed = {-400, 400},
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					light_emission = 0,
+					brightness = 1,
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+				{
+					name = "RockDust",
+					texture = "kk_smoke_04",
+					emit = {
+						{0, 2},
+					},
+					direction = "Top",
+					spread = {60, 60},
+					speed = {2, 6},
+					drag = 2,
+					lifetime = {0.4, 0.6},
+					size = {
+						{0, 2, 0.5},
+						{1, 6, 1},
+					},
+					transparency = {
+						{0, 0.6, 0},
+						{0.4, 0.65, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					zoffset = -2,
+					accel = {0, 0, 0},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
 			offset = {0, 0, 0},
-			line_u = 0,
+			rock = {
+				size = {3.5, 8},
+				spin = {-420, 420},
+				material = "Slate",
+				color = {98, 96, 108},
+				aspect = {1, 0.75, 0.9},
+				upright = false,
+				stick = 0.55,
+				sink = 0.25,
+			},
 		},
 		{
-			name = "TrailGlints",
-			texture = "kk_star_06",
-			direction = "Top",
-			spread = {40, 40},
-			speed = {3, 10},
-			drag = 1,
-			lifetime = {0.5, 0.9},
-			size = {
-				{0, 0, 0},
-				{0.08, 3.2, 0},
-				{0.22, 1.4, 0},
-				{0.38, 3.4, 0},
-				{0.55, 1.2, 0},
-				{0.72, 2.8, 0},
-				{1, 0, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{225, 240, 255},
-				},
-				{
-					1,
-					{170, 205, 255},
-				},
-			},
-			light_emission = 1,
-			brightness = 2,
-			rotation = {0, 45},
+			name = "RocksIn",
+			type = "meteor",
 			emit = {
-				{0.122, 2, 0.04, -3.28, 4},
-				{0.17, 2, 0.127, 5.55, 4},
-				{0.218, 2, 0.215, -4.48, 4},
-				{0.266, 2, 0.302, 2.46, 4},
-				{0.314, 2, 0.389, -4.98, 4},
-				{0.362, 2, 0.476, -3.03, 4},
-				{0.41, 2, 0.564, 5.99, 4},
-				{0.458, 2, 0.651, -3.49, 4},
-				{0.506, 2, 0.738, 1.7, 4},
-				{0.554, 2, 0.825, -0.49, 4},
-				{0.602, 2, 0.913, -0.56, 4},
-				{0.65, 2, 1, -0.06, 4},
+				{0.231, 1, 0.04, 0.52, 0.3},
+				{0.281, 1, 0.122, 1.06, 0.3},
+				{0.332, 1, 0.204, 1.53, 0.3},
+				{0.383, 1, 0.285, 0.58, 0.3},
+				{0.434, 1, 0.367, 2.36, 0.3},
+				{0.484, 1, 0.449, 2.6, 0.3},
+				{0.535, 1, 0.531, 1.23, 0.3},
+				{0.586, 1, 0.613, 2.15, 0.3},
+				{0.637, 1, 0.695, 0.36, 0.3},
+				{0.687, 1, 0.776, 2.36, 0.3},
+				{0.738, 1, 0.858, 2.62, 0.3},
+				{0.76, 1, 0.94, 0.53, 0.3},
 			},
-			accel = {0, 0, 0},
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
+			direction = "Right",
+			spread = {40, 25},
+			speed = {45, 85},
+			accel = {0, -196, 0},
+			drag = 0.1,
+			lifetime = {2.2, 2.2},
+			trails = {
+				{
+					name = "RocksInDust",
+					rate = 14,
+					texture = "kk_smoke_04",
+					speed = {0, 2},
+					direction = "Top",
+					spread = {180, 180},
+					drag = 2,
+					lifetime = {0.4, 0.6},
+					size = {
+						{0, 1.5, 0.5},
+						{1, 4, 1},
+					},
+					transparency = {
+						{0, 0.55, 0},
+						{0.5, 0.65, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					accel = {0, 0, 0},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
 			},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
+			land = {
+				{
+					name = "RockPuff",
+					texture = "kk_smoke_04",
+					emit = {
+						{0, 2},
+					},
+					direction = "Top",
+					spread = {70, 70},
+					speed = {4, 10},
+					drag = 2,
+					accel = {0, 3, 0},
+					lifetime = {0.5, 0.8},
+					size = {
+						{0, 3, 1},
+						{1, 8, 2},
+					},
+					transparency = {
+						{0, 0.5, 0},
+						{0.4, 0.6, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					zoffset = -2,
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			shatter = {
+				{
+					name = "RockCrumble",
+					texture = "kz_debris_2x2",
+					flipbook = {
+						layout = "Grid2x2",
+						mode = "Loop",
+						fps = 0.001,
+						startRandom = true,
+					},
+					emit = {
+						{0, 5},
+					},
+					shape = {
+						type = "Box",
+						size = {3, 2, 3},
+						style = "Volume",
+						inout = "Outward",
+					},
+					direction = "Top",
+					spread = {70, 70},
+					speed = {6, 16},
+					drag = 0.5,
+					accel = {0, -110, 0},
+					lifetime = {0.35, 0.55},
+					size = {
+						{0, 0.9, 0.3},
+						{1, 0.7, 0.2},
+					},
+					color = {
+						{
+							0,
+							{120, 118, 128},
+						},
+						{
+							1,
+							{96, 94, 104},
+						},
+					},
+					rotation = {0, 360},
+					rot_speed = {-400, 400},
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					light_emission = 0,
+					brightness = 1,
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+				{
+					name = "RockDust",
+					texture = "kk_smoke_04",
+					emit = {
+						{0, 2},
+					},
+					direction = "Top",
+					spread = {60, 60},
+					speed = {2, 6},
+					drag = 2,
+					lifetime = {0.4, 0.6},
+					size = {
+						{0, 2, 0.5},
+						{1, 6, 1},
+					},
+					transparency = {
+						{0, 0.6, 0},
+						{0.4, 0.65, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					zoffset = -2,
+					accel = {0, 0, 0},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
 			offset = {0, 0, 0},
-			line_u = 0,
+			rock = {
+				size = {3, 6.5},
+				spin = {-420, 420},
+				material = "Slate",
+				color = {98, 96, 108},
+				aspect = {1, 0.75, 0.9},
+				upright = false,
+				stick = 0.55,
+				sink = 0.25,
+			},
 		},
 		{
-			name = "EndFlash",
+			name = "RocksUp",
+			type = "meteor",
+			emit = {
+				{0.231, 1, 0.04, 0.21, 0.3},
+				{0.293, 1, 0.14, 0.8, 0.3},
+				{0.355, 1, 0.24, 0.4, 0.3},
+				{0.417, 1, 0.34, 1.02, 0.3},
+				{0.479, 1, 0.44, 0.4, 0.3},
+				{0.541, 1, 0.54, 0.04, 0.3},
+				{0.603, 1, 0.64, 0.1, 0.3},
+				{0.665, 1, 0.74, 1.1, 0.3},
+				{0.727, 1, 0.84, -0.44, 0.3},
+				{0.76, 1, 0.94, 0.03, 0.3},
+			},
+			direction = "Top",
+			spread = {22, 22},
+			speed = {55, 90},
+			accel = {0, -196, 0},
+			drag = 0.1,
+			lifetime = {2.2, 2.2},
+			trails = {
+				{
+					name = "RocksUpDust",
+					rate = 14,
+					texture = "kk_smoke_04",
+					speed = {0, 2},
+					direction = "Top",
+					spread = {180, 180},
+					drag = 2,
+					lifetime = {0.4, 0.6},
+					size = {
+						{0, 1.5, 0.5},
+						{1, 4, 1},
+					},
+					transparency = {
+						{0, 0.55, 0},
+						{0.5, 0.65, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					accel = {0, 0, 0},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+			},
+			land = {
+				{
+					name = "RockPuff",
+					texture = "kk_smoke_04",
+					emit = {
+						{0, 2},
+					},
+					direction = "Top",
+					spread = {70, 70},
+					speed = {4, 10},
+					drag = 2,
+					accel = {0, 3, 0},
+					lifetime = {0.5, 0.8},
+					size = {
+						{0, 3, 1},
+						{1, 8, 2},
+					},
+					transparency = {
+						{0, 0.5, 0},
+						{0.4, 0.6, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					zoffset = -2,
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			shatter = {
+				{
+					name = "RockCrumble",
+					texture = "kz_debris_2x2",
+					flipbook = {
+						layout = "Grid2x2",
+						mode = "Loop",
+						fps = 0.001,
+						startRandom = true,
+					},
+					emit = {
+						{0, 5},
+					},
+					shape = {
+						type = "Box",
+						size = {3, 2, 3},
+						style = "Volume",
+						inout = "Outward",
+					},
+					direction = "Top",
+					spread = {70, 70},
+					speed = {6, 16},
+					drag = 0.5,
+					accel = {0, -110, 0},
+					lifetime = {0.35, 0.55},
+					size = {
+						{0, 0.9, 0.3},
+						{1, 0.7, 0.2},
+					},
+					color = {
+						{
+							0,
+							{120, 118, 128},
+						},
+						{
+							1,
+							{96, 94, 104},
+						},
+					},
+					rotation = {0, 360},
+					rot_speed = {-400, 400},
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					light_emission = 0,
+					brightness = 1,
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+				{
+					name = "RockDust",
+					texture = "kk_smoke_04",
+					emit = {
+						{0, 2},
+					},
+					direction = "Top",
+					spread = {60, 60},
+					speed = {2, 6},
+					drag = 2,
+					lifetime = {0.4, 0.6},
+					size = {
+						{0, 2, 0.5},
+						{1, 6, 1},
+					},
+					transparency = {
+						{0, 0.6, 0},
+						{0.4, 0.65, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{215, 228, 248},
+						},
+						{
+							1,
+							{175, 190, 222},
+						},
+					},
+					rotation = {0, 360},
+					zoffset = -2,
+					accel = {0, 0, 0},
+					light_emission = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			offset = {0, 0, 0},
+			rock = {
+				size = {4, 9},
+				spin = {-420, 420},
+				material = "Slate",
+				color = {98, 96, 108},
+				aspect = {1, 0.75, 0.9},
+				upright = false,
+				stick = 0.55,
+				sink = 0.25,
+			},
+		},
+		{
+			name = "DetFlash",
 			texture = "fx_glow",
 			emit = {
-				{0.63, 1, 1, 0, 10},
+				{0.76, 1, 1, 0, 10},
 			},
-			lifetime = {0.18, 0.2},
+			lifetime = {0.2, 0.22},
 			size = {
 				{0, 12, 0},
-				{0.3, 34, 0},
-				{1, 36, 0},
+				{0.3, 56, 0},
+				{1, 60, 0},
 			},
 			transparency = {
-				{0, 0.3, 0},
+				{0, 0.45, 0},
+				{0.5, 0.65, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{230, 245, 255},
+					{110, 170, 255},
 				},
 				{
 					0.5,
-					{155, 210, 255},
+					{60, 115, 240},
 				},
 				{
 					1,
-					{85, 145, 245},
+					{30, 60, 190},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.1,
+			brightness = 1,
 			zoffset = 5,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -8200,19 +9173,19 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "EndStar",
-			texture = "kk_star_08",
+			name = "DetStar",
+			texture = "kk_star_09",
 			emit = {
-				{0.63, 1, 1, 0, 10},
+				{0.76, 1, 1, 0, 10},
 			},
-			lifetime = {0.22, 0.22},
+			lifetime = {0.26, 0.26},
 			size = {
-				{0, 10, 0},
-				{0.3, 40, 0},
-				{1, 20, 0},
+				{0, 16, 0},
+				{0.2, 70, 0},
+				{1, 24, 0},
 			},
 			transparency = {
-				{0, 0.1, 0},
+				{0, 0.05, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -8244,19 +9217,63 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "EndRing",
-			texture = "kk_circle_02",
+			name = "DetHalo",
+			texture = "fx_halo",
 			emit = {
-				{0.63, 1, 1, 0, 0.3},
+				{0.78, 1, 1, 0, 10},
 			},
-			lifetime = {0.4, 0.4},
+			lifetime = {0.35, 0.35},
 			size = {
 				{0, 10, 0},
-				{1, 60, 0},
+				{1, 86, 0},
 			},
 			transparency = {
-				{0, 0.2, 0},
-				{0.6, 0.5, 0},
+				{0, 0.3, 0},
+				{0.5, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 170, 255},
+				},
+				{
+					0.5,
+					{60, 115, 240},
+				},
+				{
+					1,
+					{30, 60, 190},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.1,
+			rotation = {0, 360},
+			zoffset = 3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DetRing",
+			texture = "kk_circle_02",
+			emit = {
+				{0.76, 1, 1, 0, 0.3},
+			},
+			lifetime = {0.5, 0.5},
+			size = {
+				{0, 12, 0},
+				{1, 150, 0},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.5, 0.45, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -8273,7 +9290,7 @@ local SPEC_CrescentWave = {
 					{85, 145, 245},
 				},
 			},
-			light_emission = 0.9,
+			light_emission = 0.8,
 			decal = true,
 			orientation = "VelocityPerpendicular",
 			direction = "Top",
@@ -8289,7 +9306,274 @@ local SPEC_CrescentWave = {
 			line_u = 0,
 		},
 		{
-			name = "EndShards",
+			name = "DetRingSharp",
+			texture = "kk_circle_02",
+			emit = {
+				{0.79, 1, 1, 0, 0.32},
+			},
+			lifetime = {0.34, 0.34},
+			size = {
+				{0, 10, 0},
+				{1, 120, 0},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.6, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 232, 255},
+				},
+				{
+					1,
+					{165, 195, 250},
+				},
+			},
+			light_emission = 1,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ColdCloud",
+			texture = "kk_smoke_07",
+			emit = {
+				{0.77, 16, 1, 0, 8},
+			},
+			shape = {
+				type = "Sphere",
+				radius = 6,
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {25, 55},
+			drag = 3.2,
+			accel = {0, 3, 0},
+			lifetime = {1.3, 1.8},
+			size = {
+				{0, 10, 2},
+				{0.3, 26, 4},
+				{1, 34, 4},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.3, 0.5, 0},
+				{0.8, 0.75, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 236, 255},
+				},
+				{
+					1,
+					{175, 200, 240},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -3,
+			light_emission = 0,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ColdSwirl",
+			texture = "fx_wind_swirl",
+			emit = {
+				{0.76, 2, 1, 0, 10},
+				{0.86, 1, 1, 0, 12},
+			},
+			lifetime = {0.6, 0.8},
+			size = {
+				{0, 14, 0},
+				{1, 76, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.5, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 0.6,
+			brightness = 1,
+			rotation = {0, 360},
+			rot_speed = {-220, 220},
+			zoffset = 2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ColdArcs",
+			texture = "kz_wind_arcs",
+			emit = {
+				{0.8, 3, 1, 0, 9},
+			},
+			lifetime = {0.4, 0.55},
+			size = {
+				{0, 16, 0},
+				{1, 64, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.6, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 232, 255},
+				},
+				{
+					1,
+					{165, 195, 250},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.1,
+			rotation = {0, 360},
+			rot_speed = {-180, 180},
+			zoffset = 2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "GroundGust",
+			texture = "kk_trace_03",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.78, 26, 1, 0, 1.2},
+			},
+			direction = "Front",
+			spread = {180, 5},
+			speed = {90, 150},
+			drag = 3,
+			lifetime = {0.4, 0.6},
+			size = {
+				{0, 10, 2},
+				{0.4, 14, 3},
+				{1, 4, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "GroundMist",
+			texture = "kk_smoke_04",
+			emit = {
+				{0.79, 14, 1, 0, 1},
+			},
+			direction = "Front",
+			spread = {180, 4},
+			speed = {45, 80},
+			drag = 3.5,
+			accel = {0, 2, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 6, 1},
+				{1, 18, 3},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.4, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{220, 236, 255},
+				},
+				{
+					1,
+					{175, 200, 240},
+				},
+			},
+			rotation = {0, 360},
+			zoffset = -2,
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DetShards",
 			texture = "mf_shard_2x2",
 			flipbook = {
 				layout = "Grid2x2",
@@ -8297,24 +9581,24 @@ local SPEC_CrescentWave = {
 				fps = 0.001,
 				startRandom = true,
 			},
+			emit = {
+				{0.76, 40, 1, 0, 8},
+			},
 			shape = {
 				type = "Sphere",
 				radius = 4,
 				style = "Volume",
 				inout = "Outward",
 			},
-			emit = {
-				{0.63, 26, 1, 0, 10},
-			},
 			direction = "Top",
 			spread = {180, 180},
-			speed = {30, 70},
+			speed = {45, 95},
 			drag = 0.5,
 			accel = {0, -110, 0},
-			lifetime = {0.5, 0.85},
+			lifetime = {0.6, 1},
 			size = {
-				{0, 1.8, 0.6},
-				{1, 1.2, 0.4},
+				{0, 2, 0.6},
+				{1, 1.4, 0.4},
 			},
 			transparency = {
 				{0, 0, 0},
@@ -8344,24 +9628,543 @@ local SPEC_CrescentWave = {
 			offset = {0, 0, 0},
 			line_u = 0,
 		},
+		{
+			name = "IceCrown",
+			texture = "mf_spike",
+			orientation = "VelocityParallel",
+			emit = {
+				{0.8, 18, 1, 0, 0.5},
+			},
+			shape = {
+				type = "Box",
+				size = {26, 1, 26},
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {25, 40},
+			drag = 12,
+			lifetime = {1.3, 1.5},
+			size = {
+				{0, 0.6, 0},
+				{0.1, 9, 2.5},
+				{0.8, 9.5, 2.5},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.8, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.6,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "IceChunks",
+			type = "meteor",
+			emit = {
+				{0.78, 9, 1, 0, 4},
+			},
+			direction = "Top",
+			spread = {70, 70},
+			speed = {60, 105},
+			accel = {0, -196, 0},
+			drag = 0.1,
+			lifetime = {2.4, 2.4},
+			trails = {
+				{
+					name = "ChunkSparkle",
+					rate = 16,
+					texture = "fx_spark002",
+					speed = {0, 4},
+					direction = "Top",
+					spread = {180, 180},
+					lifetime = {0.3, 0.5},
+					size = {
+						{0, 0, 0},
+						{0.08, 1.6, 0},
+						{0.22, 0.7, 0},
+						{0.38, 1.7, 0},
+						{0.55, 0.6, 0},
+						{0.72, 1.4, 0},
+						{1, 0, 0},
+					},
+					color = {
+						{
+							0,
+							{255, 255, 255},
+						},
+						{
+							0.5,
+							{225, 240, 255},
+						},
+						{
+							1,
+							{170, 205, 255},
+						},
+					},
+					light_emission = 1,
+					brightness = 1.8,
+					rotation = {0, 45},
+					accel = {0, 0, 0},
+					drag = 0,
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					rot_speed = {0, 0},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+					emit = {},
+				},
+			},
+			land = {
+				{
+					name = "ChunkCracks",
+					texture = "mf_frost_cracks",
+					emit = {
+						{0, 1},
+					},
+					lifetime = {1.2, 1.4},
+					rotation = {0, 360},
+					size = {
+						{0, 3, 0},
+						{0.1, 11, 0},
+						{1, 12, 0},
+					},
+					transparency = {
+						{0, 0, 0},
+						{0.3, 0.15, 0},
+						{0.8, 0.45, 0},
+						{1, 1, 0},
+					},
+					color = {
+						{
+							0,
+							{120, 185, 255},
+						},
+						{
+							0.15,
+							{225, 242, 255},
+						},
+						{
+							0.35,
+							{130, 190, 255},
+						},
+						{
+							1,
+							{40, 80, 200},
+						},
+					},
+					light_emission = 0.9,
+					decal = true,
+					orientation = "VelocityPerpendicular",
+					direction = "Top",
+					speed = {0.01, 0.01},
+					spread = {0, 0},
+					accel = {0, 0, 0},
+					drag = 0,
+					brightness = 1,
+					rot_speed = {0, 0},
+					zoffset = 0,
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			shatter = {
+				{
+					name = "ChunkBreak",
+					texture = "mf_shard_2x2",
+					flipbook = {
+						layout = "Grid2x2",
+						mode = "Loop",
+						fps = 0.001,
+						startRandom = true,
+					},
+					emit = {
+						{0, 8},
+					},
+					shape = {
+						type = "Box",
+						size = {3, 6, 3},
+						style = "Volume",
+						inout = "Outward",
+					},
+					direction = "Top",
+					spread = {90, 90},
+					speed = {12, 30},
+					drag = 0.5,
+					accel = {0, -110, 0},
+					lifetime = {0.4, 0.65},
+					size = {
+						{0, 1.3, 0.4},
+						{1, 0.9, 0.3},
+					},
+					color = {
+						{
+							0,
+							{200, 230, 255},
+						},
+						{
+							0.4,
+							{120, 180, 255},
+						},
+						{
+							1,
+							{70, 120, 235},
+						},
+					},
+					light_emission = 0.45,
+					brightness = 1.4,
+					rotation = {0, 360},
+					rot_speed = {-500, 500},
+					transparency = {
+						{0, 0, 0},
+						{1, 0, 0},
+					},
+					zoffset = 0,
+					orientation = "FacingCamera",
+					offset = {0, 0, 0},
+					line_u = 0,
+				},
+			},
+			offset = {0, 0, 0},
+			rock = {
+				size = {4, 8},
+				spin = {-300, 300},
+				material = "Ice",
+				color = {150, 200, 255},
+				aspect = {0.7, 1.6, 0.7},
+				upright = false,
+				stick = 0.9,
+				sink = 0.3,
+			},
+		},
+		{
+			name = "DetCracks",
+			texture = "mf_frost_cracks",
+			emit = {
+				{0.78, 1, 1, 0, 0.22},
+			},
+			lifetime = {2.3, 2.5},
+			rotation = {0, 360},
+			size = {
+				{0, 20, 0},
+				{0.06, 70, 0},
+				{1, 74, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.25, 0.1, 0},
+				{0.8, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 185, 255},
+				},
+				{
+					0.15,
+					{225, 242, 255},
+				},
+				{
+					0.35,
+					{130, 190, 255},
+				},
+				{
+					1,
+					{40, 80, 200},
+				},
+			},
+			light_emission = 0.9,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "DetFrost",
+			texture = "fx_glow",
+			emit = {
+				{0.81, 1, 1, 0, 0.16},
+			},
+			lifetime = {2.2, 2.4},
+			size = {
+				{0, 30, 0},
+				{0.1, 72, 0},
+				{1, 76, 0},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.7, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 0.4,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Snow",
+			texture = "fx_spark002",
+			shape = {
+				type = "Sphere",
+				radius = 26,
+				style = "Volume",
+				inout = "Outward",
+			},
+			direction = "Top",
+			spread = {180, 180},
+			speed = {2, 6},
+			drag = 1,
+			accel = {0, -3, 0},
+			lifetime = {1.4, 2.2},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.76, 0},
+				{0.22, 0.77, 0},
+				{0.38, 1.87, 0},
+				{0.55, 0.66, 0},
+				{0.72, 1.54, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			emit = {
+				{0.81, 40, 1, 0, 14},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
 	},
 	shakes = {
-		{0, 0.45, 0.25},
-		{0.63, 0.4, 0.25},
+		{0.02, 0.45, 0.25},
+		{0.24, 0.25, 0.62},
+		{0.76, 1, 0.45},
 	},
 	light = {
-		color = {170, 210, 255},
-		brightness = 4,
+		color = {180, 215, 255},
+		brightness = 5,
 		range = 40,
-		time = 0.6,
+		time = 0.3,
+	},
+	line = 130,
+	blade = {
+		t0 = 0.14,
+		travel = 0.62,
+		fade = 0.1,
+		grow = 0.1,
+		start_k = 0.35,
+		swell = 0.15,
+		radius = 20,
+		arc = 72,
+		tilt = 18,
+		bow = 0.45,
+		lift = 0.6,
+		n = 19,
+		taper = 0.75,
+		light = {
+			color = {170, 210, 255},
+			brightness = 6,
+			range = 40,
+		},
+		layers = {
+			{
+				name = "BladeGlow",
+				texture = "mf_blade_glow",
+				width = 17,
+				back = 1.5,
+				transparency = 0.35,
+				color = {
+					{
+						0,
+						{40, 80, 210},
+					},
+					{
+						0.5,
+						{90, 150, 255},
+					},
+					{
+						1,
+						{40, 80, 210},
+					},
+				},
+				light_emission = 1,
+				brightness = 1,
+				zoffset = -1,
+				ghosts = {
+					{5, 0.35},
+					{10, 0.6},
+					{16, 0.8},
+				},
+			},
+			{
+				name = "BladeFrost",
+				texture = "mf_blade_frost",
+				width = 9,
+				back = 0.8,
+				transparency = 0.1,
+				color = {
+					{
+						0,
+						{120, 175, 255},
+					},
+					{
+						0.5,
+						{200, 232, 255},
+					},
+					{
+						1,
+						{120, 175, 255},
+					},
+				},
+				light_emission = 1,
+				brightness = 1.25,
+				ghosts = {
+					{4, 0.4},
+					{8, 0.7},
+				},
+			},
+			{
+				name = "BladeCore",
+				texture = "mf_blade_core",
+				width = 3.4,
+				transparency = 0,
+				color = {
+					{
+						0,
+						{190, 220, 255},
+					},
+					{
+						0.5,
+						{255, 255, 255},
+					},
+					{
+						1,
+						{190, 220, 255},
+					},
+				},
+				light_emission = 1,
+				brightness = 1.8,
+				zoffset = 1,
+				ghosts = {
+					{2.5, 0.5},
+				},
+			},
+			{
+				name = "BladeEdge",
+				texture = "mf_blade_core",
+				width = 1.3,
+				back = -0.7,
+				transparency = 0,
+				color = {
+					{
+						0,
+						{230, 245, 255},
+					},
+					{
+						0.5,
+						{255, 255, 255},
+					},
+					{
+						1,
+						{230, 245, 255},
+					},
+				},
+				light_emission = 1,
+				brightness = 2.4,
+				zoffset = 2,
+				ghosts = {},
+			},
+		},
 	},
 }
 
--- MOONFANG SKILL 1 (Medialuna): de un zarpazo lanza una media luna gigante de luz que vuela a ras del suelo (llega al final en 0.55 s), abre una cicatriz de grietas de cristal, deja púas de hielo y al final se rompe en esquirlas. MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + dirección), largo, escala).
--- length = largo de la línea en studs (por defecto 110 × escala).
+-- MOONFANG SKILL 1 (Medialuna): de un zarpazo lanza una media luna de luz que vuela con la punta hacia adelante; su cuerno de abajo corta el suelo y arranca rocas que salen volando a los lados; al llegar al final (0.76 s) detona en hielo: nube de aire helado, ráfagas de viento frío, púas, pedazos de hielo y escarcha flotando. MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + dirección), largo, escala).
+-- cf = el punto del suelo de donde sale, mirando hacia donde va. length = cuánto recorre (por defecto 130.0 × escala).
 function MoonfangVFX.CrescentWave(cf: CFrame, length: number?, scale: number?, shake: number?): Part
-	return play(SPEC_CrescentWave, cf, scale, length or 110 * (scale or 1), shake)
+	return playBlade(SPEC_CrescentWave, cf, scale, length or 130.0 * (scale or 1), shake)
 end
+-- segundo (desde la llamada) en que llega al final y detona: para sincronizar el daño
+MoonfangVFX.CrescentWaveImpact = 0.76
 
 local SPEC_FangRain = {
 	name = "FangRain",

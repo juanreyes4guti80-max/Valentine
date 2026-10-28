@@ -9,6 +9,7 @@ la capa (Color), así una misma textura sirve en plata, hielo o azul cristal.
   mf_frost_cracks    grietas de cristal que salen del centro (Decal del suelo)
   mf_moonlight_2x2   cuatro variantes de luz de luna que cae (cuerpo de la columna del Eclipse)
   mf_aura_wisp_2x2   lenguas del aura en plata y hielo (sale de om_aura_wisp_2x2, ya coloreada)
+  mf_blade_core / mf_blade_glow / mf_blade_frost   los Beams de la media luna (núcleo, halo y cuerpo de escarcha)
 uso: python gen_moonfang_textures.py <carpeta textures de Moonfang> <carpeta textures de Omnívora>"""
 import math
 import os
@@ -194,6 +195,33 @@ def moonlight(n, seed):
     return v, a
 
 
+def blade(w, h, kind):
+    """Texturas para los Beams de la media luna (u = a lo largo, v = a lo ancho; perfil simétrico).
+    core: línea brillante y dura; glow: halo ancho y suave; frost: cuerpo con vetas de escarcha."""
+    v = (np.arange(h, dtype=np.float32) + 0.5) / h * 2 - 1           # -1..1 a lo ancho
+    u = (np.arange(w, dtype=np.float32) + 0.5) / w
+    V_, U_ = np.meshgrid(v, u, indexing="ij")
+    if kind == "core":
+        a = np.exp(-(V_ / 0.16) ** 2) * 1.0 + 0.45 * np.exp(-(V_ / 0.45) ** 2)
+        val = np.clip(0.8 + 0.2 * np.exp(-(V_ / 0.16) ** 2), 0, 1)
+    elif kind == "glow":
+        a = np.exp(-(V_ / 0.55) ** 2) * 0.9
+        val = np.ones_like(a)
+    else:
+        rng = np.random.default_rng(31)
+        streak = np.zeros_like(V_)
+        for _ in range(14):                                       # vetas finas a lo largo
+            c, wdt, amp = rng.uniform(-0.8, 0.8), rng.uniform(0.02, 0.07), rng.uniform(0.4, 1.0)
+            streak += amp * np.exp(-((V_ - c) / wdt) ** 2) * (0.6 + 0.4 * np.sin(U_ * rng.uniform(4, 9) * np.pi
+                                                                               + rng.uniform(0, 6)))
+        prof = np.exp(-(V_ / 0.62) ** 2)
+        a = np.clip(prof * (0.35 + 0.65 * np.clip(streak, 0, 1)), 0, 1)
+        val = np.clip(0.75 + 0.25 * np.clip(streak, 0, 1), 0, 1)
+    a = np.clip(a, 0, 1)
+    rgb = np.stack([val] * 3, -1)
+    return Image.fromarray(np.dstack([np.clip(rgb * 255, 0, 255), a[..., None] * 255]).astype(np.uint8), "RGBA")
+
+
 def atlas(tiles, n):
     out_v = np.zeros((2 * n, 2 * n), np.float32)
     out_a = np.zeros((2 * n, 2 * n), np.float32)
@@ -244,6 +272,8 @@ def main(out, omni_tex):
     rgb = np.where(t < 0.5, deep + (ice - deep) * (t / 0.5), ice + (white - ice) * ((t - 0.5) / 0.5))
     Image.fromarray(np.dstack([np.clip(rgb * 255, 0, 255), w[..., 3:] * 255]).astype(np.uint8), "RGBA") \
         .save(os.path.join(out, "mf_aura_wisp_2x2.png"))
+    for kind in ("core", "glow", "frost"):
+        blade(256, 128, kind).save(os.path.join(out, f"mf_blade_{kind}.png"))
     print("OK texturas de Moonfang ->", out)
 
 
