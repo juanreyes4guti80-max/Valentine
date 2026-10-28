@@ -474,8 +474,8 @@ do
 end
 -- MOONFANG: todo el kit (golpes, bloqueo, medialuna, lluvia de colmillos, aullido, eclipse y las dos auras)
 local MOON = loadMoonfang()
-runHit("MoonClaw", function() return MOON.MoonClaw(victim, 1, 1, -35) end, 1.5, front(R.Vector3.new(0, 11, 0), 3), 1)
-runHit("MoonClawFinisher", function() return MOON.MoonClawFinisher(victim, 1, 1) end, 1.5,
+runHit("MoonBite", function() return MOON.MoonBite(victim, 1, 1) end, 2.5, front(R.Vector3.new(0, 11, 0), 3), 1)
+runHit("MoonBiteFinisher", function() return MOON.MoonBiteFinisher(victim, 1, 1) end, 3,
 	front(R.Vector3.new(0, 11, 0), 3), 1)
 runHit("MoonFang", function() return MOON.MoonFang(victim, 1, 1) end, 2, front(R.Vector3.new(0, 11, 0), 3), 1)
 run("MoonGuardHit", function() return MOON.MoonGuardHit(victim, 1, 1) end, 1.5)

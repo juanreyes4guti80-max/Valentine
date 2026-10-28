@@ -9,8 +9,8 @@
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local MoonfangVFX = require(ReplicatedStorage.MoonfangVFX)
-		MoonfangVFX.MoonClaw(rival, 1, 1, 35)                    -- M1 golpes 1-3 (alterna el ángulo)
-		MoonfangVFX.MoonClawFinisher(rival, 1, 1)                -- M1 golpe 4
+		MoonfangVFX.MoonBite(rival, 1, 1)                        -- M1 mordiscos 1-3
+		MoonfangVFX.MoonBiteFinisher(rival, 1, 1)                -- M1 mordisco 4 (remate)
 		MoonfangVFX.MoonFang(rival, 1, 1)                        -- pesado
 		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
 		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado
@@ -62,8 +62,7 @@ MoonfangVFX.TEXTURES = {
 	mf_blade_glow = "rbxassetid://0",
 	mf_blade_line = "rbxassetid://0",
 	mf_blade_solid = "rbxassetid://0",
-	mf_claw_4x4 = "rbxassetid://0",
-	mf_claw_glow = "rbxassetid://0",
+	mf_chomp_4x4 = "rbxassetid://0",
 	mf_crescent = "rbxassetid://0",
 	mf_frost_cracks = "rbxassetid://0",
 	mf_frost_patch = "rbxassetid://0",
@@ -4433,121 +4432,79 @@ local function _planCataclysm(spec: Layer, epicenter: any, victimsIn: any, optio
 	}
 end
 
-local SPEC_MoonClaw = {
-	name = "MoonClaw",
-	duration = 0.6,
-	cleanup = 1.06,
+local SPEC_MoonBite = {
+	name = "MoonBite",
+	duration = 1.3,
+	cleanup = 2.13,
 	layers = {
 		{
-			name = "ClawMarks",
-			texture = "mf_claw_4x4",
+			name = "Chomp",
+			texture = "mf_chomp_4x4",
 			flipbook = {
 				layout = "Grid4x4",
 				mode = "OneShot",
 				fps = 30,
 				startRandom = false,
 			},
-			orientation = "VelocityParallel",
-			direction = "Bottom",
-			speed = {4, 4},
 			emit = {
 				{0, 1},
 			},
-			lifetime = {0.3, 0.3},
+			lifetime = {0.36, 0.36},
 			size = {
 				{0, 26, 0},
 				{1, 27.04, 0},
 			},
 			transparency = {
 				{0, 0, 0},
-				{0.7, 0, 0},
+				{0.8, 0, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
+					{215, 235, 255},
+				},
+				{
+					0.3,
 					{255, 255, 255},
 				},
 				{
-					0.5,
-					{220, 232, 255},
+					0.6,
+					{170, 210, 255},
 				},
 				{
 					1,
-					{165, 195, 250},
+					{120, 175, 255},
 				},
 			},
-			light_emission = 0.6,
-			brightness = 1.25,
+			light_emission = 0.8,
+			brightness = 1.4,
 			zoffset = 5,
+			speed = {0, 0},
 			spread = {0, 0},
+			direction = "Top",
 			accel = {0, 0, 0},
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 		},
 		{
-			name = "ClawGlow",
-			texture = "mf_claw_glow",
-			orientation = "VelocityParallel",
-			direction = "Bottom",
-			speed = {4, 4},
+			name = "ChompGlow",
+			texture = "fx_glow",
 			emit = {
-				{0.03, 1},
+				{0.1125, 1},
 			},
-			lifetime = {0.34, 0.34},
+			lifetime = {0.24, 0.24},
 			size = {
-				{0, 28.6, 0},
-				{1, 30.68, 0},
-			},
-			transparency = {
-				{0, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 0.7,
-			zoffset = 4,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "ClawArc",
-			texture = "mf_crescent",
-			orientation = "VelocityParallel",
-			direction = "Bottom",
-			speed = {4, 4},
-			emit = {
-				{0, 1},
-			},
-			lifetime = {0.18, 0.18},
-			size = {
-				{0, 18.2, 0},
-				{1, 31.2, 0},
+				{0, 13, 0},
+				{0.3, 23.4, 0},
+				{1, 26, 0},
 			},
 			transparency = {
 				{0, 0.45, 0},
-				{0.5, 0.7, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -4565,13 +4522,16 @@ local SPEC_MoonClaw = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1,
-			zoffset = 3,
+			brightness = 0.9,
+			zoffset = 4,
+			speed = {0, 0},
 			spread = {0, 0},
+			direction = "Top",
 			accel = {0, 0, 0},
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 		},
@@ -4579,16 +4539,16 @@ local SPEC_MoonClaw = {
 			name = "HitFlash",
 			texture = "fx_glow",
 			emit = {
-				{0.05, 1},
+				{0.1125, 1},
 			},
 			lifetime = {0.16, 0.18},
 			size = {
 				{0, 6, 0},
-				{0.3, 18, 0},
-				{1, 19.8, 0},
+				{0.3, 16, 0},
+				{1, 17.6, 0},
 			},
 			transparency = {
-				{0, 0.25, 0},
+				{0, 0.3625, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -4606,7 +4566,7 @@ local SPEC_MoonClaw = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.9,
+			brightness = 0.765,
 			zoffset = 6,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -4623,16 +4583,16 @@ local SPEC_MoonClaw = {
 			name = "HitStar",
 			texture = "kk_star_06",
 			emit = {
-				{0.05, 1},
+				{0.1125, 1},
 			},
 			lifetime = {0.14, 0.14},
 			size = {
 				{0, 10, 0},
-				{0.4, 17.1, 0},
-				{1, 10.8, 0},
+				{0.4, 15.2, 0},
+				{1, 9.6, 0},
 			},
 			transparency = {
-				{0, 0, 0},
+				{0, 0.15, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -4650,7 +4610,7 @@ local SPEC_MoonClaw = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 1.36,
 			rotation = {0, 360},
 			zoffset = 7,
 			speed = {0, 0},
@@ -4667,12 +4627,12 @@ local SPEC_MoonClaw = {
 			name = "HitRing",
 			texture = "kz_beam_ring",
 			emit = {
-				{0.05, 1},
+				{0.1125, 1},
 			},
 			lifetime = {0.22, 0.24},
 			size = {
 				{0, 6, 0},
-				{1, 34, 0},
+				{1, 30, 0},
 			},
 			transparency = {
 				{0, 0.2, 0},
@@ -4713,7 +4673,7 @@ local SPEC_MoonClaw = {
 			orientation = "VelocityParallel",
 			shape = {
 				type = "Box",
-				size = {14, 22, 1},
+				size = {18, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
@@ -4724,8 +4684,8 @@ local SPEC_MoonClaw = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.04, 14},
-				{0.07, 6},
+				{0.1025, 12},
+				{0.1325, 6},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -4763,7 +4723,7 @@ local SPEC_MoonClaw = {
 			orientation = "VelocityParallel",
 			shape = {
 				type = "Box",
-				size = {14, 22, 1},
+				size = {18, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
@@ -4774,8 +4734,8 @@ local SPEC_MoonClaw = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.04, 14},
-				{0.07, 6},
+				{0.1025, 12},
+				{0.1325, 6},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -4818,12 +4778,12 @@ local SPEC_MoonClaw = {
 			},
 			shape = {
 				type = "Box",
-				size = {14, 22, 1},
+				size = {18, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
 			emit = {
-				{0.05, 12},
+				{0.1125, 10},
 			},
 			direction = "Back",
 			spread = {70, 70},
@@ -4832,8 +4792,8 @@ local SPEC_MoonClaw = {
 			accel = {0, -90, 0},
 			lifetime = {0.4, 0.7},
 			size = {
-				{0, 1.4, 0.49},
-				{1, 0.98, 0.35},
+				{0, 1.3, 0.455},
+				{1, 0.91, 0.325},
 			},
 			transparency = {
 				{0, 0, 0},
@@ -4864,16 +4824,167 @@ local SPEC_MoonClaw = {
 			line_u = 0,
 		},
 		{
-			name = "Glints",
-			texture = "kk_star_06",
+			name = "Breath",
+			texture = "fx_fog2001",
 			shape = {
 				type = "Box",
-				size = {16, 24, 2},
+				size = {18, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
 			emit = {
-				{0.08, 6},
+				{0.1225, 4},
+			},
+			direction = "Back",
+			spread = {80, 40},
+			speed = {8, 22},
+			drag = 3,
+			accel = {0, 2, 0},
+			lifetime = {0.5, 0.8},
+			size = {
+				{0, 3, 1},
+				{1, 10, 2},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{185, 210, 245},
+				},
+			},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = -1,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "FrostbiteWound",
+			texture = "mf_frost_cracks",
+			emit = {
+				{0.1325, 1},
+			},
+			lifetime = {1, 1},
+			size = {
+				{0, 4.2, 0},
+				{0.08, 14, 0},
+				{1, 14.7, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.4, 0.15, 0},
+				{0.8, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 185, 255},
+				},
+				{
+					0.15,
+					{225, 242, 255},
+				},
+				{
+					0.35,
+					{130, 190, 255},
+				},
+				{
+					1,
+					{40, 80, 200},
+				},
+			},
+			light_emission = 0.9,
+			brightness = 1.2,
+			rotation = {0, 360},
+			zoffset = 2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "FrostbiteDrip",
+			texture = "fx_spark002",
+			shape = {
+				type = "Box",
+				size = {18, 2, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			stream = {
+				{0.1825, 1.1325, 14, 6},
+			},
+			direction = "Bottom",
+			spread = {25, 25},
+			speed = {2, 6},
+			accel = {0, -45, 0},
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.44, 0},
+				{0.22, 0.63, 0},
+				{0.38, 1.53, 0},
+				{0.55, 0.54, 0},
+				{0.72, 1.26, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Glints",
+			texture = "kk_star_06",
+			shape = {
+				type = "Box",
+				size = {18, 8, 2},
+				style = "Volume",
+				inout = "Outward",
+			},
+			emit = {
+				{0.1425, 6},
 			},
 			direction = "Back",
 			spread = {80, 80},
@@ -4917,377 +5028,62 @@ local SPEC_MoonClaw = {
 			offset = {0, 0, 0},
 			line_u = 0,
 		},
-		{
-			name = "Mist",
-			texture = "kk_smoke_04",
-			shape = {
-				type = "Box",
-				size = {10, 18, 1},
-				style = "Volume",
-				inout = "Outward",
-			},
-			emit = {
-				{0.06, 3},
-			},
-			direction = "Back",
-			spread = {60, 60},
-			speed = {3, 9},
-			drag = 2,
-			accel = {0, 3, 0},
-			lifetime = {0.45, 0.7},
-			size = {
-				{0, 4, 1},
-				{1, 11, 2},
-			},
-			transparency = {
-				{0, 0.62, 0},
-				{0.3, 0.58, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{215, 228, 248},
-				},
-				{
-					1,
-					{175, 190, 222},
-				},
-			},
-			rotation = {0, 360},
-			rot_speed = {-40, 40},
-			zoffset = -2,
-			light_emission = 0,
-			brightness = 1,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
 	},
 	shakes = {
-		{0.05, 0.4, 0.2},
+		{0.112, 0.4, 0.2},
 	},
 	light = {
 		color = {170, 210, 255},
 		brightness = 3,
 		range = 22,
 		time = 0.25,
-		delay = 0.05,
+		delay = 0.112,
 	},
 	hit = {
 		lift = 3,
 		ref = 22,
-		angle = 35,
-		angled = true,
-		impact = 0.05,
+		angle = 0,
+		angled = false,
+		impact = 0.112,
 	},
 }
 
--- MOONFANG M1 (golpes 1 a 3): tres marcas de garra curvas en plata se desgarran sobre el rival, con esquirlas de cristal, chispas de hielo y destellos. Alterna el ángulo en cada golpe (35, -35, 70).
+-- MOONFANG M1 (mordiscos 1 a 3): dos medias lunas de luz se cierran de golpe sobre el rival como una boca, chasquean en una línea que destella y sueltan chispas de hielo, esquirlas y vaho helado; queda una herida de escarcha que gotea cristalitos un segundo.
 -- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
 -- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
--- angle = inclinación del corte en grados (por defecto 35: en diagonal, de arriba a la izquierda
--- a abajo a la derecha). 0 = vertical, -35 = la otra diagonal (de arriba a la derecha a abajo a la
--- izquierda), 90 = horizontal.
-function MoonfangVFX.MoonClaw(target: any, scale: number?, shake: number?, angle: number?): Part
-	return playHit(SPEC_MoonClaw, target, scale, shake, angle)
+function MoonfangVFX.MoonBite(target: any, scale: number?, shake: number?): Part
+	return playHit(SPEC_MoonBite, target, scale, shake, 0)
 end
 -- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
-MoonfangVFX.MoonClawImpact = 0.05
+MoonfangVFX.MoonBiteImpact = 0.112
 
-local SPEC_MoonClawFinisher = {
-	name = "MoonClawFinisher",
-	duration = 0.85,
-	cleanup = 1.15,
+local SPEC_MoonBiteFinisher = {
+	name = "MoonBiteFinisher",
+	duration = 1.6,
+	cleanup = 2.47,
 	layers = {
 		{
-			name = "ClawAMarks",
-			texture = "mf_claw_4x4",
-			flipbook = {
-				layout = "Grid4x4",
-				mode = "OneShot",
-				fps = 30,
-				startRandom = false,
-			},
+			name = "LungeLines",
+			texture = "kk_trace_03",
 			orientation = "VelocityParallel",
-			direction = "Bottom",
-			speed = {4, 4},
-			emit = {
-				{0, 1},
+			shape = {
+				type = "Sphere",
+				radius = 18,
+				style = "Surface",
+				inout = "Inward",
 			},
-			lifetime = {0.3, 0.3},
+			emit = {
+				{0, 14},
+				{0.04, 8},
+			},
+			speed = {150, 200},
+			lifetime = {0.09, 0.11},
 			size = {
-				{0, 29, 0},
-				{1, 30.16, 0},
+				{0, 9, 2},
+				{1, 4, 0},
 			},
 			transparency = {
-				{0, 0, 0},
-				{0.7, 0, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 0.6,
-			brightness = 1.25,
-			zoffset = 5,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "ClawAGlow",
-			texture = "mf_claw_glow",
-			orientation = "VelocityParallel",
-			direction = "Bottom",
-			speed = {4, 4},
-			emit = {
-				{0.03, 1},
-			},
-			lifetime = {0.34, 0.34},
-			size = {
-				{0, 31.9, 0},
-				{1, 34.22, 0},
-			},
-			transparency = {
-				{0, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 0.7,
-			zoffset = 4,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "ClawAArc",
-			texture = "mf_crescent",
-			orientation = "VelocityParallel",
-			direction = "Bottom",
-			speed = {4, 4},
-			emit = {
-				{0, 1},
-			},
-			lifetime = {0.18, 0.18},
-			size = {
-				{0, 20.3, 0},
-				{1, 34.8, 0},
-			},
-			transparency = {
-				{0, 0.45, 0},
-				{0.5, 0.7, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 1,
-			zoffset = 3,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "ClawBMarks",
-			texture = "mf_claw_4x4",
-			flipbook = {
-				layout = "Grid4x4",
-				mode = "OneShot",
-				fps = 30,
-				startRandom = false,
-			},
-			orientation = "VelocityParallel",
-			direction = "Right",
-			speed = {4, 4},
-			emit = {
-				{0.08, 1},
-			},
-			lifetime = {0.3, 0.3},
-			size = {
-				{0, 29, 0},
-				{1, 30.16, 0},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.7, 0, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 0.6,
-			brightness = 1.35,
-			zoffset = 5,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "ClawBGlow",
-			texture = "mf_claw_glow",
-			orientation = "VelocityParallel",
-			direction = "Right",
-			speed = {4, 4},
-			emit = {
-				{0.11, 1},
-			},
-			lifetime = {0.34, 0.34},
-			size = {
-				{0, 31.9, 0},
-				{1, 34.22, 0},
-			},
-			transparency = {
-				{0, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 0.7,
-			zoffset = 4,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "ClawBArc",
-			texture = "mf_crescent",
-			orientation = "VelocityParallel",
-			direction = "Right",
-			speed = {4, 4},
-			emit = {
-				{0.08, 1},
-			},
-			lifetime = {0.18, 0.18},
-			size = {
-				{0, 20.3, 0},
-				{1, 34.8, 0},
-			},
-			transparency = {
-				{0, 0.45, 0},
-				{0.5, 0.7, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 1,
-			zoffset = 3,
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "HitFlash",
-			texture = "fx_glow",
-			emit = {
-				{0.1, 1},
-			},
-			lifetime = {0.16, 0.18},
-			size = {
-				{0, 6, 0},
-				{0.3, 24, 0},
-				{1, 26.4, 0},
-			},
-			transparency = {
-				{0, 0.55, 0},
+				{0, 0.3, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5305,7 +5101,245 @@ local SPEC_MoonClawFinisher = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.54,
+			brightness = 1.4,
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "Chomp",
+			texture = "mf_chomp_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 30,
+				startRandom = false,
+			},
+			emit = {
+				{0.03, 1},
+			},
+			lifetime = {0.4, 0.4},
+			size = {
+				{0, 34, 0},
+				{1, 35.36, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.8, 0, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 235, 255},
+				},
+				{
+					0.3,
+					{255, 255, 255},
+				},
+				{
+					0.6,
+					{170, 210, 255},
+				},
+				{
+					1,
+					{120, 175, 255},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1.5,
+			zoffset = 5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ChompGlow",
+			texture = "fx_glow",
+			emit = {
+				{0.155, 1},
+			},
+			lifetime = {0.24, 0.24},
+			size = {
+				{0, 17, 0},
+				{0.3, 30.6, 0},
+				{1, 34, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 170, 255},
+				},
+				{
+					0.5,
+					{60, 115, 240},
+				},
+				{
+					1,
+					{30, 60, 190},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.9,
+			zoffset = 4,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ChompEcho",
+			texture = "mf_chomp_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 30,
+				startRandom = false,
+			},
+			emit = {
+				{0.045, 1},
+			},
+			lifetime = {0.4, 0.4},
+			size = {
+				{0, 42, 0},
+				{1, 43.68, 0},
+			},
+			transparency = {
+				{0, 0.55, 0},
+				{0.8, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 235, 255},
+				},
+				{
+					0.3,
+					{255, 255, 255},
+				},
+				{
+					0.6,
+					{170, 210, 255},
+				},
+				{
+					1,
+					{120, 175, 255},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1,
+			zoffset = 5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ChompEchoGlow",
+			texture = "fx_glow",
+			emit = {
+				{0.17, 1},
+			},
+			lifetime = {0.24, 0.24},
+			size = {
+				{0, 21, 0},
+				{0.3, 37.8, 0},
+				{1, 42, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 170, 255},
+				},
+				{
+					0.5,
+					{60, 115, 240},
+				},
+				{
+					1,
+					{30, 60, 190},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.9,
+			zoffset = 4,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "HitFlash",
+			texture = "fx_glow",
+			emit = {
+				{0.155, 1},
+			},
+			lifetime = {0.16, 0.18},
+			size = {
+				{0, 6, 0},
+				{0.3, 26, 0},
+				{1, 28.6, 0},
+			},
+			transparency = {
+				{0, 0.475, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.63,
 			zoffset = 6,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -5322,16 +5356,16 @@ local SPEC_MoonClawFinisher = {
 			name = "HitStar",
 			texture = "kk_star_06",
 			emit = {
-				{0.1, 1},
+				{0.155, 1},
 			},
 			lifetime = {0.14, 0.14},
 			size = {
 				{0, 10, 0},
-				{0.4, 22.8, 0},
-				{1, 14.4, 0},
+				{0.4, 24.7, 0},
+				{1, 15.6, 0},
 			},
 			transparency = {
-				{0, 0.4, 0},
+				{0, 0.3, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -5349,7 +5383,7 @@ local SPEC_MoonClawFinisher = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.96,
+			brightness = 1.12,
 			rotation = {0, 360},
 			zoffset = 7,
 			speed = {0, 0},
@@ -5366,12 +5400,12 @@ local SPEC_MoonClawFinisher = {
 			name = "HitRing",
 			texture = "kz_beam_ring",
 			emit = {
-				{0.1, 1},
+				{0.155, 1},
 			},
 			lifetime = {0.22, 0.24},
 			size = {
 				{0, 6, 0},
-				{1, 48, 0},
+				{1, 52, 0},
 			},
 			transparency = {
 				{0, 0.2, 0},
@@ -5407,38 +5441,38 @@ local SPEC_MoonClawFinisher = {
 			line_u = 0,
 		},
 		{
-			name = "CrossBurst",
+			name = "SnapStar",
 			texture = "kk_star_08",
 			emit = {
-				{0.1, 1},
+				{0.155, 1},
 			},
 			lifetime = {0.22, 0.22},
 			size = {
 				{0, 12, 0},
-				{0.3, 36, 0},
-				{1, 20, 0},
+				{0.3, 40, 0},
+				{1, 22, 0},
 			},
 			transparency = {
-				{0, 0.3, 0},
+				{0, 0.2, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{230, 245, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{155, 210, 255},
+					{225, 240, 255},
 				},
 				{
 					1,
-					{85, 145, 245},
+					{170, 205, 255},
 				},
 			},
 			light_emission = 1,
-			brightness = 1.1,
-			rotation = {45, 45},
+			brightness = 1.3,
+			rotation = {0, 0},
 			zoffset = 7,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -5454,12 +5488,12 @@ local SPEC_MoonClawFinisher = {
 			name = "CrystalRing",
 			texture = "kk_circle_02",
 			emit = {
-				{0.12, 1},
+				{0.175, 1},
 			},
 			lifetime = {0.32, 0.32},
 			size = {
 				{0, 10, 0},
-				{1, 56, 0},
+				{1, 58, 0},
 			},
 			transparency = {
 				{0, 0.15, 0},
@@ -5495,12 +5529,64 @@ local SPEC_MoonClawFinisher = {
 			line_u = 0,
 		},
 		{
+			name = "IceBloom",
+			texture = "mf_spike",
+			orientation = "VelocityParallel",
+			shape = {
+				type = "Sphere",
+				radius = 1.5,
+				style = "Volume",
+				inout = "Outward",
+			},
+			emit = {
+				{0.155, 12},
+			},
+			direction = "Back",
+			spread = {180, 180},
+			speed = {40, 70},
+			drag = 10,
+			lifetime = {0.45, 0.6},
+			size = {
+				{0, 1, 0},
+				{0.15, 7, 1.5},
+				{0.8, 7.5, 1.5},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.8, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.5,
+			brightness = 1.6,
+			zoffset = 4,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
 			name = "SparksRight",
 			texture = "kk_trace_01",
 			orientation = "VelocityParallel",
 			shape = {
 				type = "Box",
-				size = {18, 18, 1},
+				size = {22, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
@@ -5511,8 +5597,8 @@ local SPEC_MoonClawFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.09, 18},
-				{0.12, 8},
+				{0.145, 18},
+				{0.175, 8},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5550,7 +5636,7 @@ local SPEC_MoonClawFinisher = {
 			orientation = "VelocityParallel",
 			shape = {
 				type = "Box",
-				size = {18, 18, 1},
+				size = {22, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
@@ -5561,8 +5647,8 @@ local SPEC_MoonClawFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.09, 18},
-				{0.12, 8},
+				{0.145, 18},
+				{0.175, 8},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5600,7 +5686,7 @@ local SPEC_MoonClawFinisher = {
 			orientation = "VelocityParallel",
 			shape = {
 				type = "Box",
-				size = {18, 18, 1},
+				size = {22, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
@@ -5611,8 +5697,8 @@ local SPEC_MoonClawFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.09, 10},
-				{0.12, 6},
+				{0.145, 8},
+				{0.175, 4},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5650,7 +5736,7 @@ local SPEC_MoonClawFinisher = {
 			orientation = "VelocityParallel",
 			shape = {
 				type = "Box",
-				size = {18, 18, 1},
+				size = {22, 2, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
@@ -5661,8 +5747,8 @@ local SPEC_MoonClawFinisher = {
 			accel = {0, -40, 0},
 			lifetime = {0.16, 0.3},
 			emit = {
-				{0.09, 10},
-				{0.12, 6},
+				{0.145, 8},
+				{0.175, 4},
 			},
 			size = {
 				{0, 6, 1.5},
@@ -5705,12 +5791,12 @@ local SPEC_MoonClawFinisher = {
 			},
 			shape = {
 				type = "Box",
-				size = {18, 18, 1},
+				size = {22, 4, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
 			emit = {
-				{0.1, 24},
+				{0.155, 24},
 			},
 			direction = "Back",
 			spread = {70, 70},
@@ -5751,16 +5837,167 @@ local SPEC_MoonClawFinisher = {
 			line_u = 0,
 		},
 		{
-			name = "Glints",
-			texture = "kk_star_06",
+			name = "Breath",
+			texture = "fx_fog2001",
 			shape = {
 				type = "Box",
-				size = {22, 22, 2},
+				size = {22, 3, 1},
 				style = "Volume",
 				inout = "Outward",
 			},
 			emit = {
-				{0.12, 10},
+				{0.165, 7},
+			},
+			direction = "Back",
+			spread = {80, 40},
+			speed = {8, 22},
+			drag = 3,
+			accel = {0, 2, 0},
+			lifetime = {0.5, 0.8},
+			size = {
+				{0, 4, 1},
+				{1, 13, 2},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{185, 210, 245},
+				},
+			},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			zoffset = -1,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "FrostbiteWound",
+			texture = "mf_frost_cracks",
+			emit = {
+				{0.175, 1},
+			},
+			lifetime = {1.3, 1.3},
+			size = {
+				{0, 6, 0},
+				{0.08, 20, 0},
+				{1, 21, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.4, 0.15, 0},
+				{0.8, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 185, 255},
+				},
+				{
+					0.15,
+					{225, 242, 255},
+				},
+				{
+					0.35,
+					{130, 190, 255},
+				},
+				{
+					1,
+					{40, 80, 200},
+				},
+			},
+			light_emission = 0.9,
+			brightness = 1.2,
+			rotation = {0, 360},
+			zoffset = 2,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "FrostbiteDrip",
+			texture = "fx_spark002",
+			shape = {
+				type = "Box",
+				size = {22, 2, 1},
+				style = "Volume",
+				inout = "Outward",
+			},
+			stream = {
+				{0.225, 1.475, 20, 8},
+			},
+			direction = "Bottom",
+			spread = {25, 25},
+			speed = {2, 6},
+			accel = {0, -45, 0},
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.44, 0},
+				{0.22, 0.63, 0},
+				{0.38, 1.53, 0},
+				{0.55, 0.54, 0},
+				{0.72, 1.26, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Glints",
+			texture = "kk_star_06",
+			shape = {
+				type = "Box",
+				size = {24, 12, 2},
+				style = "Volume",
+				inout = "Outward",
+			},
+			emit = {
+				{0.175, 10},
 			},
 			direction = "Back",
 			spread = {80, 80},
@@ -5804,84 +6041,35 @@ local SPEC_MoonClawFinisher = {
 			offset = {0, 0, 0},
 			line_u = 0,
 		},
-		{
-			name = "Mist",
-			texture = "kk_smoke_04",
-			shape = {
-				type = "Box",
-				size = {14, 14, 1},
-				style = "Volume",
-				inout = "Outward",
-			},
-			emit = {
-				{0.11, 5},
-			},
-			direction = "Back",
-			spread = {60, 60},
-			speed = {3, 9},
-			drag = 2,
-			accel = {0, 3, 0},
-			lifetime = {0.45, 0.7},
-			size = {
-				{0, 5, 1},
-				{1, 14, 2},
-			},
-			transparency = {
-				{0, 0.62, 0},
-				{0.3, 0.58, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{215, 228, 248},
-				},
-				{
-					1,
-					{175, 190, 222},
-				},
-			},
-			rotation = {0, 360},
-			rot_speed = {-40, 40},
-			zoffset = -2,
-			light_emission = 0,
-			brightness = 1,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
 	},
 	shakes = {
-		{0.02, 0.3, 0.15},
-		{0.1, 0.75, 0.3},
+		{0.02, 0.25, 0.12},
+		{0.155, 0.8, 0.3},
 	},
 	light = {
 		color = {180, 215, 255},
 		brightness = 5,
 		range = 28,
 		time = 0.35,
-		delay = 0.1,
+		delay = 0.155,
 	},
 	hit = {
 		lift = 3,
 		ref = 22,
-		angle = 45,
-		angled = true,
-		impact = 0.1,
+		angle = 0,
+		angled = false,
+		impact = 0.155,
 	},
 }
 
--- MOONFANG M1 (golpe 4, remate): dos zarpazos que se cruzan en X sobre el rival y revientan en un anillo de cristal con muchas esquirlas y destellos.
+-- MOONFANG M1 (mordisco 4, remate): una embestida; líneas de velocidad se cierran sobre el rival, una mordida doble más grande chasquea y revienta en una flor de púas de hielo, esquirlas y vaho helado, y deja una herida de escarcha más grande.
 -- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
 -- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
--- angle = inclinación del corte en grados (por defecto 45: en diagonal, de arriba a la izquierda
--- a abajo a la derecha). 0 = vertical, -35 = la otra diagonal (de arriba a la derecha a abajo a la
--- izquierda), 90 = horizontal.
-function MoonfangVFX.MoonClawFinisher(target: any, scale: number?, shake: number?, angle: number?): Part
-	return playHit(SPEC_MoonClawFinisher, target, scale, shake, angle)
+function MoonfangVFX.MoonBiteFinisher(target: any, scale: number?, shake: number?): Part
+	return playHit(SPEC_MoonBiteFinisher, target, scale, shake, 0)
 end
 -- segundo (desde la llamada) en que el golpe conecta: para sincronizar el número de daño o el sonido
-MoonfangVFX.MoonClawFinisherImpact = 0.1
+MoonfangVFX.MoonBiteFinisherImpact = 0.155
 
 local SPEC_MoonFang = {
 	name = "MoonFang",

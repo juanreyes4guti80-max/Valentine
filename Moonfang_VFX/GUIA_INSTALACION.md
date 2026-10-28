@@ -19,7 +19,7 @@ Hay dos caminos y los dos te dan la misma carpeta `Moonfang_VFX`.
 En Studio vas a usar:
 
 - `roblox/MoonfangVFX.rbxmx`, el módulo;
-- el plugin `SubirTexturasVFX.rbxmx`, que sube las 35 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
+- el plugin `SubirTexturasVFX.rbxmx`, que sube las 34 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
 
 ## Instalación (unos 2 minutos, con el plugin)
 
@@ -41,8 +41,8 @@ En Studio vas a usar:
 
 | Ataque | Función | Qué se ve | Momento clave |
 |---|---|---|---|
-| **M1** golpes 1-3 | `MoonClaw(rival, escala, sacudida, ángulo)` | Tres marcas de garra curvas en plata se desgarran sobre el rival, con esquirlas de cristal, chispas de hielo y destellos. | conecta a los **0.05 s** |
-| **M1** golpe 4 | `MoonClawFinisher(rival, escala, sacudida, ángulo)` | Dos zarpazos que se cruzan en **X** y revientan en un anillo de cristal con muchas esquirlas. | conecta a los **0.1 s** |
+| **M1** mordiscos 1-3 | `MoonBite(rival, escala, sacudida)` | Un **mordisco de energía**, sin mandíbulas ni dientes. Dos medias lunas de luz (arriba y abajo) se cierran de golpe sobre el rival como una boca y chasquean en una línea que destella. De la mordida salen chispas de hielo hacia los lados, esquirlas y vaho helado. Queda una **herida de escarcha** que gotea cristalitos durante un segundo, como el sangrado del Primal Bite. | chasquea a los **0.112 s** |
+| **M1** mordisco 4 | `MoonBiteFinisher(rival, escala, sacudida)` | El remate es una **embestida**, como el último mordisco del Frenzied Feast. Unas líneas de velocidad se cierran sobre el rival y una mordida doble más grande chasquea y revienta en una **flor de púas de hielo**. Suelta más esquirlas y vaho, y la herida de escarcha es más grande. | chasquea a los **0.155 s** |
 | **Pesado** | `MoonFang(rival, escala, sacudida)` | Unas mandíbulas de luz plateada se cierran de golpe sobre el rival. De la mordida brotan agujas de cristal que crecen y **estallan**, con dos ondas de media luna. | muerde a los **0.14 s**; los cristales estallan a los **0.62 s** |
 | **Bloqueo** (mientras bloquea) | `MoonGuard(moonfang, escala, duración, intensidad)` | Aura de escarcha que delinea todo su cuerpo en hielo y plata, con esquirlas de cristal flotando. | se enciende en 0.15 s |
 | **Bloqueo** (cada golpe bloqueado) | `MoonGuardHit(moonfang, escala, sacudida)` | Una media luna de luz aparece como escudo delante de él, con esquirlas que rebotan a los lados. | 0.02 s |
@@ -51,9 +51,9 @@ En Studio vas a usar:
 | **Skill 3: Aullido lunar** | `LunarHowl(cabeza, escala, sacudida)` + `LunarAura(moonfang, …)` | La luz se junta en su hocico, aúlla con ondas de sonido y una luna llena enorme aparece detrás de él y lo baña de luz. Después, el aura de luz de luna mientras dure la mejora. | aúlla a los **0.3 s** |
 | **Skill 4: Eclipse** | `Eclipse(cf, radio, altura, escala, sacudida)` | Una luna llena aparece sobre la zona y se va eclipsando. La zona se agrieta en escarcha y los pedazos del suelo levitan. Al quedar cubierta cae una columna de luz de luna que hace volar tierra y cristal. Al final queda un anillo de cristal roto. | el golpe es a los **1.15 s**; la columna dura hasta los 2.6 s |
 
-El daño, el knockback y la duración de la mejora los pones tú en tu sistema de combate. Los momentos de la tabla también están en el módulo: `MoonfangVFX.MoonClawImpact`, `MoonfangVFX.MoonClawFinisherImpact`, `MoonfangVFX.MoonFangImpact`, `MoonfangVFX.MoonGuardHitImpact` y `MoonfangVFX.CrescentWaveImpact`.
+El daño, el knockback y la duración de la mejora los pones tú en tu sistema de combate. Los momentos de la tabla también están en el módulo: `MoonfangVFX.MoonBiteImpact`, `MoonfangVFX.MoonBiteFinisherImpact`, `MoonfangVFX.MoonFangImpact`, `MoonfangVFX.MoonGuardHitImpact` y `MoonfangVFX.CrescentWaveImpact`.
 
-**En revisión:** los M1 van a cambiar a **mordiscos**, y el resto del kit lo vamos rehaciendo uno por uno. La Medialuna ya es la versión nueva.
+**En revisión:** el kit se rehace uno por uno. Ya son versión nueva la Medialuna y los mordiscos del M1. El pesado todavía usa las mandíbulas de antes.
 
 ## Cómo llamarlo
 
@@ -65,15 +65,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MoonfangVFX = require(ReplicatedStorage.MoonfangVFX)
 local evento = ReplicatedStorage:WaitForChild("MoonfangVFX") -- RemoteEvent
 
-local ANGULOS = { 35, -35, 70 } -- M1: cada golpe en otra diagonal
 local guardias = {}
 
 evento.OnClientEvent:Connect(function(que: string, d: any)
 	if que == "M1" then
 		if d.golpe < 4 then
-			MoonfangVFX.MoonClaw(d.rival, d.escala, 1, ANGULOS[d.golpe])
+			MoonfangVFX.MoonBite(d.rival, d.escala, 1)
 		else
-			MoonfangVFX.MoonClawFinisher(d.rival, d.escala, 1)
+			MoonfangVFX.MoonBiteFinisher(d.rival, d.escala, 1) -- el 4.º es el remate
 		end
 	elseif que == "Pesado" then
 		MoonfangVFX.MoonFang(d.rival, d.escala, 1)
@@ -132,7 +131,7 @@ En el pico:
 | Medialuna | unas 1100 | unas 118 losas, 62 rocas y 240 Beams |
 | Lluvia de colmillos | unas 600 | 20 colmillos |
 | Eclipse | unas 600 | unos 150 pedazos |
-| Golpes | de 60 a 140 | — |
+| Golpes | de 60 a 160 | — |
 
 `MoonfangVFX.Quality = 0.6` baja las partículas, los pedazos, las losas y los trazos de la hoja (por ejemplo, en celulares).
 

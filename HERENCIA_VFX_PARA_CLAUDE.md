@@ -358,7 +358,7 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
   - `CosmicAura`;
   - **ULTIMATE `GravitationalCataclysm`**: 23 s, radio de 500 m (1786 studs), 8 fases, plan para el servidor, escena de prueba `CataclysmDemo.client.lua`.
 - **Astral Colossus** (`AstralColossusVFX`): `AstralClash`.
-- **Moonfang** (`MoonfangVFX`): `MoonClaw` y `MoonClawFinisher` (M1), `MoonGuard` y `MoonGuardHit` (bloqueo), `MoonFang` (pesado), `CrescentWave` (skill 1), `FangRain` (skill 2), `LunarHowl` y `LunarAura` (skill 3) y `Eclipse` (skill 4). Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
+- **Moonfang** (`MoonfangVFX`): `MoonBite` y `MoonBiteFinisher` (M1, mordiscos), `MoonGuard` y `MoonGuardHit` (bloqueo), `MoonFang` (pesado), `CrescentWave` (skill 1), `FangRain` (skill 2), `LunarHowl` y `LunarAura` (skill 3) y `Eclipse` (skill 4). Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
 - **Plugin** `SubirTexturasVFX`.
 
 **Pendiente o por verificar (tu terreno):**
@@ -369,8 +369,8 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
 3. Rocas de destrucción para Astral Colossus: el usuario iba a mandar detalles.
 4. Animaciones del kit de Kaiju Zero (A1–A4, ver `KaijuZero_Habilidades/REFERENCIA_VIDEO.md`): necesitan el `.blend` con el rig.
 5. **Moonfang, opinión del usuario: 3/10 al primer kit.** Solo le convenció la ulti (Eclipse). Pidió:
-   - M1 como **mordiscos** al estilo de Devil Dinosaur (Marvel Rivals), NO como mandíbulas con dientes ("eso es Pokémon");
-   - el resto del kit, uno por uno cuando él diga.
+   - M1 como **mordiscos** al estilo de Devil Dinosaur (Marvel Rivals), NO como mandíbulas con dientes ("eso es Pokémon"). Ya están: `MoonBite` es un flipbook (`mf_chomp_4x4`) de dos medias lunas de luz que se cierran como una boca y chasquean, más chispas, vaho y una herida de escarcha que gotea. No pude ver el video de Devil Dinosaur (red bloqueada); si tú puedes, compáralo;
+   - el resto del kit, uno por uno cuando él diga. El pesado (`MoonFang`) todavía usa las mandíbulas con dientes (`kz_bite_4x4`) que no le gustaron.
 
    Las auras tampoco le convencieron en el juego.
 

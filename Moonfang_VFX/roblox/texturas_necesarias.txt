@@ -23,8 +23,7 @@ mf_aura_wisp_2x2.png
 mf_blade_glow.png
 mf_blade_line.png
 mf_blade_solid.png
-mf_claw_4x4.png
-mf_claw_glow.png
+mf_chomp_4x4.png
 mf_crescent.png
 mf_frost_cracks.png
 mf_frost_patch.png

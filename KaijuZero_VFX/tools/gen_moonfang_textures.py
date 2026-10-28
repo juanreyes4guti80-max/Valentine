@@ -1,9 +1,8 @@
 """Texturas propias de MOONFANG (lobo kaiju lunar de cristal). Todas en blanco/gris con alfa: el color lo pone
 la capa (Color), así una misma textura sirve en plata, hielo o azul cristal.
   mf_crescent        media luna con borde brillante (cortes, ondas, el escudo del bloqueo)
-  mf_claw            tres marcas de garra curvas (como medias lunas finas)
-  mf_claw_4x4        las mismas marcas desgarrándose (16 cuadros)
-  mf_claw_glow       su resplandor
+  mf_chomp_4x4       el mordisco de energía (16 cuadros): dos arcos de luz se cierran como una boca, chasquean en
+                     una línea que destella y se apagan (sin dientes)
   mf_shard_2x2       cuatro esquirlas de cristal facetadas
   mf_moon            luna llena con cráteres
   mf_frost_cracks    grietas de cristal que salen del centro (Decal del suelo)
@@ -70,29 +69,71 @@ def spike(n):
     return v, a
 
 
-def claw_field(n, reveal=1.0, lead=False):
-    """Tres arcos de garra. reveal = cuánto del arco ya se rasgó (0..1, de arriba hacia abajo)."""
+def chomp_frame(n, i, nf=16, k_close=5):
+    """Un cuadro del mordisco de energía (sin dientes): dos medias lunas de luz, la de arriba y la de abajo, se cierran
+    como una boca, con su barrido y sus líneas de velocidad (cuadros 0..k_close-1). En k_close chasquean en una
+    línea que destella; después la línea se encoge hacia el centro, suelta astillas de luz y se apaga."""
     x, y = grid(n)
+    y = -y                                                   # y hacia arriba
+    W = 0.88
+    ax = np.abs(x)
+    prof = np.sqrt(np.clip(1 - (ax / W) ** 2, 0, 1))         # 1 en el centro .. 0 en las comisuras
+    rng = np.random.default_rng(13)
+    stre = np.clip(0.55 + 0.45 * (noise(n, 23, 5) * 2 - 1), 0, 1)[0:1, :].repeat(n, 0)   # vetas verticales
     v = np.zeros_like(x)
     a = np.zeros_like(x)
-    for k, off in enumerate((-0.42, 0.0, 0.42)):
-        cx = off - 1.35                         # centro del círculo muy a la izquierda: arcos suaves
-        R = 1.62 + 0.02 * k
-        d = np.hypot(x - cx, y) - R             # distancia al arco
-        s = np.clip((y + 0.92) / 1.84, 0, 1)    # 0 arriba .. 1 abajo
-        width = 0.075 * np.maximum(np.sin(np.pi * np.clip(s, 0, 1)), 0) ** 0.8 + 0.004
-        stagger = 0.08 * (1 - k * 0.5)
-        rv = np.clip(reveal * 1.2 - stagger, 0, 1)
-        cut = smooth(rv + 0.02, rv - 0.04, s)    # hasta dónde llegó el desgarro
-        core = smooth(width, width * 0.35, np.abs(d)) * cut * (np.abs(y) < 0.95)
-        halo = np.exp(-(np.abs(d) / (width * 3.2 + 1e-4)) ** 2) * cut * 0.35 * (np.abs(y) < 0.97)
-        a = np.maximum(a, np.maximum(core, halo))
-        v = np.maximum(v, 0.8 * core + 0.2 * halo)
-        if lead and rv < 1:
-            hot = np.exp(-((s - rv) / 0.05) ** 2) * smooth(width * 2.5, 0, np.abs(d))
-            a = np.maximum(a, hot)
-            v = np.maximum(v, hot)
-    return np.clip(v + 0.2 * a, 0, 1), np.clip(a, 0, 1)
+    if i < k_close:
+        p = i / k_close
+        h = 0.62 * (1 - p ** 1.5) + 0.03
+        Wt = W * 0.94
+        tip = np.clip(1 - (ax / Wt) ** 2, 0, 1)
+        th = 0.11 * tip ** 0.9 + 0.004                       # media luna: gruesa al centro, puntas afiladas
+        blur = 0.05 + 0.28 * p                               # el barrido crece con la velocidad
+        for sgn in (1, -1):
+            d = sgn * (y - sgn * h * prof)                   # > 0: del lado de donde viene
+            body = smooth(-0.01, 0.0, d) * smooth(th + 0.012, th, d) * (ax < Wt)     # d en [0, th]
+            smear = np.where(d > th, np.exp(-(d - th) / blur), 0) * tip * 0.8 * stre
+            echo = np.zeros_like(x)
+            for e in (1, 2):                                 # líneas de velocidad detrás de cada media luna
+                o = th + e * (0.05 + 0.12 * p)
+                echo = np.maximum(echo, smooth(0.018, 0.007, np.abs(d - o)) * tip ** 1.5 * (0.8 / e) * p ** 0.4)
+            a = np.maximum.reduce([a, body, smear, echo])
+            v = np.maximum.reduce([v, body, smear * 0.6, echo * 0.85])
+        inner = smooth(h * prof + 0.02, h * prof - 0.06, np.abs(y)) * prof * 0.14 * (ax < W)   # la boca brilla
+        a = np.maximum(a, inner)
+        v = np.maximum(v, inner * 0.7)
+    elif i == k_close:
+        th = 0.1 * prof ** 0.7 + 0.004                       # se juntan: una lente brillante
+        lens = smooth(th + 0.014, th, np.abs(y)) * (ax < W)
+        flare = np.exp(-(x / 0.28) ** 2 - (y / 0.12) ** 2)
+        streak = np.exp(-(y / 0.035) ** 2) * smooth(1.0, 0.7, ax)            # el chasquido se estira a los lados
+        glow = np.exp(-(np.abs(y) / 0.18) ** 2) * prof * 0.45
+        a = np.maximum.reduce([lens, flare, streak, glow])
+        v = np.maximum.reduce([lens, flare, streak, glow * 0.8])
+    else:
+        q = (i - k_close) / (nf - 1 - k_close)               # 0 recién cerrada .. 1 al final
+        L = W * (1.06 - 0.8 * q ** 1.3)                      # la línea se encoge hacia el centro
+        lp = np.sqrt(np.clip(1 - (ax / L) ** 2, 0, 1))
+        th = 0.075 * (1 - q) ** 1.2 * lp ** 0.7 + 0.004
+        fade = (1 - q) ** 1.1
+        line = smooth(th + 0.014, th, np.abs(y)) * (ax < L) * fade
+        glow = np.exp(-(np.abs(y) / (0.06 + 0.22 * q)) ** 2) * lp * 0.45 * (1 - q) ** 2
+        flare = np.exp(-(x / (0.22 - 0.12 * q)) ** 2 - (y / (0.08 + 0.2 * q)) ** 2) * (1 - q) ** 2.2
+        a = np.maximum.reduce([line, glow, flare])
+        v = np.maximum.reduce([line, glow * 0.8, flare])
+        for _ in range(10):                                  # astillas de luz que salen de las comisuras
+            side = rng.choice([-1, 1])
+            ang = rng.uniform(-0.6, 0.6)
+            dist = W * 0.8 + q * rng.uniform(0.2, 0.45)
+            ux, uy = side * math.cos(ang), math.sin(ang)
+            cx, cy = ux * dist, uy * dist * 0.5
+            ln = 0.08 * (1 - q) + 0.015
+            along = (x - cx) * ux + (y - cy) * uy
+            across = -(x - cx) * uy + (y - cy) * ux
+            frag = smooth(ln, ln * 0.3, np.abs(along)) * smooth(0.013, 0.004, np.abs(across)) * (1 - q) ** 1.4
+            a = np.maximum(a, frag)
+            v = np.maximum(v, frag)
+    return np.clip(v, 0, 1), np.clip(a, 0, 1)
 
 
 def shard(n, kind, seed):
@@ -278,21 +319,16 @@ def main(out, omni_tex):
     N = 512 * SS
     v, a = crescent(N)
     save(v, a, os.path.join(out, "mf_crescent.png"), 512)
-    v, a = claw_field(N)
-    save(v, a, os.path.join(out, "mf_claw.png"), 512)
-    gv = np.asarray(Image.fromarray((a * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(N / 40)), np.float32) / 255
-    save(np.ones_like(gv), np.clip(gv * 1.6, 0, 1), os.path.join(out, "mf_claw_glow.png"), 256)
-    # flipbook 4x4 del desgarro
+    # flipbook 4x4 del mordisco: las medias lunas se cierran (cuadros 0-4), chasquean (5) y la línea se apaga (6-15)
     n = 256 * SS
     fv = np.zeros((4 * n, 4 * n), np.float32)
     fa = np.zeros_like(fv)
     for i in range(16):
-        rv = min(1.0, (i + 1) / 9.0)
-        v, a = claw_field(n, rv, lead=i < 10)
+        v, a = chomp_frame(n, i)
         r, c = divmod(i, 4)
         fv[r * n:(r + 1) * n, c * n:(c + 1) * n] = v
         fa[r * n:(r + 1) * n, c * n:(c + 1) * n] = a
-    save(fv, fa, os.path.join(out, "mf_claw_4x4.png"), 1024)
+    save(fv, fa, os.path.join(out, "mf_chomp_4x4.png"), 1024)
     n = 256 * SS
     v, a = atlas([shard(n, k, 3 + k) for k in range(4)], n)
     save(v, a, os.path.join(out, "mf_shard_2x2.png"), 512)

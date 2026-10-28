@@ -253,8 +253,8 @@ DOC_MOONFANG = """	MoonfangVFX — VFX del lobo kaiju lunar de cristal (plata, h
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local MoonfangVFX = require(ReplicatedStorage.MoonfangVFX)
-		MoonfangVFX.MoonClaw(rival, 1, 1, 35)                    -- M1 golpes 1-3 (alterna el ángulo)
-		MoonfangVFX.MoonClawFinisher(rival, 1, 1)                -- M1 golpe 4
+		MoonfangVFX.MoonBite(rival, 1, 1)                        -- M1 mordiscos 1-3
+		MoonfangVFX.MoonBiteFinisher(rival, 1, 1)                -- M1 mordisco 4 (remate)
 		MoonfangVFX.MoonFang(rival, 1, 1)                        -- pesado
 		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
 		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado

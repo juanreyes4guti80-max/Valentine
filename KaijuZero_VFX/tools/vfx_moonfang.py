@@ -3,7 +3,7 @@
 Identidad: luz de luna FRÍA (plata y blanco), hielo y azul cristal, esquirlas afiladas, medias lunas y destellos de
 estrella. Formas cortantes y brillantes (Omnívora, en cambio, es nebulosa suave, púrpura y agujeros negros).
 
-  M1        MoonClaw (golpes 1-3) y MoonClawFinisher (golpe 4): garras de cristal sobre el rival
+  M1        MoonBite (mordiscos 1-3) y MoonBiteFinisher (mordisco 4): mordiscos de energía sobre el rival
   BLOQUEO   MoonGuard (aura mientras bloquea) y MoonGuardHit (cada golpe bloqueado)
   PESADO    MoonFang: mordida lunar; brotan cristales de la herida y estallan
   SKILL 1   CrescentWave "Medialuna": una media luna de energía vuela de canto, corta el suelo y detona en hielo
@@ -46,21 +46,6 @@ def twinkle(k):
 
 
 # ----------------------------------------------------------------------------- piezas comunes de los golpes
-def claw(t, size, direction="Bottom", name="Claw", bright=1.25):
-    """Tres marcas curvas de garra que se desgarran (flipbook), su resplandor y el arco de la media luna."""
-    return [
-        dict(name=f"{name}Marks", texture="mf_claw_4x4", flipbook=ONESHOT, orientation="VelocityParallel",
-             direction=direction, speed=(4, 4), emit=[(t, 1)], lifetime=(0.3, 0.3), size=[(0, size), (1, size * 1.04)],
-             transparency=[(0, 0), (0.7, 0), (1, 1)], color=SILVER, light_emission=0.6, brightness=bright, zoffset=5),
-        dict(name=f"{name}Glow", texture="mf_claw_glow", orientation="VelocityParallel", direction=direction,
-             speed=(4, 4), emit=[(t + 0.03, 1)], lifetime=(0.34, 0.34), size=[(0, size * 1.1), (1, size * 1.18)],
-             transparency=[(0, 0.5), (1, 1)], color=CRYST, light_emission=1.0, brightness=0.7, zoffset=4),
-        dict(name=f"{name}Arc", texture="mf_crescent", orientation="VelocityParallel", direction=direction,
-             speed=(4, 4), emit=[(t, 1)], lifetime=(0.18, 0.18), size=[(0, size * 0.7), (1, size * 1.2)],
-             transparency=[(0, 0.45), (0.5, 0.7), (1, 1)], color=CRYST, light_emission=1.0, brightness=1.0, zoffset=3),
-    ]
-
-
 def impact(t, flash=18, ring_=34, glow=1.0, name="Hit"):
     """Destello, estrella y anillo del golpe (miran a la cámara)."""
     return [
@@ -105,44 +90,105 @@ def mist(t, n, box, name="Mist", size=(4, 11)):
                  rotation=(0, 360), rot_speed=(-40, 40), zoffset=-2)]
 
 
-CLAWBOX = (14, 22, 1)
+def chomp(t, size, name="Chomp", bright=1.4, tr0=0.0, life=0.36):
+    """El mordisco de energía (flipbook que mira a la cámara): dos medias lunas de luz se cierran como una boca y
+    chasquean a los t + life·5/16 s; su resplandor sale en el chasquido."""
+    snap = t + life * 5 / 16
+    return [
+        dict(name=name, texture="mf_chomp_4x4", flipbook=ONESHOT, emit=[(t, 1)], lifetime=(life, life),
+             size=[(0, size), (1, size * 1.04)], transparency=[(0, tr0), (0.8, tr0), (1, 1)],
+             color=[(0, (215, 235, 255)), (0.3, (255, 255, 255)), (0.6, (170, 210, 255)), (1, (120, 175, 255))],
+             light_emission=0.8, brightness=bright, zoffset=5),
+        dict(name=f"{name}Glow", texture="fx_glow", emit=[(snap, 1)], lifetime=(0.24, 0.24),
+             size=[(0, size * 0.5), (0.3, size * 0.9), (1, size * 1.0)], transparency=[(0, 0.45), (1, 1)],
+             color=CRYST, light_emission=1.0, brightness=0.9, zoffset=4),
+    ]
 
-# ----------------------------------------------------------------------------- M1: golpes 1-3
-T_CLAW = 0.05
-MOON_CLAW = {
-    "name": "MoonClaw",
-    "doc": ("MOONFANG M1 (golpes 1 a 3): tres marcas de garra curvas en plata se desgarran sobre el rival, con "
-            "esquirlas de cristal, chispas de hielo y destellos. Alterna el ángulo en cada golpe (35, -35, 70)."),
-    "duration": 0.6,
-    "hit": {"lift": 3, "ref": 22, "angle": 35, "angled": True, "impact": T_CLAW},
-    "light": {"color": (170, 210, 255), "brightness": 3, "range": 22, "time": 0.25, "delay": T_CLAW},
-    "shakes": [(T_CLAW, 0.4, 0.2)],
-    "layers": claw(0.0, 26) + impact(T_CLAW) + side_sparks(T_CLAW, CLAWBOX) + shards(T_CLAW, 12, CLAWBOX)
-    + glints(T_CLAW + 0.03, 6, (16, 24, 2)) + mist(T_CLAW + 0.01, 3, (10, 18, 1)),
+
+def breath(t, n, box, name="Breath", size=(3, 10)):
+    """Vaho helado que sale de la mordida (hacia los lados y hacia la cámara)."""
+    return [dict(name=name, texture="fx_fog2001", shape={"type": "Box", "size": box}, emit=[(t, n)],
+                 direction="Back", spread=(80, 40), speed=(8, 22), drag=3, accel=(0, 2, 0), lifetime=(0.5, 0.8),
+                 size=[(0, size[0], 1), (1, size[1], 2)], transparency=[(0, 0.5), (0.3, 0.55), (1, 1)],
+                 color=[(0, (225, 240, 255)), (1, (185, 210, 245))], light_emission=0.2, rotation=(0, 360),
+                 rot_speed=(-60, 60), zoffset=-1)]
+
+
+def frostbite(t, box, wound=14, drips=(14, 6), dur=1.0, name="Frostbite"):
+    """La herida de escarcha que deja la mordida (como el sangrado de Primal Bite): grietas de hielo que se abren y
+    cristalitos que gotean un rato."""
+    return [
+        dict(name=f"{name}Wound", texture="mf_frost_cracks", emit=[(t, 1)], lifetime=(dur, dur),
+             size=[(0, wound * 0.3), (0.08, wound), (1, wound * 1.05)],
+             transparency=[(0, 0), (0.4, 0.15), (0.8, 0.5), (1, 1)], color=FROST, light_emission=0.9,
+             brightness=1.2, rotation=(0, 360), zoffset=2),
+        dict(name=f"{name}Drip", texture="fx_spark002", shape={"type": "Box", "size": box},
+             stream=[(t + 0.05, t + dur, drips[0], drips[1])], direction="Bottom", spread=(25, 25), speed=(2, 6),
+             accel=(0, -45, 0), lifetime=(0.4, 0.7), size=twinkle(0.45), color=GLINT, light_emission=1.0,
+             brightness=1.8, rotation=(0, 45)),
+    ]
+
+
+CHOMPBOX = (18, 2, 1)       # la línea donde se juntan las dos medias lunas
+
+# ----------------------------------------------------------------------------- M1: mordiscos 1-3
+# Mordiscos de energía, sin mandíbulas ni dientes: dos medias lunas de luz (arriba y abajo) se cierran de golpe sobre
+# el rival como una boca que muerde, con su barrido; chasquean en una línea que destella y de la mordida salen chispas
+# de hielo hacia los lados, esquirlas, vaho helado y destellos. Deja una herida de escarcha que gotea cristalitos
+# (como el sangrado del Primal Bite de Devil Dinosaur). El 4.º es una embestida más fuerte (como el quinto mordisco
+# de su Frenzied Feast).
+T_BITE1 = 0.36 * 5 / 16      # chasquea
+MOON_BITE = {
+    "name": "MoonBite",
+    "doc": ("MOONFANG M1 (mordiscos 1 a 3): dos medias lunas de luz se cierran de golpe sobre el rival como una boca, "
+            "chasquean en una línea que destella y sueltan chispas de hielo, esquirlas y vaho helado; queda una "
+            "herida de escarcha que gotea cristalitos un segundo."),
+    "duration": 1.3,
+    "hit": {"lift": 3, "ref": 22, "angle": 0, "angled": False, "impact": round(T_BITE1, 3)},
+    "light": {"color": (170, 210, 255), "brightness": 3, "range": 22, "time": 0.25, "delay": round(T_BITE1, 3)},
+    "shakes": [(round(T_BITE1, 3), 0.4, 0.2)],
+    "layers": chomp(0.0, 26) + impact(T_BITE1, flash=16, ring_=30, glow=0.85)
+    + side_sparks(T_BITE1, CHOMPBOX, n=(12, 6)) + shards(T_BITE1, 10, CHOMPBOX, speed=(25, 55), size=1.3)
+    + breath(T_BITE1 + 0.01, 4, CHOMPBOX) + frostbite(T_BITE1 + 0.02, CHOMPBOX)
+    + glints(T_BITE1 + 0.03, 6, (18, 8, 2)),
 }
 
-# ----------------------------------------------------------------------------- M1: golpe 4 (remate)
-T_FIN = 0.1
-MOON_CLAW_FINISHER = {
-    "name": "MoonClawFinisher",
-    "doc": ("MOONFANG M1 (golpe 4, remate): dos zarpazos que se cruzan en X sobre el rival y revientan en un anillo "
-            "de cristal con muchas esquirlas y destellos."),
-    "duration": 0.85,
-    "hit": {"lift": 3, "ref": 22, "angle": 45, "angled": True, "impact": T_FIN},
-    "light": {"color": (180, 215, 255), "brightness": 5, "range": 28, "time": 0.35, "delay": T_FIN},
-    "shakes": [(0.02, 0.3, 0.15), (T_FIN, 0.75, 0.3)],
-    "layers": claw(0.0, 29, "Bottom", "ClawA") + claw(T_FIN - 0.02, 29, "Right", "ClawB", bright=1.35)
-    + impact(T_FIN, flash=24, ring_=48, glow=0.6)
-    + [dict(name="CrossBurst", texture="kk_star_08", emit=[(T_FIN, 1)], lifetime=(0.22, 0.22),
-            size=[(0, 12), (0.3, 36), (1, 20)], transparency=[(0, 0.3), (1, 1)], color=ICE, light_emission=1.0,
-            brightness=1.1, rotation=(45, 45), zoffset=7),
+# ----------------------------------------------------------------------------- M1: mordisco 4 (remate)
+T_FIN = 0.03 + 0.4 * 5 / 16  # chasquea
+MOON_BITE_FINISHER = {
+    "name": "MoonBiteFinisher",
+    "doc": ("MOONFANG M1 (mordisco 4, remate): una embestida; líneas de velocidad se cierran sobre el rival, una "
+            "mordida doble más grande chasquea y revienta en una flor de púas de hielo, esquirlas y vaho helado, y "
+            "deja una herida de escarcha más grande."),
+    "duration": 1.6,
+    "hit": {"lift": 3, "ref": 22, "angle": 0, "angled": False, "impact": round(T_FIN, 3)},
+    "light": {"color": (180, 215, 255), "brightness": 5, "range": 28, "time": 0.35, "delay": round(T_FIN, 3)},
+    "shakes": [(0.02, 0.25, 0.12), (round(T_FIN, 3), 0.8, 0.3)],
+    "layers": [
+        # la embestida: líneas de velocidad que se cierran sobre el rival
+        dict(name="LungeLines", texture="kk_trace_03", orientation="VelocityParallel",
+             shape={"type": "Sphere", "radius": 18, "style": "Surface", "inout": "Inward"}, emit=[(0.0, 14), (0.04, 8)],
+             speed=(150, 200), lifetime=(0.09, 0.11), size=[(0, 9, 2), (1, 4)], transparency=[(0, 0.3), (1, 1)],
+             color=ICE, light_emission=1.0, brightness=1.4),
+    ]
+    + chomp(0.03, 34, bright=1.5, life=0.4) + chomp(0.045, 42, name="ChompEcho", bright=1.0, tr0=0.55, life=0.4)
+    + impact(T_FIN, flash=26, ring_=52, glow=0.7)
+    + [dict(name="SnapStar", texture="kk_star_08", emit=[(T_FIN, 1)], lifetime=(0.22, 0.22),
+            size=[(0, 12), (0.3, 40), (1, 22)], transparency=[(0, 0.2), (1, 1)], color=GLINT, light_emission=1.0,
+            brightness=1.3, rotation=(0, 0), zoffset=7),
        dict(name="CrystalRing", texture="kk_circle_02", emit=[(T_FIN + 0.02, 1)], lifetime=(0.32, 0.32),
-            size=[(0, 10), (1, 56)], transparency=[(0, 0.15), (0.6, 0.5), (1, 1)], color=ICE, light_emission=1.0,
-            brightness=1.2, zoffset=2)]
-    + side_sparks(T_FIN, (18, 18, 1), n=(18, 8)) + side_sparks(T_FIN, (18, 18, 1), n=(10, 6), dirs=("Top", "Bottom"),
-                                                              name="SparksV")
-    + shards(T_FIN, 24, (18, 18, 1), speed=(35, 75), size=1.7) + glints(T_FIN + 0.02, 10, (22, 22, 2), k=1.4)
-    + mist(T_FIN + 0.01, 5, (14, 14, 1), size=(5, 14)),
+            size=[(0, 10), (1, 58)], transparency=[(0, 0.15), (0.6, 0.5), (1, 1)], color=ICE, light_emission=1.0,
+            brightness=1.2, zoffset=2),
+       # la flor de púas de hielo que revienta de la mordida
+       dict(name="IceBloom", texture="mf_spike", orientation="VelocityParallel",
+            shape={"type": "Sphere", "radius": 1.5}, emit=[(T_FIN, 12)], direction="Back", spread=(180, 180),
+            speed=(40, 70), drag=10, lifetime=(0.45, 0.6), size=[(0, 1), (0.15, 7, 1.5), (0.8, 7.5, 1.5), (1, 0)],
+            transparency=[(0, 0), (0.8, 0.1), (1, 1)], color=SHARD, light_emission=0.5, brightness=1.6, zoffset=4)]
+    + side_sparks(T_FIN, (22, 2, 1), n=(18, 8)) + side_sparks(T_FIN, (22, 2, 1), n=(8, 4), dirs=("Top", "Bottom"),
+                                                               name="SparksV")
+    + shards(T_FIN, 24, (22, 4, 1), speed=(35, 75), size=1.7) + breath(T_FIN + 0.01, 7, (22, 3, 1), size=(4, 13))
+    + frostbite(T_FIN + 0.02, (22, 2, 1), wound=20, drips=(20, 8), dur=1.3)
+    + glints(T_FIN + 0.02, 10, (24, 12, 2), k=1.4),
 }
 
 # ----------------------------------------------------------------------------- PESADO: mordida lunar
@@ -883,7 +929,7 @@ ECLIPSE = {
 }
 
 SPECS = {
-    "MoonClaw": MOON_CLAW, "MoonClawFinisher": MOON_CLAW_FINISHER, "MoonFang": MOON_FANG,
+    "MoonBite": MOON_BITE, "MoonBiteFinisher": MOON_BITE_FINISHER, "MoonFang": MOON_FANG,
     "MoonGuard": MOON_GUARD, "MoonGuardHit": MOON_GUARD_HIT,
     "CrescentWave": CRESCENT_WAVE, "FangRain": FANG_RAIN,
     "LunarHowl": LUNAR_HOWL, "LunarAura": LUNAR_AURA, "Eclipse": ECLIPSE,
