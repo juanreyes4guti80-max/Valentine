@@ -567,6 +567,57 @@ def slab_poses(slabs, t, o0, Rf, ground_y):
     return out
 
 
+def wave_u(wave, t):
+    """Hasta dónde llegó el frente de la ola (fracción del largo) en t: sale rápido y se va frenando (ease)."""
+    T0, TW = wave[0], wave[1]
+    ease = wave[2] if len(wave) > 2 else 1.0
+    p = min(max((t - T0) / TW, 0.0), 1.0)
+    return 1 - (1 - p) ** ease
+
+
+def wave_t(wave, u):
+    """Cuándo el frente llega a u (la inversa de wave_u)."""
+    T0, TW = wave[0], wave[1]
+    ease = wave[2] if len(wave) > 2 else 1.0
+    return T0 + TW * (1 - (1 - min(max(u, 0.0), 1.0)) ** (1 / ease))
+
+
+class ConeFront:
+    """Emisores que viajan con el frente de la ola triangular (lo mismo que runFront en el módulo): `count` puntos
+    repartidos a lo ancho del frente; cada capa suelta partículas por tasa (más cuanto más ancho está el frente) en
+    la dirección del abanico. Como nacen en el frente y se frenan, dejan detrás una estela espesa."""
+
+    def __init__(self, Fr, length, angle, scale):
+        self.Fr, self.len, self.s = Fr, length, scale
+        self.tanH = math.tan(math.radians(angle / 2))
+        K, sm = Fr["count"], Fr["s_max"]
+        self.S = [-sm + 2 * sm * (k + 0.5) / K for k in range(K)]
+        self.acc = {}
+
+    def step(self, t, dt, o0, Rf, rng):
+        W = self.Fr["wave"]
+        if t < W[0] or t > W[0] + W[1]:
+            return []
+        u = wave_u(W, t)
+        out = []
+        for ei, E in enumerate(self.Fr["emitters"]):
+            rate = E["rate"] * (0.25 + 0.75 * u)
+            pt = math.radians(E.get("pitch", 0.0))
+            Rx = np.array([[1, 0, 0], [0, math.cos(pt), -math.sin(pt)], [0, math.sin(pt), math.cos(pt)]])
+            for k, sk in enumerate(self.S):
+                key = (ei, k)
+                self.acc[key] = self.acc.get(key, 0.0) + rate * dt
+                if self.acc[key] < 1.0:
+                    continue
+                P = o0 + Rf @ np.array([sk * u * self.len * self.tanH, E.get("up", 0.0) * self.s, -u * self.len])
+                phi = -math.atan(sk * self.tanH)
+                Ry = np.array([[math.cos(phi), 0, math.sin(phi)], [0, 1, 0], [-math.sin(phi), 0, math.cos(phi)]])
+                while self.acc[key] >= 1.0:
+                    self.acc[key] -= 1.0
+                    out.append(spawn(E, P, rng, self.s, Rf @ Ry @ Rx, self.len))
+        return out
+
+
 class ConeField:
     """Lo que la ola triangular deja a su paso (lo mismo que runField en el módulo): grupos de bloques y losas
     repartidos por el triángulo (más donde es más ancho) que saltan cuando pasa el frente (t = wave[0] +
@@ -575,7 +626,6 @@ class ConeField:
     def __init__(self, F, length, angle, scale):
         self.F, self.len, self.s = F, length, scale
         tanH = math.tan(math.radians(angle / 2))
-        T0, TW = F["wave"]
         rng = random.Random(F.get("seed", 9))
         self.slabs = []
         for G in F["groups"]:
@@ -585,7 +635,7 @@ class ConeField:
                 x = rng.uniform(*G["s"]) * u * length * tanH
                 z = -u * length
                 yaw = math.atan2(z, x) if G.get("lean") == "radial" else rng.uniform(0, 2 * math.pi)
-                t_s = T0 + TW * u + rng.uniform(*G["delay"])
+                t_s = wave_t(F["wave"], u) + rng.uniform(*G["delay"])
                 self.slabs.append(make_slab(rng, G, scale, x, z, yaw, 1, t_s))
 
 
@@ -939,6 +989,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
     blade_geo = BladeGeo(spec["blade"], length, scale) if spec.get("blade") else None
     blade_acc = {}
     field = ConeField(spec["field"], length, cone_angle, scale) if spec.get("field") else None
+    front = ConeFront(spec["front"], length, cone_angle, scale) if spec.get("front") else None
     shattered = set()
     streams = []   # (L, origin, t_base)
     for L in spec["layers"]:
@@ -1010,6 +1061,9 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 acc -= 1.0
                 parts.append(spawn(L, o, rng, scale, Rs, length))
             st_[3] = acc
+        # los emisores que viajan con el frente de la ola
+        if front is not None:
+            parts += front.step(t, dt, o0, Rf, rng)
         # los bloques que revientan al terminar (end = "shatter"): sus partículas salen donde estaban
         if field is not None:
             for k_, SLb in enumerate(field.slabs):

@@ -19,7 +19,7 @@ Hay dos caminos y los dos te dan la misma carpeta `Moonfang_VFX`.
 En Studio vas a usar:
 
 - `roblox/MoonfangVFX.rbxmx`, el módulo;
-- el plugin `SubirTexturasVFX.rbxmx`, que sube las 34 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
+- el plugin `SubirTexturasVFX.rbxmx`, que sube las 35 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
 
 ## Instalación (unos 2 minutos, con el plugin)
 
@@ -47,7 +47,7 @@ En Studio vas a usar:
 | **Bloqueo** (mientras bloquea) | `MoonGuard(moonfang, escala, duración, intensidad)` | Aura de escarcha que delinea todo su cuerpo en hielo y plata, con esquirlas de cristal flotando. | se enciende en 0.15 s |
 | **Bloqueo** (cada golpe bloqueado) | `MoonGuardHit(moonfang, escala, sacudida)` | Una media luna de luz aparece como escudo delante de él, con esquirlas que rebotan a los lados. | 0.02 s |
 | **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | De un zarpazo lanza una **media luna de energía** que vuela **vertical y de canto**. De lado se ve la media luna, con la punta hacia adelante. Desde atrás (la cámara del jugador) se ve una hoja fina que apunta hacia donde va. Tiene el filo blanco y duro, y el cuerpo celeste y azul hecho de trazos finos. Mientras vuela deja una **estela de humo frío**, brillos y esquirlas. Su cuerno de abajo **corta el suelo**: se abre una grieta con escarcha y **las losas del suelo saltan inclinadas a los dos lados** (algunas son placas de hielo). También salen **rocas cúbicas** que caen y se quedan un rato en el camino antes de desmoronarse. Las losas y las rocas toman **el color y el material de tu suelo**. Al llegar al final **detona en hielo**: un destello, una cúpula de ondas, lanzas de hielo, una nube helada, viento frío por el suelo, una corona de púas, pedazos de hielo y un **cráter de losas**. | detona a los **0.76 s** (`MoonfangVFX.CrescentWaveImpact`) |
-| **Skill 2: Ola de hielo** | `IceWave(cf, largo, apertura, escala, sacudida)` | Golpea el suelo y una **ola de hielo** sale hacia adelante **abriéndose en triángulo**. Es un muro de aire helado y nieve con su cresta de esquirlas y púas, y crece mientras avanza. A su paso brotan **bloques de hielo** inclinados, más grandes al fondo. También saltan losas del suelo, salen rocas volando, el suelo queda escarchado y sube **humo frío** que se queda flotando. Al llegar al borde lejano la ola choca. Los bloques de hielo aguantan un par de segundos y revientan en esquirlas. | llega al borde lejano a los **0.87 s** |
+| **Skill 2: Ola de hielo** | `IceWave(cf, largo, apertura, escala, sacudida)` | Golpea el suelo y una **ola densa de humo helado** sale hacia adelante **abriéndose en triángulo**. Sale con fuerza y se va frenando hasta asentarse. El humo tiene volumen: una base densa y azulada, el muro blanco encima y una cresta alta que se arremolina. Abajo va una niebla pegada al suelo, y el borde de adelante se revuelve con polvo de nieve, esquirlas y tierra. El humo se queda atrás como una **estela espesa** que cubre el triángulo y se disipa despacio. A su paso el suelo se rompe y se escarcha, brotan **bloques de hielo** inclinados (más grandes al fondo), saltan losas y salen rocas y pedazos grandes volando. Los bloques de hielo aguantan un par de segundos y revientan en esquirlas. | llega al borde lejano a los **1.12 s** |
 | **Skill 3: Aullido lunar** | `LunarHowl(cabeza, escala, sacudida)` + `LunarAura(moonfang, …)` | La luz se junta en su hocico, aúlla con ondas de sonido y una luna llena enorme aparece detrás de él y lo baña de luz. Después, el aura de luz de luna mientras dure la mejora. | aúlla a los **0.3 s** |
 | **Skill 4: Eclipse** | `Eclipse(cf, radio, altura, escala, sacudida)` | Una luna llena aparece sobre la zona y se va eclipsando. La zona se agrieta en escarcha y los pedazos del suelo levitan. Al quedar cubierta cae una columna de luz de luna que hace volar tierra y cristal. Al final queda un anillo de cristal roto. | el golpe es a los **1.15 s**; la columna dura hasta los 2.6 s |
 
@@ -130,7 +130,7 @@ En el pico:
 | Efecto | Partículas | Otras piezas |
 |---|---|---|
 | Medialuna | unas 1100 | unas 118 losas, 62 rocas y 240 Beams |
-| Ola de hielo | unas 600 | unos 120 bloques y losas, y 30 rocas |
+| Ola de hielo | unas 1800 (casi todas de humo) | unos 120 bloques y losas, y 60 rocas |
 | Eclipse | unas 600 | unos 150 pedazos |
 | Golpes | de 60 a 160 | — |
 

@@ -5,6 +5,7 @@ fx_glow.png
 fx_halo.png
 fx_laser_thin.png
 fx_particle02.png
+fx_smoke_2x2.png
 fx_spark002.png
 fx_wind_swirl.png
 kk_circle_02.png

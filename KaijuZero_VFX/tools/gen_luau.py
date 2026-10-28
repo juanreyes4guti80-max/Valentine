@@ -178,6 +178,8 @@ def spec_end(spec):
         end = max(end, blade_end(spec["blade"], spec.get("line", 0)))
     if spec.get("field"):
         end = max(end, field_end(spec["field"]))
+    if spec.get("front"):
+        end = max(end, front_end(spec["front"]))
     return end
 
 
@@ -202,7 +204,7 @@ def plain(v):
 
 def norm_field(F):
     """Los grupos de bloques y losas de la ola triangular (las partículas al reventar, normalizadas)."""
-    out = {"wave": list(F["wave"]), "groups": []}
+    out = {"wave": list(F["wave"]) + ([1.0] if len(F["wave"]) < 3 else []), "groups": []}
     for G in F["groups"]:
         g = {k: plain(v) for k, v in G.items() if k not in ("shatter", "preview_color")}
         g["mesh"] = G["name"]
@@ -212,12 +214,29 @@ def norm_field(F):
     return out
 
 
+def wave_time(wave, u):
+    """Cuándo el frente de la ola triangular llega a u: sale rápido y se va frenando (wave = T0, TW, freno)."""
+    ease = wave[2] if len(wave) > 2 else 1.0
+    return wave[0] + wave[1] * (1 - (1 - min(max(u, 0.0), 1.0)) ** (1 / ease))
+
+
+def norm_front(Fr):
+    """Los emisores que viajan con el frente de la ola (capas normalizadas, con su tasa, altura e inclinación)."""
+    w = list(Fr["wave"]) + ([1.0] if len(Fr["wave"]) < 3 else [])
+    return {"wave": w, "count": Fr["count"], "s_max": Fr["s_max"],
+            "emitters": [dict(norm_layer({k: v for k, v in E.items() if k not in ("rate", "up", "pitch")}),
+                              rate=E["rate"], up=E.get("up", 0.0), pitch=E.get("pitch", 0.0)) for E in Fr["emitters"]]}
+
+
+def front_end(Fr):
+    return Fr["wave"][0] + Fr["wave"][1] + max(E["lifetime"][1] for E in Fr["emitters"])
+
+
 def field_end(F):
     """Cuándo termina lo último del campo (los bloques que revientan y sus partículas): cota superior."""
     end = 0.0
-    T0, TW = F["wave"]
     for G in F["groups"]:
-        t = T0 + TW * G["u"][1] + G["delay"][1] + G["rise"] + G["hold"][1]
+        t = wave_time(F["wave"], G["u"][1]) + G["delay"][1] + G["rise"] + G["hold"][1]
         after = max([L["lifetime"][1] for L in G.get("shatter", [])] + [0]) if G.get("end") == "shatter" else G["sink"]
         end = max(end, t + after)
     return end
@@ -1222,9 +1241,58 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 	return alive
 end
 
+-- ---------------------------------------------------------------- lo que viaja con el frente de la ola triangular
+-- `count` puntos repartidos a lo ancho del frente; cada capa suelta partículas por tasa (más cuanto más ancho está el
+-- frente) en la dirección del abanico, inclinada `pitch` grados hacia arriba. El frente sale rápido y se va frenando
+-- (wave = {T0, TW, freno}). Como el humo nace en el frente y se frena, deja detrás una estela espesa.
+local function runFront(Fr: any, holder: BasePart, s: number, len: number, tanH: number)
+	local items = {}
+	for _, E in Fr.emitters do
+		for k = 1, Fr.count do
+			local a = Instance.new("Attachment")
+			a.Name = E.name
+			a.Parent = holder
+			local pe = configureEmitter(E, s)
+			pe.Parent = a
+			table.insert(items, { a = a, pe = pe, E = E, sk = -Fr.s_max + 2 * Fr.s_max * (k - 0.5) / Fr.count, on = false })
+		end
+	end
+	local T0, TW, ease = Fr.wave[1], Fr.wave[2], Fr.wave[3] or 1
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = time() - t0
+		if t < T0 then
+			return
+		end
+		local u = 1 - (1 - math.clamp((t - T0) / TW, 0, 1)) ^ ease
+		local on = t <= T0 + TW
+		for _, it in items do
+			if on then
+				local pos = holder.CFrame:PointToWorldSpace(Vector3.new(it.sk * u * len * tanH, it.E.up * s, -u * len))
+				local dir = holder.CFrame:VectorToWorldSpace(Vector3.new(it.sk * tanH, 0, -1).Unit)
+				it.a.WorldCFrame = CFrame.lookAt(pos, pos + dir) * CFrame.Angles(math.rad(it.E.pitch or 0), 0, 0)
+				it.pe.Rate = it.E.rate * KaijuFireVFX.Quality * (0.25 + 0.75 * u)
+			end
+			if on ~= it.on then
+				it.on = on
+				it.pe.Enabled = on
+			end
+		end
+		if not on then
+			conn:Disconnect()
+		end
+	end)
+end
+
 -- ---------------------------------------------------------------- lo que deja la ola triangular (Ola de hielo)
--- Grupos de bloques y losas repartidos por el triángulo (más donde es más ancho): saltan cuando pasa el frente
--- (t = wave[1] + wave[2]·u), se quedan y se hunden; los de hielo revientan al final en sus partículas "shatter".
+-- Grupos de bloques y losas repartidos por el triángulo (más donde es más ancho): saltan cuando pasa el frente (que
+-- sale rápido y se va frenando: wave = {T0, TW, freno}), se quedan y se hunden; los de hielo revientan al final en
+-- sus partículas "shatter".
 local function runField(F: any, holder: BasePart, s: number, len: number, tanH: number)
 	local slabs: { Slab } = {}
 	local shatterFx: { [any]: { { e: ParticleEmitter, c: Instance, n: number } } } = {}
@@ -1234,7 +1302,7 @@ local function runField(F: any, holder: BasePart, s: number, len: number, tanH: 
 			local x = rng:NextNumber(G.s[1], G.s[2]) * u * len * tanH
 			local z = -u * len
 			local yaw = if G.lean == "radial" then math.atan2(z, x) else rng:NextNumber(0, 2 * math.pi)
-			local tS = F.wave[1] + F.wave[2] * u + rng:NextNumber(G.delay[1], G.delay[2])
+			local tS = F.wave[1] + F.wave[2] * (1 - (1 - u) ^ (1 / (F.wave[3] or 1))) + rng:NextNumber(G.delay[1], G.delay[2])
 			table.insert(slabs, makeSlab(G, s, x, z, yaw, 1, tS))
 		end
 		if G.shatter then
@@ -1367,6 +1435,9 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 			local t0 = if spec.light then (spec.light.delay or 0) + (spec.light.sweep or 0) * u else 0
 			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = t0 })
 		end
+	end
+	if spec.front then
+		runFront(spec.front, holder, s, len, tanH)
 	end
 	if spec.field then
 		runField(spec.field, holder, s, len, tanH)
@@ -4799,7 +4870,7 @@ def walk_textures(v):
 def spec_textures(spec):
     extra = [spec["cubes"]["fx"]] if spec.get("cubes", {}).get("fx") else []
     tex = textures_of(spec["layers"] + extra + spec.get("beams", []))
-    for k in ("cataclysm", "blade", "field"):
+    for k in ("cataclysm", "blade", "field", "front"):
         if spec.get(k):
             tex |= walk_textures(spec[k])
     return tex | set(spec.get("textures", []))
@@ -4839,6 +4910,8 @@ def build(specs, name, doc):
             data["blade"] = norm_blade(spec["blade"])
         if spec.get("field"):
             data["field"] = norm_field(spec["field"])
+        if spec.get("front"):
+            data["front"] = norm_front(spec["front"])
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"
         doc_k = spec.get("doc", "")
         head = f"-- {doc_k}\n" if doc_k else ""

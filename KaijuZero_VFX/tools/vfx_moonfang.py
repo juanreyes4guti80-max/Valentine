@@ -633,19 +633,21 @@ CRESCENT_WAVE = {
 }
 
 # ----------------------------------------------------------------------------- SKILL 2: Ola de hielo
-# Moonfang golpea el suelo y una ola de hielo sale hacia adelante abriéndose en TRIÁNGULO (modo "cone": u = fracción
-# del largo, s = fracción del medio ancho). El frente es un muro de aire helado y nieve que avanza con su cresta de
-# espuma de nieve, esquirlas y púas. A su paso brotan bloques de hielo (Parts) inclinados, saltan losas del suelo,
-# salen rocas volando hacia afuera, el suelo queda escarchado y sube humo frío que se queda flotando. Al llegar al
-# borde lejano la ola choca; los bloques de hielo aguantan un par de segundos y revientan en esquirlas.
+# Moonfang golpea el suelo y una OLA DENSA DE HUMO HELADO sale hacia adelante abriéndose en TRIÁNGULO (modo "cone":
+# u = fracción del largo, s = fracción del medio ancho). Sale con fuerza y se va frenando hasta asentarse. El frente
+# lleva emisores que viajan con él ("front"): un muro de humo helado, una cresta alta que se arremolina, niebla baja,
+# polvo de nieve, brillos, esquirlas y polvo de tierra; ese humo nace en el frente y se queda atrás frenándose, así
+# deja una estela espesa sobre todo el triángulo. A su paso brotan bloques de hielo (Parts), saltan losas, salen rocas
+# volando, el suelo queda escarchado y sube humo frío. Al final los bloques de hielo revientan en esquirlas.
 WL, WA = 110.0, 50.0       # largo y apertura del triángulo (escala 1; se eligen al llamar el efecto)
-T0W, TWW = 0.12, 0.75      # el frente sale y tarda en cruzar el triángulo
-TEW = T0W + TWW            # llega al borde lejano
+T0W, TWW, EASE = 0.12, 1.0, 1.5   # el frente sale, tarda en cruzar y cuánto se frena (1 = velocidad constante)
+WAVE = (T0W, TWW, EASE)
+TEW = T0W + TWW            # llega al borde lejano (ya casi quieto)
 
 
 def wfront(u, delay=0.0):
-    """Instante en que el frente pasa por u."""
-    return round(T0W + delay + TWW * u, 3)
+    """Instante en que el frente pasa por u (sale rápido y se va frenando)."""
+    return round(T0W + delay + TWW * (1 - (1 - min(max(u, 0.0), 1.0)) ** (1 / EASE)), 3)
 
 
 def wsamples(g, n, u0=0.05, u1=1.0, s_max=0.95, up=(0.3, 0.3), delay=(0.0, 0.0)):
@@ -670,14 +672,66 @@ def wcrest(g, n_u, per, up=0.5, u0=0.05, u1=1.0, s_max=0.97, delay=0.0):
     return sorted(out)
 
 
-def wfan(n, up):
-    """El abanico del frente: sale del vértice y cada partícula viaja hacia su lado a la velocidad de la ola."""
-    return [(T0W, 1, 0.02, round(-0.97 + 1.94 * j / (n - 1), 3), up) for j in range(n)]
-
-
 def wedge(n, up=0.5):
-    """El choque contra el borde lejano."""
-    return [(round(TEW, 3), 1, 1.0, round(-0.97 + 1.94 * j / (n - 1), 3), up) for j in range(n)]
+    """Donde la ola se asienta, al llegar al borde lejano."""
+    return [(wfront(0.97), 1, 0.98, round(-0.97 + 1.94 * j / (n - 1), 3), up) for j in range(n)]
+
+
+ICE_FOG = [(0, (238, 246, 255)), (0.35, (200, 222, 252)), (1, (160, 188, 236))]
+# lo que viaja con el frente: `count` puntos a lo ancho; rate = partículas por segundo de cada punto con el frente
+# a todo lo ancho (al principio, angosto, suelta menos)
+WAVE_FRONT = {
+    "wave": WAVE, "count": 14, "s_max": 0.95,
+    "emitters": [
+        # la base: humo denso y más oscuro (le da volumen a la ola); nace en el frente y se queda atrás (la estela)
+        dict(name="FogCore", up=5.0, rate=18, texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Front",
+             spread=(35, 12), speed=(60, 100), drag=2.5, accel=(0, 1.5, 0), lifetime=(1.8, 2.8),
+             size=[(0, 9, 2), (0.2, 15, 3), (0.6, 20, 3), (1, 23, 3)],
+             transparency=[(0, 0.4), (0.1, 0.25), (0.35, 0.55), (0.7, 0.75), (1, 1)],
+             color=[(0, (195, 214, 242)), (0.5, (152, 176, 216)), (1, (128, 150, 196))], rotation=(0, 360),
+             rot_speed=(-30, 30), zoffset=-3),
+        # el muro blanco encima, que crece y se arremolina
+        dict(name="FogWall", up=6.0, rate=16, texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Front",
+             spread=(35, 18), speed=(55, 95), drag=2.4, accel=(0, 2, 0), lifetime=(2.0, 3.0),
+             size=[(0, 10, 2), (0.15, 18, 3), (0.6, 26, 4), (1, 32, 4)],
+             transparency=[(0, 0.45), (0.08, 0.3), (0.3, 0.58), (0.6, 0.76), (1, 1)], color=ICE_FOG,
+             light_emission=0.12, rotation=(0, 360), rot_speed=(-40, 40), zoffset=-2),
+        # la cresta alta, brillante
+        dict(name="FogBillow", up=11.0, rate=10, texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Front",
+             spread=(30, 25), speed=(40, 80), drag=2.0, accel=(0, 5, 0), lifetime=(1.6, 2.4),
+             size=[(0, 11, 2), (0.3, 21, 3), (1, 32, 4)], transparency=[(0, 0.55), (0.12, 0.38), (0.4, 0.64), (1, 1)],
+             color=[(0, (250, 252, 255)), (1, (200, 218, 245))], light_emission=0.18, rotation=(0, 360),
+             rot_speed=(-45, 45), zoffset=-1),
+        # la niebla baja que se pega al suelo y se abre a los lados (lo que más dura)
+        dict(name="FogLow", up=4.0, rate=18, texture="fx_fog2001", direction="Front", spread=(60, 6),
+             speed=(30, 70), drag=1.8, accel=(0, 0.3, 0), lifetime=(2.6, 3.6),
+             size=[(0, 6, 1), (0.4, 12, 2), (1, 16, 2)],
+             transparency=[(0, 0.5), (0.12, 0.4), (0.4, 0.66), (0.8, 0.82), (1, 1)],
+             color=[(0, (225, 238, 255)), (1, (182, 202, 236))], light_emission=0.12, rotation=(0, 360),
+             rot_speed=(-20, 20), zoffset=-3),
+        # el borde que se revuelve: humo más rápido que el frente que sale adelante y la ola se lo traga
+        dict(name="FrontEdge", up=1.5, rate=14, texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Front",
+             spread=(30, 10), speed=(150, 200), drag=5, accel=(0, 3, 0), lifetime=(0.6, 1.0),
+             size=[(0, 6, 1), (1, 14, 2)], transparency=[(0, 0.35), (0.3, 0.5), (1, 1)],
+             color=[(0, (245, 250, 255)), (1, (205, 222, 248))], light_emission=0.15, rotation=(0, 360),
+             rot_speed=(-60, 60)),
+        # el borde de adelante: polvo de nieve, brillos, esquirlas y polvo de tierra (el destrozo)
+        dict(name="FrontPowder", up=3.0, rate=18, texture="kk_smoke_04", direction="Front", spread=(25, 30),
+             speed=(110, 160), drag=4, accel=(0, -10, 0), lifetime=(0.5, 0.9), size=[(0, 3, 1), (1, 10, 2)],
+             transparency=[(0, 0.3), (0.5, 0.5), (1, 1)], color=SNOW, rotation=(0, 360), rot_speed=(-60, 60)),
+        dict(name="FrontGlitter", up=4.0, rate=12, texture="fx_spark002", direction="Front", spread=(40, 40),
+             speed=(60, 120), drag=3, accel=(0, -4, 0), lifetime=(0.6, 1.2), size=None, color=GLINT,
+             light_emission=1.0, brightness=1.8, rotation=(0, 45)),
+        dict(name="FrontIce", up=2.0, rate=10, pitch=35, texture="mf_shard_2x2", flipbook=STATIC2x2,
+             direction="Front", spread=(30, 20), speed=(50, 90), drag=0.6, accel=(0, -110, 0), lifetime=(0.5, 0.9),
+             size=[(0, 1.3, 0.4), (1, 0.8, 0.3)], transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD,
+             light_emission=0.45, brightness=1.4, rotation=(0, 360), rot_speed=(-500, 500)),
+        dict(name="FrontDust", up=1.0, rate=10, texture="kk_smoke_04", direction="Front", spread=(40, 20),
+             speed=(40, 80), drag=3, accel=(0, 2, 0), lifetime=(0.8, 1.2), size=[(0, 5, 1), (1, 14, 3)],
+             transparency=[(0, 0.45), (0.4, 0.58), (1, 1)], color=MIST, rotation=(0, 360), zoffset=-2),
+    ],
+}
+WAVE_FRONT["emitters"][6]["size"] = twinkle(0.6)
 
 
 ICE_BREAK = [dict(name="IceBreak", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0, 6)],
@@ -693,7 +747,7 @@ ICE_BREAK = [dict(name="IceBreak", texture="mf_shard_2x2", flipbook=STATIC2x2, e
                   transparency=[(0, 0.6), (0.4, 0.65), (1, 1)], color=FROSTMIST, light_emission=0.15,
                   rotation=(0, 360), zoffset=-1)]
 WAVE_FIELD = {
-    "wave": (T0W, TWW), "seed": 9,
+    "wave": WAVE, "seed": 9,
     "groups": [
         # bloques de hielo que brotan inclinados (algunos grandes) y al final revientan
         {"name": "IceBlocks", "count": 34, "u": (0.08, 0.55), "s": (-0.92, 0.92), "lean": "random",
@@ -736,23 +790,6 @@ def wave_layers(g):
              accel=(0, -110, 0), lifetime=(0.5, 0.8), size=[(0, 1.5, 0.4), (1, 1.0, 0.3)],
              transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.4,
              rotation=(0, 360), rot_speed=(-500, 500)),
-        # ---------------- el frente: un muro de aire helado y nieve que se abre en triángulo ----------------
-        # (crece: las partículas del muro se agrandan mientras avanzan, y la cresta es más alta al fondo)
-        dict(name="WaveWall", texture="kk_smoke_07", direction="Front", speed_len=(0.985 / TWW, 1.015 / TWW),
-             lifetime=(TWW, TWW * 1.04), size=[(0, 5, 1), (0.5, 13, 2), (1, 20, 3)],
-             transparency=[(0, 0.6), (0.85, 0.62), (1, 1)], color=FROSTMIST, rotation=(0, 360), rot_speed=(-30, 30),
-             zoffset=-2, cone_emit=wfan(30, 3.0)),
-        dict(name="WaveWallHigh", texture="fx_fog2001", direction="Front", speed_len=(0.97 / TWW, 1.0 / TWW),
-             lifetime=(TWW, TWW * 1.04), size=[(0, 5, 1), (0.5, 14, 2), (1, 22, 3)],
-             transparency=[(0, 0.68), (0.85, 0.7), (1, 1)], color=[(0, (235, 245, 255)), (1, (190, 215, 250))],
-             light_emission=0.2, rotation=(0, 360), rot_speed=(-30, 30), zoffset=-1, cone_emit=wfan(24, 9.0)),
-        dict(name="WaveSnow", texture="kk_smoke_04", direction="Front", speed_len=(0.98 / TWW, 1.0 / TWW),
-             lifetime=(TWW, TWW * 1.04), size=[(0, 4, 1), (0.5, 8, 2), (1, 12, 2)],
-             transparency=[(0, 0.5), (0.85, 0.55), (1, 1)], color=SNOW, rotation=(0, 360), zoffset=-1,
-             cone_emit=wfan(36, 1.2)),
-        dict(name="WaveGlow", texture="fx_glow", direction="Front", speed_len=(0.99 / TWW, 1.01 / TWW),
-             lifetime=(TWW, TWW), size=[(0, 6), (1, 16)], transparency=[(0, 0.78), (0.85, 0.8), (1, 1)],
-             color=ICE, light_emission=1.0, brightness=1.0, zoffset=1, cone_emit=wfan(20, 4.0)),
         # ---------------- la cresta: nieve, esquirlas y púas que saltan donde pasa el frente ----------------
         dict(name="CrestSpray", texture="kk_smoke_04", direction="Top", spread=(30, 30), speed=(22, 44), drag=2.5,
              accel=(0, -8, 0), lifetime=(0.6, 0.9), size=[(0, 4, 1), (1, 12, 2)],
@@ -783,6 +820,10 @@ def wave_layers(g):
              size=[(0, 8), (0.06, 24, 4), (1, 25, 4)], transparency=[(0, 0.4), (0.3, 0.45), (0.8, 0.65), (1, 1)],
              color=FROST, light_emission=0.5, cone_emit=wsamples(g, 8, u0=0.2, up=(0.25, 0.25), delay=(0, 0.05)),
              **DECAL),
+        dict(name="GroundCracks", texture="mf_frost_cracks", lifetime=(2.6, 3.2), rotation=(0, 360),
+             size=[(0, 8), (0.05, 22, 4), (1, 23, 4)], transparency=[(0, 0.25), (0.75, 0.4), (1, 1)],
+             color=[(0, (34, 40, 56)), (1, (40, 46, 62))], cone_emit=wsamples(g, 24, u0=0.08, up=(0.15, 0.15)),
+             **DECAL),
         dict(name="FieldDust", texture="kk_smoke_04", direction="Top", spread=(70, 70), speed=(6, 14), drag=2,
              accel=(0, 3, 0), lifetime=(0.6, 1.0), size=[(0, 4, 1), (1, 12, 3)],
              transparency=[(0, 0.5), (0.4, 0.62), (1, 1)], color=MIST, rotation=(0, 360), zoffset=-2,
@@ -790,21 +831,31 @@ def wave_layers(g):
         dict(name="FieldChips", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(55, 55),
              speed=(25, 55), drag=0.4, accel=(0, -130, 0), lifetime=(0.6, 0.9), size=[(0, 0.9, 0.3), (1, 0.7, 0.2)],
              color=[(0, (128, 126, 136)), (1, (100, 98, 108))], rotation=(0, 360), rot_speed=(-500, 500),
-             cone_emit=wce2(wsamples(g, 26, up=(0.5, 0.5)), 2)),
+             cone_emit=wce2(wsamples(g, 34, up=(0.5, 0.5)), 2)),
         dict(name="FieldSmoke", texture="fx_fog2001", direction="Top", spread=(30, 30), speed=(2, 6), drag=1,
-             accel=(0, 1.5, 0), lifetime=(1.6, 2.4), size=[(0, 6, 2), (0.5, 14, 3), (1, 18, 3)],
-             transparency=[(0, 0.78), (0.3, 0.66), (1, 1)], color=FROSTMIST, light_emission=0.15, rotation=(0, 360),
-             rot_speed=(-20, 20), zoffset=-3, cone_emit=wsamples(g, 40, up=(1.0, 2.5), delay=(0.05, 0.5))),
-        dict(name="WaveRocks", type="meteor", direction="Front", pitch=45, spread=(25, 20), speed=(40, 80),
+             accel=(0, 1.5, 0), lifetime=(2.0, 3.0), size=[(0, 8, 2), (0.5, 18, 3), (1, 24, 3)],
+             transparency=[(0, 0.72), (0.3, 0.62), (1, 1)], color=FROSTMIST, light_emission=0.15, rotation=(0, 360),
+             rot_speed=(-20, 20), zoffset=-3, cone_emit=wsamples(g, 40, up=(1.0, 3.0), delay=(0.1, 0.7))),
+        dict(name="WaveRocks", type="meteor", direction="Front", pitch=45, spread=(25, 20), speed=(50, 95),
              accel=(0, -196, 0), drag=0.1, lifetime=(2.2, 2.2),
              sprite={"texture": "om_cubes_2x2", "layout": "Grid2x2", "size": (1.2, 3.0), "aspect": (1.0, 1.0, 1.0),
                      "cube": True, "ground": True, "color": SLAB_RGB, "color_var": (0.8, 1.1),
-                     "rot_speed": (-420, 420), "material": "Slate", "stick": 1.0, "sink": 0.2},
+                     "rot_speed": (-420, 420), "material": "Slate", "stick": 1.2, "sink": 0.2},
              trails=[{"name": "WaveRockDust", "rate": 12, "texture": "kk_smoke_04", "speed": (0, 2),
                       "direction": "Top", "spread": (180, 180), "drag": 2, "lifetime": (0.4, 0.6),
                       "size": [(0, 1.5, 0.5), (1, 4, 1)], "transparency": [(0, 0.55), (0.5, 0.65), (1, 1)],
                       "color": MIST, "rotation": (0, 360)}],
-             land=ROCK_LAND, shatter=ROCK_CRUMBLE, cone_emit=wce2(wsamples(g, 30, up=(0.5, 0.5)), 1)),
+             land=ROCK_LAND, shatter=ROCK_CRUMBLE, cone_emit=wce2(wsamples(g, 50, up=(0.5, 0.5)), 1)),
+        dict(name="WaveChunks", type="meteor", direction="Front", pitch=55, spread=(20, 20), speed=(45, 75),
+             accel=(0, -196, 0), drag=0.1, lifetime=(2.4, 2.4),
+             sprite={"texture": "om_cubes_2x2", "layout": "Grid2x2", "size": (2.5, 4.5), "aspect": (1.0, 0.8, 1.0),
+                     "cube": True, "ground": True, "color": SLAB_RGB, "color_var": (0.8, 1.1),
+                     "rot_speed": (-300, 300), "material": "Slate", "stick": 1.4, "sink": 0.25},
+             trails=[{"name": "WaveChunkDust", "rate": 16, "texture": "kk_smoke_04", "speed": (0, 2),
+                      "direction": "Top", "spread": (180, 180), "drag": 2, "lifetime": (0.5, 0.7),
+                      "size": [(0, 2.5, 0.5), (1, 6, 1)], "transparency": [(0, 0.5), (0.5, 0.62), (1, 1)],
+                      "color": MIST, "rotation": (0, 360)}],
+             land=ROCK_LAND, shatter=ROCK_CRUMBLE, cone_emit=wce2(wsamples(g, 12, u0=0.2, up=(0.5, 0.5)), 1)),
         # ---------------- el choque contra el borde lejano ----------------
         dict(name="CrashSpray", texture="kk_smoke_07", direction="Top", spread=(35, 35), speed=(20, 45), drag=2.5,
              accel=(0, -6, 0), lifetime=(0.7, 1.1), size=[(0, 6, 1), (1, 18, 3)],
@@ -830,15 +881,16 @@ def wce2(events, n):
 
 ICE_WAVE = {
     "name": "IceWave",
-    "doc": ("MOONFANG SKILL 2 (Ola de hielo): golpea el suelo y una ola de hielo sale hacia adelante abriéndose en "
-            "triángulo: un muro de aire helado y nieve con su cresta de esquirlas y púas. A su paso brotan bloques de "
-            "hielo inclinados, saltan losas del suelo, salen rocas volando, el suelo queda escarchado y sube humo "
-            "frío. Llega al borde lejano a los 0.87 s y choca; los bloques de hielo revientan al final."),
-    "duration": 3.8,
+    "doc": ("MOONFANG SKILL 2 (Ola de hielo): golpea el suelo y una ola densa de humo helado sale hacia adelante "
+            "abriéndose en triángulo; sale con fuerza y se va frenando, y deja una estela espesa de humo. A su paso "
+            "brotan bloques de hielo inclinados, saltan losas del suelo, salen rocas volando y el suelo queda "
+            "escarchado. Llega al borde lejano a los 1.12 s; los bloques de hielo revientan al final."),
+    "duration": 4.6,
     "cone": {"length": WL, "angle": WA, "wave": [T0W, TWW]},
+    "front": WAVE_FRONT,
     "field": WAVE_FIELD,
     "light": {"color": (170, 210, 255), "brightness": 4, "range": 40, "time": 0.6},
-    "shakes": [(0.02, 0.5, 0.25), (T0W + 0.05, 0.3, TWW), (TEW, 0.7, 0.35)],
+    "shakes": [(0.02, 0.6, 0.3), (T0W + 0.05, 0.45, TWW), (wfront(0.97), 0.5, 0.35)],
 }
 ICE_WAVE["layers"] = wave_layers(random.Random(52))
 

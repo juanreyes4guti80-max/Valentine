@@ -146,7 +146,7 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 | `beam`, `beams`, `hit` | rayo apuntable (Beams + Raycast cada cuadro) | `vfx_beam.py`, `vfx_cosmicbeam.py` |
 | `rocks` | efecto que sale de las rocas que le pasas | `vfx_pillars.py` (H3) |
 | `line` + `blade` | una media luna de energía hecha de trazos finos de Beams que vuela de canto por la línea, con su estela (`emitters`), el corte del suelo (`gash`), las losas que saltan a los lados (`slabs`) y el cráter del final (`crater`); lo demás se sincroniza con eventos a lo largo del camino | `vfx_moonfang.py` (`CRESCENT_WAVE`) |
-| `cone` (+ `field`) | onda en forma de triángulo hacia adelante; con `field`, bloques y losas sólidos que brotan donde pasa el frente (los de hielo revientan al final) | `vfx_astral.py`, `vfx_moonfang.py` (`ICE_WAVE`) |
+| `cone` (+ `front`, `field`) | onda en forma de triángulo hacia adelante. Con `front`, emisores que viajan con el frente (sale rápido y se frena: `wave` = T0, TW, freno) y dejan una estela; con `field`, bloques y losas sólidos que brotan donde pasa el frente (los de hielo revientan al final) | `vfx_astral.py`, `vfx_moonfang.py` (`ICE_WAVE`) |
 | `aura` | aura que se adapta a cualquier modelo (Highlight + emisores por parte) | `vfx_aura.py` |
 | `cataclysm` | la ULTIMATE de Omnívora (campo gravitacional, geometría, plan para el servidor) | `vfx_cataclysm.py` |
 
@@ -231,6 +231,7 @@ Y regenera (ver §8).
    - `KaijuFireVFX.Quality` (0.6 en celulares) baja tasas y cantidades.
 9. **Limpieza:** cada efecto vive en un `Holder` (una Part invisible); `cleanup` se calcula del spec y destruye todo cuando muere la última partícula. Nada queda vivo. Las pruebas lo comprueban.
 10. **Glass** solo refracta con gráficos altos, y a través del vidrio no se ven partículas. **Highlight**: máximo 31 a la vez.
+11. **El suelo corta las partículas.** Una partícula es un cartel que mira a la cámara: si es grande y su centro está pegado al piso, el suelo la corta en línea recta (se ve como humo rebanado). Para humo o niebla baja, el centro debe ir a una altura de al menos un tercio de su tamaño; es mejor muchas partículas medianas a unas pocas gigantes. El simulador también lo muestra.
 
 ---
 
@@ -381,7 +382,7 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
    - el corte del suelo debe verse como hielo cortando la tierra, con **rocas cuadradas** (es Roblox) y **pequeñas** que quedan en el camino;
    - la explosión final, intensa.
 
-   **La skill 2 ahora es la Ola de hielo (`IceWave`).** Lo pidió así: "una ola de hielo que crece en formato triangular y va dejando a su paso destrucción, bloques de hielo y humo". Usa el modo `cone` con `field`: bloques de hielo y losas que brotan donde pasa el frente.
+   **La skill 2 ahora es la Ola de hielo (`IceWave`).** Lo pidió así: "una ola de hielo que crece en formato triangular y va dejando a su paso destrucción, bloques de hielo y humo". Usa el modo `cone` con `front` y `field`. En la 2.ª vuelta pidió más: "que se sienta como una ola densa de humo de hielo de verdad que avanza y va dejando destrozos". Por eso el humo lo sueltan emisores que viajan con el frente (y se frenan detrás: la estela), y el frente se frena al final. En la 3.ª ("aún puede mejorar") le di volumen: humo realista (`fx_smoke_2x2`, no nubes de caricatura), una base más oscura y azulada, un borde que se revuelve (humo más rápido que el frente), grietas oscuras de suelo roto y pedazos grandes.
 
    **Tarea para ti con Blender:** hay tres piezas que serían mejores como modelo:
    - los pedazos de hielo del final de la Medialuna (`IceChunks`), que no le convencieron;
