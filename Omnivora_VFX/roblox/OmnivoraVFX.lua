@@ -858,7 +858,10 @@ end
 -- modelo de Blender en OmnivoraVFX.Meshes[mesh].
 type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
 	rise: number, sink: number, ice: any, shatter: boolean, mesh: string?, L: any, part: BasePart?, base: CFrame?,
-	gy: number, gone: boolean }
+	gy: number, gone: boolean, tip: number?, tipPart: BasePart? }
+
+-- la punta de un cristal: un cubo parado sobre un vértice (su diagonal (1, 1, 1) hacia arriba) en la cara de arriba
+local TIP_ROT = CFrame.fromAxisAngle(Vector3.new(-1, 0, 1).Unit, math.acos(1 / math.sqrt(3)))
 
 local function easeOutBack(p: number): number
 	local q = math.clamp(p, 0, 1) - 1
@@ -944,6 +947,14 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 					p.Material = mat
 					p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
 				end
+				if L.tip then
+					local tp = bladePart("SlabTip", holder)
+					tp.Material = p.Material
+					tp.Color = p.Color
+					tp.Transparency = p.Transparency
+					tp.Size = Vector3.new(L.tip, L.tip, L.tip)
+					L.tipPart = tp
+				end
 			end
 			p.Size = L.size
 			L.part = p
@@ -957,6 +968,9 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 		elseif L.shatter then
 			local pos = part.Position
 			part:Destroy()
+			if L.tipPart then
+				L.tipPart:Destroy()
+			end
 			L.gone = true
 			if onShatter then
 				onShatter(L, pos)
@@ -967,10 +981,16 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			y = L.y0 - L.drop * p * p
 		else
 			part:Destroy()
+			if L.tipPart then
+				L.tipPart:Destroy()
+			end
 			L.gone = true
 			continue
 		end
 		part.CFrame = (L.base :: CFrame) + Vector3.new(0, L.gy + y, 0)
+		if L.tipPart then
+			L.tipPart.CFrame = part.CFrame * CFrame.new(0, L.size.Y / 2, 0) * TIP_ROT
+		end
 	end
 	return alive
 end
@@ -1861,24 +1881,36 @@ local function zoneLights(spec: Layer, Z: Zone)
 			if not Z.holder.Parent then
 				return
 			end
-			local a = Instance.new("Attachment")
-			a.Name = "Light"
-			a.Parent = Z.holder
-			a.Position = Vector3.new(0, if Lt.hu == "H" then Lt.h * Z.H else Lt.h * Z.s, 0)
-			local li = Instance.new("PointLight")
-			li.Color = Color3.fromRGB(Lt.color[1], Lt.color[2], Lt.color[3])
-			li.Brightness = 0
-			li.Range = math.min(Lt.range * Z.s, 60)
-			li.Shadows = false
-			li.Parent = a
-			TweenService:Create(li, TweenInfo.new(math.max(Lt.rise, 0.01), Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Brightness = Lt.brightness }):Play()
-			task.delay(Lt.rise + Lt.hold, function()
-				if li.Parent then
-					TweenService:Create(li, TweenInfo.new(Lt.fall, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-						{ Brightness = 0 }):Play()
+			-- una en el eje o, con ring = {cuántas, fracción del radio}, un anillo (una PointLight no pasa de 60 studs)
+			local y = if Lt.hu == "H" then Lt.h * Z.H else Lt.h * Z.s
+			local spots = { Vector3.new(0, y, 0) }
+			if Lt.ring then
+				spots = {}
+				for i = 1, Lt.ring[1] do
+					local ang = 2 * math.pi * (i - 1) / Lt.ring[1]
+					table.insert(spots, Vector3.new(math.cos(ang) * Lt.ring[2] * Z.R, y, math.sin(ang) * Lt.ring[2] * Z.R))
 				end
-			end)
+			end
+			for _, pos in spots do
+				local a = Instance.new("Attachment")
+				a.Name = "Light"
+				a.Parent = Z.holder
+				a.Position = pos
+				local li = Instance.new("PointLight")
+				li.Color = Color3.fromRGB(Lt.color[1], Lt.color[2], Lt.color[3])
+				li.Brightness = 0
+				li.Range = math.min(Lt.range * Z.s, 60)
+				li.Shadows = false
+				li.Parent = a
+				TweenService:Create(li, TweenInfo.new(math.max(Lt.rise, 0.01), Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Brightness = Lt.brightness }):Play()
+				task.delay(Lt.rise + Lt.hold, function()
+					if li.Parent then
+						TweenService:Create(li, TweenInfo.new(Lt.fall, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+							{ Brightness = 0 }):Play()
+					end
+				end)
+			end
 		end)
 	end
 end
@@ -2135,6 +2167,269 @@ local function playCubes(spec: Layer, Z: Zone)
 	end)
 end
 
+-- ---------------------------------------------------------------- piezas gigantes de la zona (sin el tope de 100 studs)
+-- Capas bill: una BillboardGui con una ImageLabel por partícula (la luna del cielo, los destellos gigantes). Siguen el
+-- tamaño, la transparencia, el color y el giro de la capa durante su vida; slide = corrimiento en pantalla (studs),
+-- flip_t = cuadro del flipbook según la vida y speed/speed_h con direction Top/Bottom = se mueve en vertical. Una
+-- ImageLabel no tiene LightEmission: Brightness (con LightInfluence 0) la hace brillar.
+local FLIP_CELLS = { Grid2x2 = 2, Grid4x4 = 4, Grid8x8 = 8 } :: { [string]: number }
+
+local function playBill(L: Layer, Z: Zone, k: number, n: number, lcf: CFrame)
+	for _ = 1, n do
+		local life = rng:NextNumber(L.lifetime[1], L.lifetime[2])
+		local a = Instance.new("Attachment")
+		a.Name = L.name
+		a.CFrame = lcf
+		a.Parent = Z.holder
+		local g = Instance.new("BillboardGui")
+		g.Name = L.name
+		g.Adornee = a
+		g.LightInfluence = 0
+		g.Brightness = L.brightness
+		g.AlwaysOnTop = false
+		g.MaxDistance = math.huge
+		g.ClipsDescendants = false
+		g.Size = UDim2.fromScale(0, 0)
+		g.Parent = a
+		local im = Instance.new("ImageLabel")
+		im.BackgroundTransparency = 1
+		im.Size = UDim2.fromScale(1, 1)
+		im.Image = OmnivoraVFX.TEXTURES[L.texture] or ""
+		im.ImageTransparency = 1
+		im.Parent = g
+		local cells = if L.flipbook then FLIP_CELLS[L.flipbook.layout] or 1 else 1
+		local cell = (L.tex_px or 1024) / cells
+		if cells > 1 then
+			im.ImageRectSize = Vector2.new(cell, cell)
+		end
+		local rot = rng:NextNumber(L.rotation[1], L.rotation[2])
+		local spin = rng:NextNumber(L.rot_speed[1], L.rot_speed[2])
+		local sp = if L.speed_h then rng:NextNumber(L.speed_h[1], L.speed_h[2]) * Z.H
+			else rng:NextNumber(L.speed[1], L.speed[2]) * k
+		local vy = if L.direction == "Bottom" then -sp elseif L.direction == "Top" then sp else 0
+		local t0 = time()
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function()
+			local age = time() - t0
+			local u = age / life
+			if u >= 1 or not a.Parent then
+				conn:Disconnect()
+				a:Destroy()
+				return
+			end
+			local sz = math.max(evalNum(L.size, u) * k, 0.01)
+			g.Size = UDim2.fromScale(sz, sz)
+			local sx, sy = 0, 0
+			if L.slide_x then
+				sx, sy = evalNum(L.slide_x, u) * k, evalNum(L.slide_y, u) * k
+			end
+			g.StudsOffset = Vector3.new(sx, sy, L.zoffset * k)
+			im.ImageTransparency = math.clamp(evalNum(L.transparency, u), 0, 1)
+			im.ImageColor3 = evalColor(L.color, u)
+			im.Rotation = rot + spin * age
+			if vy ~= 0 then
+				a.CFrame = lcf + Vector3.new(0, vy * age, 0)
+			end
+			if cells > 1 then
+				local f = if L.flip_t then evalNum(L.flip_t, u) else u * cells * cells
+				f = math.clamp(math.floor(f + 0.5), 0, cells * cells - 1)
+				im.ImageRectOffset = Vector2.new((f % cells) * cell, math.floor(f / cells) * cell)
+			end
+		end)
+	end
+end
+
+-- Columnas de luz (zbeams): Beams que miran a la cámara, de arriba (Attachment0, la luna) al suelo. Bajan en
+-- drop = {t0, duración}; count cintas en un anillo de r × radio que gira spin grados/s; rim = dos cintas finas en el
+-- contorno de la columna visto desde la cámara (el delineado). width × radio y tex_len × altura; width_t y alpha_t
+-- en el tiempo; r_t encoge el anillo (al colapsar); near aclara las cintas cuando la cámara está dentro de la columna.
+type ZBeamItem = { B: Layer, beams: { Beam }, a0: { Attachment }, a1: { Attachment }, tr: { number }, seed: number }
+
+local function runZoneBeams(spec: Layer, Z: Zone)
+	local holder = Z.holder
+	local items: { ZBeamItem } = {}
+	local tEnd = 0
+	for _, B in spec.zbeams do
+		local n = if B.rim then 2 else B.count
+		local it: ZBeamItem = { B = B, beams = {}, a0 = {}, a1 = {}, tr = {}, seed = rng:NextNumber(0, 100) }
+		for i = 1, n do
+			local a0 = Instance.new("Attachment")
+			a0.Name = B.name
+			a0.Parent = holder
+			local a1 = Instance.new("Attachment")
+			a1.Name = B.name
+			a1.Parent = holder
+			local b = Instance.new("Beam")
+			b.Name = B.name
+			b.Attachment0 = a0
+			b.Attachment1 = a1
+			b.Texture = OmnivoraVFX.TEXTURES[B.texture] or ""
+			b.TextureMode = Enum.TextureMode.Wrap
+			b.TextureLength = math.max(B.tex_len * Z.H, 0.1)
+			b.TextureSpeed = B.speed
+			b.LightEmission = B.light_emission
+			b.LightInfluence = 0
+			b.Brightness = B.brightness
+			b.Color = colorSeq(B.color)
+			b.FaceCamera = true
+			b.Segments = 1
+			b.ZOffset = B.zoffset * Z.kR
+			b.Width0 = 0
+			b.Width1 = 0
+			b.Transparency = NumberSequence.new(1)
+			b.Enabled = false
+			b.Parent = holder
+			it.beams[i], it.a0[i], it.a1[i], it.tr[i] = b, a0, a1, 2
+		end
+		table.insert(items, it)
+		tEnd = math.max(tEnd, B.width_t[#B.width_t][1], B.alpha_t[#B.alpha_t][1])
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > tEnd then
+			conn:Disconnect()
+			for _, it in items do
+				for i, b in it.beams do
+					b:Destroy()
+					it.a0[i]:Destroy()
+					it.a1[i]:Destroy()
+				end
+			end
+			return
+		end
+		local cam = workspace.CurrentCamera
+		local camRel = if cam then holder.CFrame:PointToObjectSpace(cam.CFrame.Position) else Vector3.new(0, 0, 1e6)
+		for _, it in items do
+			local B = it.B
+			local wk = evalNum(B.width_t, t)
+			local fade = evalNum(B.alpha_t, t)
+			if t < B.drop[1] or wk <= 1e-3 or fade >= 0.999 then
+				for _, b in it.beams do
+					b.Enabled = false
+				end
+				continue
+			end
+			local top = B.h[2] * Z.H
+			local u = math.min((t - B.drop[1]) / math.max(B.drop[2], 1e-3), 1)
+			local bot = top + (B.h[1] * Z.H - top) * u
+			local rr = B.r * Z.R * (if B.r_t then evalNum(B.r_t, t) else 1)
+			local xs, zs = table.create(#it.beams, 0), table.create(#it.beams, 0)
+			if B.rim then
+				local d = math.sqrt(camRel.X * camRel.X + camRel.Z * camRel.Z)
+				if d <= rr * 1.02 then -- la cámara está dentro: no hay contorno
+					for _, b in it.beams do
+						b.Enabled = false
+					end
+					continue
+				end
+				local ux, uz = camRel.X / d, camRel.Z / d
+				local c = rr / d
+				local sn = math.sqrt(math.max(1 - c * c, 0))
+				xs[1], zs[1] = rr * (c * ux - sn * uz), rr * (c * uz + sn * ux)
+				xs[2], zs[2] = rr * (c * ux + sn * uz), rr * (c * uz - sn * ux)
+			else
+				for i = 1, #it.beams do
+					local ang = 2 * math.pi * (B.a0 + (i - 1) / #it.beams) + math.rad(B.spin) * (t - B.drop[1])
+					xs[i], zs[i] = math.cos(ang) * rr, math.sin(ang) * rr
+				end
+			end
+			for i, b in it.beams do
+				local x, z = xs[i], zs[i]
+				it.a0[i].Position = Vector3.new(x, top, z)
+				it.a1[i].Position = Vector3.new(x, bot, z)
+				local w = B.width * Z.R * wk * (1 + B.wobble * math.noise(it.seed + i * 3.3, t * 2.3))
+				b.Width0 = w
+				b.Width1 = w
+				local f = fade
+				if B.near > 0 then
+					local dd = math.sqrt((camRel.X - x) ^ 2 + (camRel.Z - z) ^ 2)
+					local close = 1 - math.clamp((dd - 0.5 * w) / math.max(w, 1e-3), 0, 1)
+					f = 1 - (1 - f) * (1 - B.near * close)
+				end
+				if f >= 0.999 then
+					b.Enabled = false
+					continue
+				end
+				b.Enabled = true
+				if math.abs(it.tr[i] - f) > 0.01 then
+					it.tr[i] = f
+					local kps = table.create(#B.transparency)
+					for j, p in B.transparency do
+						kps[j] = NumberSequenceKeypoint.new(p[1], 1 - (1 - p[2]) * (1 - f))
+					end
+					b.Transparency = NumberSequence.new(kps)
+				end
+			end
+		end
+	end)
+end
+
+-- Cristales y losas que brotan en una zona circular (zfield): cada grupo reparte count piezas entre r = {r0, r1}
+-- (fracción del radio; ring = parejas alrededor del anillo); brotan cuando la onda del centro llega a su radio
+-- (t + sweep·r) y se inclinan hacia afuera (lean = "radial"); con end_at todas terminan a la vez (las de hielo
+-- revientan). tip = punta de cristal. Los tamaños siguen al radio de la zona.
+local function runZoneField(F: any, Z: Zone)
+	local holder = Z.holder
+	local k = Z.kR
+	local slabs: { Slab } = {}
+	local shatterFx: { [any]: { { e: ParticleEmitter, c: Instance, n: number } } } = {}
+	for _, G in F.groups do
+		local n = math.floor(G.count * OmnivoraVFX.Quality + 0.5)
+		for i = 1, n do
+			local ang: number, r: number
+			if G.ring then
+				ang = 2 * math.pi * (i - 1 + rng:NextNumber(-0.35, 0.35)) / n
+				r = rng:NextNumber(G.r[1], G.r[2])
+			else
+				ang = rng:NextNumber(0, 2 * math.pi)
+				r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2))
+			end
+			local x, z = math.cos(ang) * r * Z.R, math.sin(ang) * r * Z.R
+			local yaw = if G.lean == "radial" then ang else rng:NextNumber(0, 2 * math.pi)
+			local tS = G.t + (G.sweep or 0) * r + rng:NextNumber(G.delay[1], G.delay[2])
+			local S = makeSlab(G, k, x, z, yaw, 1, tS)
+			if G.end_at then
+				S.hold = math.max(0.05, rng:NextNumber(G.end_at[1], G.end_at[2]) - tS - S.rise)
+			end
+			if G.tip then
+				S.tip = G.tip * math.min(S.size.X, S.size.Z)
+			end
+			table.insert(slabs, S)
+		end
+		if G.shatter then
+			local list = {}
+			for _, LL in G.shatter do
+				local e, c = buildEmitter(LL, holder, k, Vector3.zero)
+				table.insert(list, { e = e, c = c, n = LL.emit[1][2] })
+			end
+			shatterFx[G] = list
+		end
+	end
+	local exclude = { holder :: Instance }
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local alive = stepSlabs(slabs, holder, time() - t0, exclude, function(L: Slab, pos: Vector3)
+			local list = shatterFx[L.L]
+			if list then
+				for _, fx in list do
+					placeCarrier(fx.c, holder, pos)
+					fx.e:Emit(quality(fx.n))
+				end
+			end
+		end)
+		if not alive then
+			conn:Disconnect()
+		end
+	end)
+end
+
 -- arranca las capas de una zona circular (+ cubos de destrucción y luces); snap = hasta cuántos studs
 -- se baja o se sube el centro para apoyarlo en el suelo
 local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: number, snap: number): (Part, Zone)
@@ -2155,6 +2450,16 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 	for _, L in spec.layers do
 		if L.orb then
 			continue -- van pegadas al proyectil (runOrb)
+		elseif L.bill then
+			local k = zoneK(L, Z)
+			for _, ev in L.ring_emit or {} do
+				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false)
+				task.delay(ev[1], function()
+					if holder.Parent then
+						playBill(L, Z, k, ev[2], lcf)
+					end
+				end)
+			end
 		elseif L.decal then
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
@@ -2206,14 +2511,120 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 	if spec.cubes then
 		playCubes(spec, Z)
 	end
+	if spec.zbeams then
+		runZoneBeams(spec, Z)
+	end
+	if spec.zfield then
+		runZoneField(spec.zfield, Z)
+	end
 	zoneLights(spec, Z)
 	return holder, Z
+end
+
+-- Corrección de color y destellos de pantalla de una zona (solo en el cliente y cerca de la zona): con screen.cc =
+-- {t, brillo, contraste, saturación, tinte R, G, B} el mundo se oscurece (p. ej. mientras la luna se eclipsa) y con
+-- screen.flash = {t, alfa, subida, bajada} la pantalla destella. Se nota entero dentro de la zona y se apaga a
+-- screen.range × radio. OmnivoraVFX.ScreenFX = false lo desactiva.
+local function runScreen(spec: Layer, Z: Zone)
+	local Sc = spec.screen
+	if not (OmnivoraVFX :: any).ScreenFX or not RunService:IsClient() then
+		return
+	end
+	local holder = Z.holder
+	local cc: ColorCorrectionEffect? = nil
+	local gui: ScreenGui? = nil
+	local frame: Frame? = nil
+	pcall(function()
+		local e = Instance.new("ColorCorrectionEffect")
+		e.Name = "KZ_" .. spec.name
+		e.Parent = game:GetService("Lighting")
+		cc = e
+	end)
+	pcall(function()
+		local lp = game:GetService("Players").LocalPlayer
+		local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
+		if not pg then
+			return
+		end
+		local g = Instance.new("ScreenGui")
+		g.Name = "KZ_" .. spec.name .. "Flash"
+		g.IgnoreGuiInset = true
+		g.ResetOnSpawn = false
+		g.DisplayOrder = 1000
+		local fr = Instance.new("Frame")
+		fr.Size = UDim2.fromScale(1, 1)
+		fr.BackgroundColor3 = Color3.fromRGB(Sc.flash_color[1], Sc.flash_color[2], Sc.flash_color[3])
+		fr.BorderSizePixel = 0
+		fr.BackgroundTransparency = 1
+		fr.Parent = g
+		g.Parent = pg
+		gui = g
+		frame = fr
+	end)
+	local tEnd = Sc.cc[#Sc.cc][1]
+	for _, f in Sc.flash do
+		tEnd = math.max(tEnd, f[1] + f[3] + f[4])
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > tEnd then
+			conn:Disconnect()
+			if cc then
+				cc:Destroy()
+			end
+			if gui then
+				gui:Destroy()
+			end
+			return
+		end
+		local k = 1
+		local cam = workspace.CurrentCamera
+		if cam then
+			local rel = holder.CFrame:PointToObjectSpace(cam.CFrame.Position)
+			local d = math.sqrt(rel.X * rel.X + rel.Z * rel.Z)
+			k = math.clamp(1 - (d - Z.R) / math.max((Sc.range - 1) * Z.R, 1), 0, 1)
+		end
+		if cc then
+			local rows = Sc.cc
+			local a, b = rows[1], rows[#rows]
+			for i = 1, #rows - 1 do
+				if t <= rows[i + 1][1] then
+					a, b = rows[i], rows[i + 1]
+					break
+				end
+			end
+			local u = math.clamp((t - a[1]) / math.max(b[1] - a[1], 1e-3), 0, 1)
+			local function v(j: number): number
+				return a[j] + (b[j] - a[j]) * u
+			end
+			cc.Brightness = v(2) * k
+			cc.Contrast = v(3) * k
+			cc.Saturation = v(4) * k
+			cc.TintColor = Color3.new(1 - (1 - v(5) / 255) * k, 1 - (1 - v(6) / 255) * k, 1 - (1 - v(7) / 255) * k)
+		end
+		if frame then
+			local al = 0
+			for _, f in Sc.flash do
+				local tt = t - f[1]
+				if tt >= 0 then
+					local w = if tt < f[3] then tt / f[3] else 1 - math.clamp((tt - f[3]) / f[4], 0, 1)
+					al = math.max(al, w * f[2])
+				end
+			end
+			frame.BackgroundTransparency = 1 - al * k
+		end
+	end)
 end
 
 -- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
 local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
-	local holder = startZone(spec, cf, s, radius or spec.zone.radius * s, height or spec.zone.height * s, 8)
+	local holder, Z = startZone(spec, cf, s, radius or spec.zone.radius * s, height or spec.zone.height * s, 8)
+	if spec.screen then
+		runScreen(spec, Z)
+	end
 	finish(spec, holder, s, shake, {})
 	return holder
 end

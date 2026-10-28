@@ -19,7 +19,7 @@ Hay dos caminos y los dos te dan la misma carpeta `Moonfang_VFX`.
 En Studio vas a usar:
 
 - `roblox/MoonfangVFX.rbxmx`, el módulo;
-- el plugin `SubirTexturasVFX.rbxmx`, que sube las 35 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
+- el plugin `SubirTexturasVFX.rbxmx`, que sube las 36 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
 
 ## Instalación (unos 2 minutos, con el plugin)
 
@@ -49,11 +49,11 @@ En Studio vas a usar:
 | **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | De un zarpazo lanza una **media luna de energía** que vuela **vertical y de canto**. De lado se ve la media luna, con la punta hacia adelante. Desde atrás (la cámara del jugador) se ve una hoja fina que apunta hacia donde va. Tiene el filo blanco y duro, y el cuerpo celeste y azul hecho de trazos finos. Mientras vuela deja una **estela de humo frío**, brillos y esquirlas. Su cuerno de abajo **corta el suelo**: se abre una grieta con escarcha y **las losas del suelo saltan inclinadas a los dos lados** (algunas son placas de hielo). También salen **rocas cúbicas** que caen y se quedan un rato en el camino antes de desmoronarse. Las losas y las rocas toman **el color y el material de tu suelo**. Al llegar al final **detona en hielo**: un destello, una cúpula de ondas, lanzas de hielo, una nube helada, viento frío por el suelo, una corona de púas, pedazos de hielo y un **cráter de losas**. | detona a los **0.76 s** (`MoonfangVFX.CrescentWaveImpact`) |
 | **Skill 2: Ola de hielo** | `IceWave(cf, largo, apertura, escala, sacudida)` | Golpea el suelo y una **ola densa de humo helado** sale hacia adelante **abriéndose en triángulo**. Sale con fuerza y se va frenando hasta asentarse. El humo tiene volumen: una base densa y azulada, el muro blanco encima y una cresta alta que se arremolina. Abajo va una niebla pegada al suelo, y el borde de adelante se revuelve con polvo de nieve, esquirlas y tierra. El humo se queda atrás como una **estela espesa** que cubre el triángulo y se disipa despacio. A su paso el suelo se rompe y se escarcha, brotan **bloques de hielo** inclinados (más grandes al fondo), saltan losas y salen rocas y pedazos grandes volando. Los bloques de hielo aguantan un par de segundos y revientan en esquirlas. | llega al borde lejano a los **1.12 s** |
 | **Skill 3: Aullido lunar** | `LunarHowl(cabeza, escala, sacudida)` + `LunarAura(moonfang, …)` | La luz se junta en su hocico, aúlla con ondas de sonido y una luna llena enorme aparece detrás de él y lo baña de luz. Después, el aura de luz de luna mientras dure la mejora. | aúlla a los **0.3 s** |
-| **Skill 4: Eclipse** | `Eclipse(cf, radio, altura, escala, sacudida)` | Una luna llena aparece sobre la zona y se va eclipsando. La zona se agrieta en escarcha y los pedazos del suelo levitan. Al quedar cubierta cae una columna de luz de luna que hace volar tierra y cristal. Al final queda un anillo de cristal roto. | el golpe es a los **1.15 s**; la columna dura hasta los 2.6 s |
+| **Skill 4: Eclipse** (ULTIMATE) | `Eclipse(cf, radio, altura, escala, sacudida)` | La zona mide **120 studs de radio** (240 de ancho). Una **luna gigante** aparece sobre ella y se va **eclipsando**, mientras el mundo se oscurece. En el suelo se dibuja un **círculo lunar** con las 8 fases de la luna que marca la zona. La escarcha agrieta el suelo, el hielo y los pedazos de tierra flotan hacia la luna y una niebla helada entra desde el borde. Al quedar tapada, con su corona y el destello del anillo de diamante, cae de golpe una **columna de luz de luna del ancho de toda la zona**, con un contorno nítido. Congela el suelo: brota una **corona de picos de hielo** en el borde y un campo de cristales que salen del centro hacia afuera, y vuelan cientos de pedazos de tierra y cristal. Al final la columna **colapsa** en una línea y todo el hielo **revienta en una detonación**, con destello, cúpula de escarcha, esquirlas y brillos. Con ella vuelve la luna llena. | la columna pega a los **1.42 s** y la detonación es a los **3.55 s** (`MoonfangVFX.EclipseTimes`) |
 
-El daño, el knockback y la duración de la mejora los pones tú en tu sistema de combate. Los momentos de la tabla también están en el módulo: `MoonfangVFX.MoonBiteImpact`, `MoonfangVFX.MoonBiteFinisherImpact`, `MoonfangVFX.MoonFangImpact`, `MoonfangVFX.MoonGuardHitImpact` y `MoonfangVFX.CrescentWaveImpact`.
+El daño, el knockback y la duración de la mejora los pones tú en tu sistema de combate. Los momentos de la tabla también están en el módulo: `MoonfangVFX.MoonBiteImpact`, `MoonfangVFX.MoonBiteFinisherImpact`, `MoonfangVFX.MoonFangImpact`, `MoonfangVFX.MoonGuardHitImpact`, `MoonfangVFX.CrescentWaveImpact` y `MoonfangVFX.EclipseTimes` (`Eclipse` = queda tapada, `Impact` = pega la columna, `Collapse` = colapsa, `Detonation` = la detonación).
 
-**En revisión:** el kit se rehace uno por uno. Ya son versión nueva la Medialuna y los mordiscos del M1. El pesado todavía usa las mandíbulas de antes.
+**En revisión:** el kit se rehace uno por uno. Ya son versión nueva la Medialuna, los mordiscos del M1, la Ola de hielo y el Eclipse. El pesado todavía usa las mandíbulas de antes, y el aullido y su aura se rehacen después.
 
 ## Cómo llamarlo
 
@@ -93,7 +93,8 @@ evento.OnClientEvent:Connect(function(que: string, d: any)
 		MoonfangVFX.LunarHowl(d.cabeza.CFrame, d.escala, 1) -- la cabeza mirando hacia adelante
 		MoonfangVFX.LunarAura(d.moonfang, 1, d.duracion)     -- el aura dura lo que dure la mejora
 	elseif que == "Eclipse" then
-		MoonfangVFX.Eclipse(CFrame.new(d.centro), 26 * d.escala, 150 * d.escala, d.escala, 1)
+		-- d.centro = el centro de la zona en el suelo; 120 studs de radio y la luna a 340 de alto (a escala 1)
+		MoonfangVFX.Eclipse(CFrame.new(d.centro), 120 * d.escala, 340 * d.escala, d.escala, 1)
 	end
 end)
 ```
@@ -120,8 +121,11 @@ end)
 - La luna del aullido aparece **detrás y arriba** de la cabeza. Si en tu juego queda tapada o muy alta, cambia `MOON_OFF` en `vfx_moonfang.py`.
 - La media luna de la skill 1 son trazos de **Beams** que miran a la cámara, como pinceladas, más una luz que la sigue. Va de canto **a propósito**: desde atrás se ve fina, como una hoja que apunta hacia donde va.
 - Las losas y las rocas de la skill 1 miran con un Raycast **el color y el material del suelo** donde salen. En el video son grises porque el suelo de prueba es oscuro; en tu mapa salen del color de tu pasto, arena o piedra.
-- La columna del Eclipse es luz que **cae** y es transparente (al revés que el pilar de Omnívora, que sube y es denso).
-- La luna del Eclipse está a 150 studs × escala sobre la zona. Si tu cámara no la ve, baja la altura (el 3.er parámetro).
+- **El Eclipse es gigante a propósito:** la zona es de 120 studs de radio (el doble del largo de la Ola de hielo) y la luna está a 340 studs × escala de alto, con un disco de unos 250 studs. Si en tu mapa queda grande, pásale otro radio y otra altura y todo se ajusta solo.
+- La luna, sus brillos y los destellos gigantes son **BillboardGuis**, y la columna son **Beams**. Así pueden medir más de 100 studs, que es el tope de las partículas en Roblox. La textura de la luna (`mf_moon_eclipse_4x4`) son 16 cuadros del eclipse: súbela tal cual, de 1024 × 1024.
+- La columna sale **de debajo del disco** de la luna y su contorno son dos líneas finas en los bordes, **según desde dónde la mires**. Si la cámara está dentro de la columna, las cortinas de luz cercanas se aclaran para que se siga viendo.
+- Los cristales son Parts de material `Ice` con una **punta** (un cubo parado sobre un vértice). Se pueden cambiar por modelos de Blender (más abajo).
+- Mientras dura, el mundo se oscurece (un `ColorCorrectionEffect` en `Lighting`) y la pantalla destella con el golpe y con la detonación. Solo pasa en el cliente y cerca de la zona. `MoonfangVFX.ScreenFX = false` lo apaga.
 
 ## Rendimiento
 
@@ -131,7 +135,7 @@ En el pico:
 |---|---|---|
 | Medialuna | unas 1100 | unas 118 losas, 62 rocas y 240 Beams |
 | Ola de hielo | unas 1800 (casi todas de humo) | unos 120 bloques y losas, y 60 rocas |
-| Eclipse | unas 600 | unos 150 pedazos |
+| Eclipse | unas 1600 | 13 BillboardGuis, 20 Beams, unos 170 cristales y losas (100 con punta), 490 pedazos y hasta 19 PointLights encendidas a la vez |
 | Golpes | de 60 a 160 | — |
 
 `MoonfangVFX.Quality = 0.6` baja las partículas, los pedazos, las losas y los trazos de la hoja (por ejemplo, en celulares).
@@ -146,6 +150,8 @@ local modelos = ReplicatedStorage.MoonfangMeshes -- una carpeta con tus MeshPart
 MoonfangVFX.Meshes.IceChunks = modelos.IceChunk -- los pedazos de hielo de la detonación de la Medialuna
 MoonfangVFX.Meshes.IceSlab = modelos.IceSlab    -- las placas de hielo que saltan en el corte
 MoonfangVFX.Meshes.IceBlocks = modelos.IceBlock  -- los bloques de hielo de la Ola de hielo
+MoonfangVFX.Meshes.IceCrown = modelos.IceSpike   -- los picos de hielo gigantes del borde del Eclipse
+MoonfangVFX.Meshes.IceCrystals = modelos.IceCrystal -- los cristales que brotan en la zona del Eclipse
 ```
 
 - El modelo se clona y se escala al tamaño de cada pieza, y conserva su material, su color y su textura.
@@ -161,7 +167,7 @@ MoonfangVFX.Meshes.IceBlocks = modelos.IceBlock  -- los bloques de hielo de la O
 Todo el kit está en `KaijuZero_VFX/tools/vfx_moonfang.py`:
 
 - arriba están los colores;
-- después cada ataque, con sus tiempos (`T_CLAW`, `T_FIN`, `T_BITE`, `T_SHATTER`, `TW` de la medialuna, `TWW` y `WAVE_FIELD` de la ola, `T_HOWL`, `TE_C` y `TE_E` del eclipse) y sus capas.
+- después cada ataque, con sus tiempos (`T_CLAW`, `T_FIN`, `T_BITE`, `T_SHATTER`, `TW` de la medialuna, `TWW` y `WAVE_FIELD` de la ola, `T_HOWL`, y `ER`, `EH`, `TE_C`, `TE_I`, `TE_E` y `TE_D` del eclipse) y sus capas.
 
 Sus texturas propias salen de `KaijuZero_VFX/tools/gen_moonfang_textures.py`.
 
@@ -174,5 +180,5 @@ La prueba `KaijuZero_VFX/tools/test_luau/run_runtime.py` ejecuta todo el kit con
 
 - dónde salen los golpes y que se limpie todo;
 - que caigan los colmillos;
-- que el Eclipse lance pedazos;
+- que el Eclipse saque la luna gigante, la columna de luz, los cristales con punta y los pedazos, y que no quede nada al terminar;
 - que las auras salgan del cuerpo, sigan al modelo y se apaguen.

@@ -34,11 +34,9 @@ local MoonfangVFX = {}
 -- Pega aquí los IDs de las imágenes subidas
 MoonfangVFX.TEXTURES = {
 	fx_aura_tongue_2x2 = "rbxassetid://0",
-	fx_beam = "rbxassetid://0",
 	fx_fog2001 = "rbxassetid://0",
 	fx_glow = "rbxassetid://0",
 	fx_halo = "rbxassetid://0",
-	fx_laser_thin = "rbxassetid://0",
 	fx_particle02 = "rbxassetid://0",
 	fx_smoke_2x2 = "rbxassetid://0",
 	fx_spark002 = "rbxassetid://0",
@@ -61,9 +59,12 @@ MoonfangVFX.TEXTURES = {
 	mf_blade_solid = "rbxassetid://0",
 	mf_chomp_4x4 = "rbxassetid://0",
 	mf_crescent = "rbxassetid://0",
+	mf_eclipse_sigil = "rbxassetid://0",
 	mf_frost_cracks = "rbxassetid://0",
 	mf_frost_patch = "rbxassetid://0",
 	mf_moon = "rbxassetid://0",
+	mf_moon_eclipse_4x4 = "rbxassetid://0",
+	mf_moonbeam = "rbxassetid://0",
 	mf_moonlight_2x2 = "rbxassetid://0",
 	mf_shard_2x2 = "rbxassetid://0",
 	mf_spike = "rbxassetid://0",
@@ -76,6 +77,8 @@ MoonfangVFX.Parent = workspace :: Instance
 MoonfangVFX.Quality = 1
 -- Luz breve en el impacto (del color del efecto)
 MoonfangVFX.UseLight = true
+-- Las ULTIMATES oscurecen el mundo y hacen destellar la pantalla de quien está cerca (solo en el cliente)
+MoonfangVFX.ScreenFX = true
 -- Los golpes (corte, mordisco) se adaptan al alto del rival si le pasas su Model o su Part
 MoonfangVFX.HitAutoSize = true
 -- Color y material de los cubos de destrucción (nil = los del suelo donde sale el efecto)
@@ -855,7 +858,10 @@ end
 -- modelo de Blender en MoonfangVFX.Meshes[mesh].
 type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
 	rise: number, sink: number, ice: any, shatter: boolean, mesh: string?, L: any, part: BasePart?, base: CFrame?,
-	gy: number, gone: boolean }
+	gy: number, gone: boolean, tip: number?, tipPart: BasePart? }
+
+-- la punta de un cristal: un cubo parado sobre un vértice (su diagonal (1, 1, 1) hacia arriba) en la cara de arriba
+local TIP_ROT = CFrame.fromAxisAngle(Vector3.new(-1, 0, 1).Unit, math.acos(1 / math.sqrt(3)))
 
 local function easeOutBack(p: number): number
 	local q = math.clamp(p, 0, 1) - 1
@@ -941,6 +947,14 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 					p.Material = mat
 					p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
 				end
+				if L.tip then
+					local tp = bladePart("SlabTip", holder)
+					tp.Material = p.Material
+					tp.Color = p.Color
+					tp.Transparency = p.Transparency
+					tp.Size = Vector3.new(L.tip, L.tip, L.tip)
+					L.tipPart = tp
+				end
 			end
 			p.Size = L.size
 			L.part = p
@@ -954,6 +968,9 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 		elseif L.shatter then
 			local pos = part.Position
 			part:Destroy()
+			if L.tipPart then
+				L.tipPart:Destroy()
+			end
 			L.gone = true
 			if onShatter then
 				onShatter(L, pos)
@@ -964,10 +981,16 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			y = L.y0 - L.drop * p * p
 		else
 			part:Destroy()
+			if L.tipPart then
+				L.tipPart:Destroy()
+			end
 			L.gone = true
 			continue
 		end
 		part.CFrame = (L.base :: CFrame) + Vector3.new(0, L.gy + y, 0)
+		if L.tipPart then
+			L.tipPart.CFrame = part.CFrame * CFrame.new(0, L.size.Y / 2, 0) * TIP_ROT
+		end
 	end
 	return alive
 end
@@ -1858,24 +1881,36 @@ local function zoneLights(spec: Layer, Z: Zone)
 			if not Z.holder.Parent then
 				return
 			end
-			local a = Instance.new("Attachment")
-			a.Name = "Light"
-			a.Parent = Z.holder
-			a.Position = Vector3.new(0, if Lt.hu == "H" then Lt.h * Z.H else Lt.h * Z.s, 0)
-			local li = Instance.new("PointLight")
-			li.Color = Color3.fromRGB(Lt.color[1], Lt.color[2], Lt.color[3])
-			li.Brightness = 0
-			li.Range = math.min(Lt.range * Z.s, 60)
-			li.Shadows = false
-			li.Parent = a
-			TweenService:Create(li, TweenInfo.new(math.max(Lt.rise, 0.01), Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Brightness = Lt.brightness }):Play()
-			task.delay(Lt.rise + Lt.hold, function()
-				if li.Parent then
-					TweenService:Create(li, TweenInfo.new(Lt.fall, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-						{ Brightness = 0 }):Play()
+			-- una en el eje o, con ring = {cuántas, fracción del radio}, un anillo (una PointLight no pasa de 60 studs)
+			local y = if Lt.hu == "H" then Lt.h * Z.H else Lt.h * Z.s
+			local spots = { Vector3.new(0, y, 0) }
+			if Lt.ring then
+				spots = {}
+				for i = 1, Lt.ring[1] do
+					local ang = 2 * math.pi * (i - 1) / Lt.ring[1]
+					table.insert(spots, Vector3.new(math.cos(ang) * Lt.ring[2] * Z.R, y, math.sin(ang) * Lt.ring[2] * Z.R))
 				end
-			end)
+			end
+			for _, pos in spots do
+				local a = Instance.new("Attachment")
+				a.Name = "Light"
+				a.Parent = Z.holder
+				a.Position = pos
+				local li = Instance.new("PointLight")
+				li.Color = Color3.fromRGB(Lt.color[1], Lt.color[2], Lt.color[3])
+				li.Brightness = 0
+				li.Range = math.min(Lt.range * Z.s, 60)
+				li.Shadows = false
+				li.Parent = a
+				TweenService:Create(li, TweenInfo.new(math.max(Lt.rise, 0.01), Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Brightness = Lt.brightness }):Play()
+				task.delay(Lt.rise + Lt.hold, function()
+					if li.Parent then
+						TweenService:Create(li, TweenInfo.new(Lt.fall, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+							{ Brightness = 0 }):Play()
+					end
+				end)
+			end
 		end)
 	end
 end
@@ -2132,6 +2167,269 @@ local function playCubes(spec: Layer, Z: Zone)
 	end)
 end
 
+-- ---------------------------------------------------------------- piezas gigantes de la zona (sin el tope de 100 studs)
+-- Capas bill: una BillboardGui con una ImageLabel por partícula (la luna del cielo, los destellos gigantes). Siguen el
+-- tamaño, la transparencia, el color y el giro de la capa durante su vida; slide = corrimiento en pantalla (studs),
+-- flip_t = cuadro del flipbook según la vida y speed/speed_h con direction Top/Bottom = se mueve en vertical. Una
+-- ImageLabel no tiene LightEmission: Brightness (con LightInfluence 0) la hace brillar.
+local FLIP_CELLS = { Grid2x2 = 2, Grid4x4 = 4, Grid8x8 = 8 } :: { [string]: number }
+
+local function playBill(L: Layer, Z: Zone, k: number, n: number, lcf: CFrame)
+	for _ = 1, n do
+		local life = rng:NextNumber(L.lifetime[1], L.lifetime[2])
+		local a = Instance.new("Attachment")
+		a.Name = L.name
+		a.CFrame = lcf
+		a.Parent = Z.holder
+		local g = Instance.new("BillboardGui")
+		g.Name = L.name
+		g.Adornee = a
+		g.LightInfluence = 0
+		g.Brightness = L.brightness
+		g.AlwaysOnTop = false
+		g.MaxDistance = math.huge
+		g.ClipsDescendants = false
+		g.Size = UDim2.fromScale(0, 0)
+		g.Parent = a
+		local im = Instance.new("ImageLabel")
+		im.BackgroundTransparency = 1
+		im.Size = UDim2.fromScale(1, 1)
+		im.Image = MoonfangVFX.TEXTURES[L.texture] or ""
+		im.ImageTransparency = 1
+		im.Parent = g
+		local cells = if L.flipbook then FLIP_CELLS[L.flipbook.layout] or 1 else 1
+		local cell = (L.tex_px or 1024) / cells
+		if cells > 1 then
+			im.ImageRectSize = Vector2.new(cell, cell)
+		end
+		local rot = rng:NextNumber(L.rotation[1], L.rotation[2])
+		local spin = rng:NextNumber(L.rot_speed[1], L.rot_speed[2])
+		local sp = if L.speed_h then rng:NextNumber(L.speed_h[1], L.speed_h[2]) * Z.H
+			else rng:NextNumber(L.speed[1], L.speed[2]) * k
+		local vy = if L.direction == "Bottom" then -sp elseif L.direction == "Top" then sp else 0
+		local t0 = time()
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function()
+			local age = time() - t0
+			local u = age / life
+			if u >= 1 or not a.Parent then
+				conn:Disconnect()
+				a:Destroy()
+				return
+			end
+			local sz = math.max(evalNum(L.size, u) * k, 0.01)
+			g.Size = UDim2.fromScale(sz, sz)
+			local sx, sy = 0, 0
+			if L.slide_x then
+				sx, sy = evalNum(L.slide_x, u) * k, evalNum(L.slide_y, u) * k
+			end
+			g.StudsOffset = Vector3.new(sx, sy, L.zoffset * k)
+			im.ImageTransparency = math.clamp(evalNum(L.transparency, u), 0, 1)
+			im.ImageColor3 = evalColor(L.color, u)
+			im.Rotation = rot + spin * age
+			if vy ~= 0 then
+				a.CFrame = lcf + Vector3.new(0, vy * age, 0)
+			end
+			if cells > 1 then
+				local f = if L.flip_t then evalNum(L.flip_t, u) else u * cells * cells
+				f = math.clamp(math.floor(f + 0.5), 0, cells * cells - 1)
+				im.ImageRectOffset = Vector2.new((f % cells) * cell, math.floor(f / cells) * cell)
+			end
+		end)
+	end
+end
+
+-- Columnas de luz (zbeams): Beams que miran a la cámara, de arriba (Attachment0, la luna) al suelo. Bajan en
+-- drop = {t0, duración}; count cintas en un anillo de r × radio que gira spin grados/s; rim = dos cintas finas en el
+-- contorno de la columna visto desde la cámara (el delineado). width × radio y tex_len × altura; width_t y alpha_t
+-- en el tiempo; r_t encoge el anillo (al colapsar); near aclara las cintas cuando la cámara está dentro de la columna.
+type ZBeamItem = { B: Layer, beams: { Beam }, a0: { Attachment }, a1: { Attachment }, tr: { number }, seed: number }
+
+local function runZoneBeams(spec: Layer, Z: Zone)
+	local holder = Z.holder
+	local items: { ZBeamItem } = {}
+	local tEnd = 0
+	for _, B in spec.zbeams do
+		local n = if B.rim then 2 else B.count
+		local it: ZBeamItem = { B = B, beams = {}, a0 = {}, a1 = {}, tr = {}, seed = rng:NextNumber(0, 100) }
+		for i = 1, n do
+			local a0 = Instance.new("Attachment")
+			a0.Name = B.name
+			a0.Parent = holder
+			local a1 = Instance.new("Attachment")
+			a1.Name = B.name
+			a1.Parent = holder
+			local b = Instance.new("Beam")
+			b.Name = B.name
+			b.Attachment0 = a0
+			b.Attachment1 = a1
+			b.Texture = MoonfangVFX.TEXTURES[B.texture] or ""
+			b.TextureMode = Enum.TextureMode.Wrap
+			b.TextureLength = math.max(B.tex_len * Z.H, 0.1)
+			b.TextureSpeed = B.speed
+			b.LightEmission = B.light_emission
+			b.LightInfluence = 0
+			b.Brightness = B.brightness
+			b.Color = colorSeq(B.color)
+			b.FaceCamera = true
+			b.Segments = 1
+			b.ZOffset = B.zoffset * Z.kR
+			b.Width0 = 0
+			b.Width1 = 0
+			b.Transparency = NumberSequence.new(1)
+			b.Enabled = false
+			b.Parent = holder
+			it.beams[i], it.a0[i], it.a1[i], it.tr[i] = b, a0, a1, 2
+		end
+		table.insert(items, it)
+		tEnd = math.max(tEnd, B.width_t[#B.width_t][1], B.alpha_t[#B.alpha_t][1])
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > tEnd then
+			conn:Disconnect()
+			for _, it in items do
+				for i, b in it.beams do
+					b:Destroy()
+					it.a0[i]:Destroy()
+					it.a1[i]:Destroy()
+				end
+			end
+			return
+		end
+		local cam = workspace.CurrentCamera
+		local camRel = if cam then holder.CFrame:PointToObjectSpace(cam.CFrame.Position) else Vector3.new(0, 0, 1e6)
+		for _, it in items do
+			local B = it.B
+			local wk = evalNum(B.width_t, t)
+			local fade = evalNum(B.alpha_t, t)
+			if t < B.drop[1] or wk <= 1e-3 or fade >= 0.999 then
+				for _, b in it.beams do
+					b.Enabled = false
+				end
+				continue
+			end
+			local top = B.h[2] * Z.H
+			local u = math.min((t - B.drop[1]) / math.max(B.drop[2], 1e-3), 1)
+			local bot = top + (B.h[1] * Z.H - top) * u
+			local rr = B.r * Z.R * (if B.r_t then evalNum(B.r_t, t) else 1)
+			local xs, zs = table.create(#it.beams, 0), table.create(#it.beams, 0)
+			if B.rim then
+				local d = math.sqrt(camRel.X * camRel.X + camRel.Z * camRel.Z)
+				if d <= rr * 1.02 then -- la cámara está dentro: no hay contorno
+					for _, b in it.beams do
+						b.Enabled = false
+					end
+					continue
+				end
+				local ux, uz = camRel.X / d, camRel.Z / d
+				local c = rr / d
+				local sn = math.sqrt(math.max(1 - c * c, 0))
+				xs[1], zs[1] = rr * (c * ux - sn * uz), rr * (c * uz + sn * ux)
+				xs[2], zs[2] = rr * (c * ux + sn * uz), rr * (c * uz - sn * ux)
+			else
+				for i = 1, #it.beams do
+					local ang = 2 * math.pi * (B.a0 + (i - 1) / #it.beams) + math.rad(B.spin) * (t - B.drop[1])
+					xs[i], zs[i] = math.cos(ang) * rr, math.sin(ang) * rr
+				end
+			end
+			for i, b in it.beams do
+				local x, z = xs[i], zs[i]
+				it.a0[i].Position = Vector3.new(x, top, z)
+				it.a1[i].Position = Vector3.new(x, bot, z)
+				local w = B.width * Z.R * wk * (1 + B.wobble * math.noise(it.seed + i * 3.3, t * 2.3))
+				b.Width0 = w
+				b.Width1 = w
+				local f = fade
+				if B.near > 0 then
+					local dd = math.sqrt((camRel.X - x) ^ 2 + (camRel.Z - z) ^ 2)
+					local close = 1 - math.clamp((dd - 0.5 * w) / math.max(w, 1e-3), 0, 1)
+					f = 1 - (1 - f) * (1 - B.near * close)
+				end
+				if f >= 0.999 then
+					b.Enabled = false
+					continue
+				end
+				b.Enabled = true
+				if math.abs(it.tr[i] - f) > 0.01 then
+					it.tr[i] = f
+					local kps = table.create(#B.transparency)
+					for j, p in B.transparency do
+						kps[j] = NumberSequenceKeypoint.new(p[1], 1 - (1 - p[2]) * (1 - f))
+					end
+					b.Transparency = NumberSequence.new(kps)
+				end
+			end
+		end
+	end)
+end
+
+-- Cristales y losas que brotan en una zona circular (zfield): cada grupo reparte count piezas entre r = {r0, r1}
+-- (fracción del radio; ring = parejas alrededor del anillo); brotan cuando la onda del centro llega a su radio
+-- (t + sweep·r) y se inclinan hacia afuera (lean = "radial"); con end_at todas terminan a la vez (las de hielo
+-- revientan). tip = punta de cristal. Los tamaños siguen al radio de la zona.
+local function runZoneField(F: any, Z: Zone)
+	local holder = Z.holder
+	local k = Z.kR
+	local slabs: { Slab } = {}
+	local shatterFx: { [any]: { { e: ParticleEmitter, c: Instance, n: number } } } = {}
+	for _, G in F.groups do
+		local n = math.floor(G.count * MoonfangVFX.Quality + 0.5)
+		for i = 1, n do
+			local ang: number, r: number
+			if G.ring then
+				ang = 2 * math.pi * (i - 1 + rng:NextNumber(-0.35, 0.35)) / n
+				r = rng:NextNumber(G.r[1], G.r[2])
+			else
+				ang = rng:NextNumber(0, 2 * math.pi)
+				r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2))
+			end
+			local x, z = math.cos(ang) * r * Z.R, math.sin(ang) * r * Z.R
+			local yaw = if G.lean == "radial" then ang else rng:NextNumber(0, 2 * math.pi)
+			local tS = G.t + (G.sweep or 0) * r + rng:NextNumber(G.delay[1], G.delay[2])
+			local S = makeSlab(G, k, x, z, yaw, 1, tS)
+			if G.end_at then
+				S.hold = math.max(0.05, rng:NextNumber(G.end_at[1], G.end_at[2]) - tS - S.rise)
+			end
+			if G.tip then
+				S.tip = G.tip * math.min(S.size.X, S.size.Z)
+			end
+			table.insert(slabs, S)
+		end
+		if G.shatter then
+			local list = {}
+			for _, LL in G.shatter do
+				local e, c = buildEmitter(LL, holder, k, Vector3.zero)
+				table.insert(list, { e = e, c = c, n = LL.emit[1][2] })
+			end
+			shatterFx[G] = list
+		end
+	end
+	local exclude = { holder :: Instance }
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local alive = stepSlabs(slabs, holder, time() - t0, exclude, function(L: Slab, pos: Vector3)
+			local list = shatterFx[L.L]
+			if list then
+				for _, fx in list do
+					placeCarrier(fx.c, holder, pos)
+					fx.e:Emit(quality(fx.n))
+				end
+			end
+		end)
+		if not alive then
+			conn:Disconnect()
+		end
+	end)
+end
+
 -- arranca las capas de una zona circular (+ cubos de destrucción y luces); snap = hasta cuántos studs
 -- se baja o se sube el centro para apoyarlo en el suelo
 local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: number, snap: number): (Part, Zone)
@@ -2152,6 +2450,16 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 	for _, L in spec.layers do
 		if L.orb then
 			continue -- van pegadas al proyectil (runOrb)
+		elseif L.bill then
+			local k = zoneK(L, Z)
+			for _, ev in L.ring_emit or {} do
+				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false)
+				task.delay(ev[1], function()
+					if holder.Parent then
+						playBill(L, Z, k, ev[2], lcf)
+					end
+				end)
+			end
 		elseif L.decal then
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
@@ -2203,14 +2511,120 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 	if spec.cubes then
 		playCubes(spec, Z)
 	end
+	if spec.zbeams then
+		runZoneBeams(spec, Z)
+	end
+	if spec.zfield then
+		runZoneField(spec.zfield, Z)
+	end
 	zoneLights(spec, Z)
 	return holder, Z
+end
+
+-- Corrección de color y destellos de pantalla de una zona (solo en el cliente y cerca de la zona): con screen.cc =
+-- {t, brillo, contraste, saturación, tinte R, G, B} el mundo se oscurece (p. ej. mientras la luna se eclipsa) y con
+-- screen.flash = {t, alfa, subida, bajada} la pantalla destella. Se nota entero dentro de la zona y se apaga a
+-- screen.range × radio. MoonfangVFX.ScreenFX = false lo desactiva.
+local function runScreen(spec: Layer, Z: Zone)
+	local Sc = spec.screen
+	if not (MoonfangVFX :: any).ScreenFX or not RunService:IsClient() then
+		return
+	end
+	local holder = Z.holder
+	local cc: ColorCorrectionEffect? = nil
+	local gui: ScreenGui? = nil
+	local frame: Frame? = nil
+	pcall(function()
+		local e = Instance.new("ColorCorrectionEffect")
+		e.Name = "KZ_" .. spec.name
+		e.Parent = game:GetService("Lighting")
+		cc = e
+	end)
+	pcall(function()
+		local lp = game:GetService("Players").LocalPlayer
+		local pg = lp and lp:FindFirstChildOfClass("PlayerGui")
+		if not pg then
+			return
+		end
+		local g = Instance.new("ScreenGui")
+		g.Name = "KZ_" .. spec.name .. "Flash"
+		g.IgnoreGuiInset = true
+		g.ResetOnSpawn = false
+		g.DisplayOrder = 1000
+		local fr = Instance.new("Frame")
+		fr.Size = UDim2.fromScale(1, 1)
+		fr.BackgroundColor3 = Color3.fromRGB(Sc.flash_color[1], Sc.flash_color[2], Sc.flash_color[3])
+		fr.BorderSizePixel = 0
+		fr.BackgroundTransparency = 1
+		fr.Parent = g
+		g.Parent = pg
+		gui = g
+		frame = fr
+	end)
+	local tEnd = Sc.cc[#Sc.cc][1]
+	for _, f in Sc.flash do
+		tEnd = math.max(tEnd, f[1] + f[3] + f[4])
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > tEnd then
+			conn:Disconnect()
+			if cc then
+				cc:Destroy()
+			end
+			if gui then
+				gui:Destroy()
+			end
+			return
+		end
+		local k = 1
+		local cam = workspace.CurrentCamera
+		if cam then
+			local rel = holder.CFrame:PointToObjectSpace(cam.CFrame.Position)
+			local d = math.sqrt(rel.X * rel.X + rel.Z * rel.Z)
+			k = math.clamp(1 - (d - Z.R) / math.max((Sc.range - 1) * Z.R, 1), 0, 1)
+		end
+		if cc then
+			local rows = Sc.cc
+			local a, b = rows[1], rows[#rows]
+			for i = 1, #rows - 1 do
+				if t <= rows[i + 1][1] then
+					a, b = rows[i], rows[i + 1]
+					break
+				end
+			end
+			local u = math.clamp((t - a[1]) / math.max(b[1] - a[1], 1e-3), 0, 1)
+			local function v(j: number): number
+				return a[j] + (b[j] - a[j]) * u
+			end
+			cc.Brightness = v(2) * k
+			cc.Contrast = v(3) * k
+			cc.Saturation = v(4) * k
+			cc.TintColor = Color3.new(1 - (1 - v(5) / 255) * k, 1 - (1 - v(6) / 255) * k, 1 - (1 - v(7) / 255) * k)
+		end
+		if frame then
+			local al = 0
+			for _, f in Sc.flash do
+				local tt = t - f[1]
+				if tt >= 0 then
+					local w = if tt < f[3] then tt / f[3] else 1 - math.clamp((tt - f[3]) / f[4], 0, 1)
+					al = math.max(al, w * f[2])
+				end
+			end
+			frame.BackgroundTransparency = 1 - al * k
+		end
+	end)
 end
 
 -- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
 local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
-	local holder = startZone(spec, cf, s, radius or spec.zone.radius * s, height or spec.zone.height * s, 8)
+	local holder, Z = startZone(spec, cf, s, radius or spec.zone.radius * s, height or spec.zone.height * s, 8)
+	if spec.screen then
+		runScreen(spec, Z)
+	end
 	finish(spec, holder, s, shake, {})
 	return holder
 end
@@ -15218,23 +15632,235 @@ end
 
 local SPEC_Eclipse = {
 	name = "Eclipse",
-	duration = 3.6,
-	cleanup = 5.03,
+	duration = 4.95,
+	cleanup = 7.89,
 	layers = {
 		{
-			name = "ZoneRing",
-			texture = "kk_circle_02",
-			rel = "r",
-			lifetime = {1.2, 1.2},
+			name = "MoonHalo",
+			texture = "fx_glow",
+			lifetime = {4.75, 4.75},
 			size = {
-				{0, 105.768, 0},
-				{0.15, 88.14, 0},
-				{1, 88.14, 0},
+				{0, 156, 0},
+				{0.06, 592.8, 0},
+				{1, 624, 0},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.1, 0.15, 0},
-				{0.85, 0.1, 0},
+				{0.05, 0.45, 0},
+				{0.2105, 0.5, 0},
+				{0.2737, 0.75, 0},
+				{0.7474, 0.75, 0},
+				{0.7684, 0.35, 0},
+				{0.85, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 170, 255},
+				},
+				{
+					0.5,
+					{60, 115, 240},
+				},
+				{
+					1,
+					{30, 60, 190},
+				},
+			},
+			brightness = 1.2,
+			zoffset = 50,
+			ring_emit = {
+				{0, 1, 0, 0, 1},
+			},
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CoronaRays",
+			texture = "fx_halo",
+			lifetime = {2.85, 2.85},
+			rotation = {0, 360},
+			rot_speed = {7, 10},
+			size = {
+				{0, 296.4, 0},
+				{0.05, 411.84, 0},
+				{1, 443.04, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.05, 0.4, 0},
+				{0.8, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 232, 255},
+				},
+				{
+					1,
+					{165, 195, 250},
+				},
+			},
+			brightness = 1.3,
+			zoffset = 55,
+			ring_emit = {
+				{1.22, 1, 0, 0, 1},
+			},
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Moon",
+			texture = "mf_moon_eclipse_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 0,
+				startRandom = false,
+			},
+			flip_t = {
+				{0, 0},
+				{0.0632, 0},
+				{0.2737, 15},
+				{0.7453, 15},
+				{0.7474, 0},
+				{1, 0},
+			},
+			lifetime = {4.75, 4.75},
+			size = {
+				{0, 109.2, 0},
+				{0.05, 327.6, 0},
+				{0.09, 312, 0},
+				{1, 312, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.04, 0, 0},
+				{0.88, 0, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{235, 242, 255},
+				},
+			},
+			brightness = 1.7,
+			zoffset = 60,
+			ring_emit = {
+				{0, 1, 0, 0, 1},
+			},
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "Corona",
+			texture = "kk_circle_02",
+			lifetime = {2.25, 2.25},
+			size = {
+				{0, 592.8, 0},
+				{0.04, 468, 0},
+				{1, 483.6, 0},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.9, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{220, 232, 255},
+				},
+				{
+					1,
+					{165, 195, 250},
+				},
+			},
+			brightness = 2.6,
+			zoffset = 62,
+			ring_emit = {
+				{1.3, 1, 0, 0, 1},
+			},
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DiamondGlow",
+			texture = "fx_glow",
+			lifetime = {0.45, 0.45},
+			size = {
+				{0, 31.2, 0},
+				{0.2, 156, 0},
+				{1, 93.6, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.4, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -15251,77 +15877,184 @@ local SPEC_Eclipse = {
 					{85, 145, 245},
 				},
 			},
-			light_emission = 0.8,
+			brightness = 2.4,
+			zoffset = 64,
 			ring_emit = {
-				{0, 1, 0, 0, 0.14},
+				{1.24, 1, 0, 0, 1},
 			},
-			decal = true,
-			orientation = "VelocityPerpendicular",
-			direction = "Top",
-			speed = {0.01, 0.01},
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
 			spread = {0, 0},
+			direction = "Top",
 			accel = {0, 0, 0},
 			drag = 0,
-			brightness = 1,
+			light_emission = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
+			slide_x = {
+				{0, 90.48},
+				{1, 90.48},
+			},
+			slide_y = {
+				{0, 84.24},
+				{1, 84.24},
+			},
 		},
 		{
-			name = "ZoneCracks",
-			texture = "mf_frost_cracks",
-			rel = "r",
-			lifetime = {3.4, 3.4},
-			rotation = {0, 360},
+			name = "DiamondStar",
+			texture = "kk_star_09",
+			lifetime = {0.45, 0.45},
+			rotation = {10, 20},
 			size = {
-				{0, 10.4, 0},
-				{0.12, 57.2, 0},
-				{1, 59.8, 0},
+				{0, 15.6, 0},
+				{0.18, 343.2, 0},
+				{1, 46.8, 0},
 			},
 			transparency = {
-				{0, 1, 0},
-				{0.08, 0.3, 0},
-				{0.26, 0.15, 0},
-				{0.3, 0.02, 0},
-				{0.5, 0.2, 0},
-				{0.85, 0.35, 0},
+				{0, 0, 0},
+				{1, 0.4, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			brightness = 3,
+			zoffset = 65,
+			ring_emit = {
+				{1.24, 1, 0, 0, 1},
+			},
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+			slide_x = {
+				{0, 90.48},
+				{1, 90.48},
+			},
+			slide_y = {
+				{0, 84.24},
+				{1, 84.24},
+			},
+		},
+		{
+			name = "MoonReturn",
+			texture = "fx_glow",
+			lifetime = {0.6, 0.6},
+			size = {
+				{0, 280.8, 0},
+				{0.2, 530.4, 0},
+				{1, 592.8, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.4, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{120, 185, 255},
+					{230, 245, 255},
 				},
 				{
-					0.15,
-					{225, 242, 255},
-				},
-				{
-					0.35,
-					{130, 190, 255},
+					0.5,
+					{155, 210, 255},
 				},
 				{
 					1,
-					{40, 80, 200},
+					{85, 145, 245},
 				},
 			},
-			light_emission = 0.85,
+			brightness = 2.4,
+			zoffset = 63,
 			ring_emit = {
-				{0.1, 1, 0, 0, 0.16},
+				{3.55, 1, 0, 0, 1},
 			},
-			decal = true,
-			orientation = "VelocityPerpendicular",
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
+			spread = {0, 0},
 			direction = "Top",
-			speed = {0.01, 0.01},
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DropHead",
+			texture = "fx_glow",
+			direction = "Bottom",
+			speed_h = {8.2, 8.2},
+			lifetime = {0.12, 0.12},
+			size = {
+				{0, 120, 0},
+				{1, 180, 0},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{1, 0.25, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			brightness = 2,
+			ring_emit = {
+				{1.3, 1, 0, 0, 1},
+			},
+			bill = true,
+			rel = "r",
+			hu = "H",
+			speed = {0, 0},
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
-			brightness = 1,
+			light_emission = 0,
+			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -15330,16 +16063,16 @@ local SPEC_Eclipse = {
 			name = "ZoneShade",
 			texture = "fx_glow",
 			rel = "r",
-			lifetime = {3.6, 3.6},
+			lifetime = {4.85, 4.85},
 			size = {
-				{0, 10, 0},
-				{0.15, 59.8, 0},
-				{1, 62.4, 0},
+				{0, 48, 0},
+				{0.1, 300, 0},
+				{1, 312, 0},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.12, 0.45, 0},
-				{0.8, 0.45, 0},
+				{0.08, 0.4, 0},
+				{0.85, 0.45, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -15372,20 +16105,67 @@ local SPEC_Eclipse = {
 			emit = {},
 		},
 		{
-			name = "Moon",
-			texture = "mf_moon",
+			name = "Sigil",
+			texture = "mf_eclipse_sigil",
 			rel = "r",
-			hu = "H",
-			lifetime = {3.2, 3.2},
+			lifetime = {3.6, 3.6},
+			rotation = {0, 360},
+			rot_speed = {6, 6},
 			size = {
-				{0, 26, 0},
-				{0.12, 67.6, 0},
-				{1, 70.2, 0},
+				{0, 313.1524, 0},
+				{0.06, 250.5219, 0},
+				{1, 250.5219, 0},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.08, 0, 0},
-				{0.92, 0.1, 0},
+				{0.05, 0.15, 0},
+				{0.3, 0.05, 0},
+				{0.97, 0.05, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 205, 255},
+				},
+				{
+					0.3,
+					{215, 236, 255},
+				},
+				{
+					1,
+					{120, 175, 250},
+				},
+			},
+			light_emission = 1,
+			ring_emit = {
+				{0.05, 1, 0, 0, 0.16},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "SigilFlash",
+			texture = "mf_eclipse_sigil",
+			rel = "r",
+			lifetime = {0.5, 0.5},
+			rotation = {0, 360},
+			size = {
+				{0, 250.5219, 0},
+				{1, 265.5532, 0},
+			},
+			transparency = {
+				{0, 0, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -15395,614 +16175,308 @@ local SPEC_Eclipse = {
 				},
 				{
 					1,
-					{235, 242, 255},
-				},
-			},
-			light_emission = 0.35,
-			brightness = 1.3,
-			zoffset = -8,
-			ring_emit = {
-				{0, 1, 0, 0, 1},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "MoonHalo",
-			texture = "fx_glow",
-			rel = "r",
-			hu = "H",
-			lifetime = {3.2, 3.2},
-			size = {
-				{0, 52, 0},
-				{0.12, 130, 0},
-				{1, 135.2, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.1, 0.45, 0},
-				{0.9, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
+					{235, 244, 255},
 				},
 			},
 			light_emission = 1,
-			brightness = 0.9,
-			zoffset = -9,
 			ring_emit = {
-				{0, 1, 0, 0, 1},
+				{1.42, 1, 0, 0, 0.2},
 			},
-			speed = {0, 0},
-			spread = {0, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
 			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
-			rotation = {0, 0},
+			brightness = 1,
 			rot_speed = {0, 0},
-			orientation = "FacingCamera",
+			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
 		},
 		{
-			name = "Shadow",
-			texture = "fx_glow",
+			name = "ZoneCracks",
+			texture = "mf_frost_cracks",
 			rel = "r",
-			hu = "H",
-			lifetime = {0.75, 0.75},
+			lifetime = {4.55, 4.55},
+			rotation = {0, 360},
 			size = {
-				{0, 20.8, 0},
-				{1, 65, 0},
+				{0, 24, 0},
+				{0.08, 132, 0},
+				{1, 138, 0},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.4, 0.4, 0},
-				{1, 0, 0},
-			},
-			color = {
-				{
-					0,
-					{6, 8, 22},
-				},
-				{
-					1,
-					{6, 8, 22},
-				},
-			},
-			zoffset = -7,
-			ring_emit = {
-				{0.25, 1, 0, 0, 1},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			light_emission = 0,
-			brightness = 1,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "ShadowHold",
-			texture = "fx_glow",
-			rel = "r",
-			hu = "H",
-			lifetime = {1.7, 1.7},
-			size = {
-				{0, 65, 0},
-				{1, 65, 0},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.85, 0, 0},
+				{0.05, 0.3, 0},
+				{0.85, 0.35, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{6, 8, 22},
+					{120, 185, 255},
+				},
+				{
+					0.15,
+					{225, 242, 255},
+				},
+				{
+					0.35,
+					{130, 190, 255},
 				},
 				{
 					1,
-					{6, 8, 22},
+					{40, 80, 200},
 				},
 			},
-			zoffset = -7,
+			light_emission = 0.85,
 			ring_emit = {
-				{1, 1, 0, 0, 1},
+				{0.15, 1, 0, 0, 0.18},
 			},
-			speed = {0, 0},
-			spread = {0, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
 			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
-			light_emission = 0,
 			brightness = 1,
-			rotation = {0, 0},
 			rot_speed = {0, 0},
-			orientation = "FacingCamera",
+			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
 		},
 		{
-			name = "Corona",
+			name = "ZoneCracksOut",
+			texture = "mf_frost_cracks",
+			rel = "r",
+			lifetime = {4.15, 4.15},
+			rotation = {0, 360},
+			size = {
+				{0, 18, 0},
+				{0.08, 90, 0},
+				{1, 96, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.05, 0.35, 0},
+				{0.85, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 185, 255},
+				},
+				{
+					0.15,
+					{225, 242, 255},
+				},
+				{
+					0.35,
+					{130, 190, 255},
+				},
+				{
+					1,
+					{40, 80, 200},
+				},
+			},
+			light_emission = 0.85,
+			ring_emit = {
+				{0.364, 1, 0.1498, 0.525, 0.19},
+				{0.645, 1, 0.1675, 0.835, 0.19},
+				{0.692, 1, 0.2159, 0.886, 0.19},
+				{0.492, 1, 0.2307, 0.666, 0.19},
+				{0.573, 1, 0.3835, 0.755, 0.19},
+				{0.691, 1, 0.4394, 0.885, 0.19},
+				{0.649, 1, 0.5764, 0.839, 0.19},
+				{0.617, 1, 0.6208, 0.804, 0.19},
+				{0.668, 1, 0.6616, 0.86, 0.19},
+				{0.585, 1, 0.6901, 0.768, 0.19},
+				{0.646, 1, 0.7323, 0.836, 0.19},
+				{0.297, 1, 0.7843, 0.452, 0.19},
+				{0.277, 1, 0.8669, 0.43, 0.19},
+				{0.37, 1, 0.9138, 0.532, 0.19},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FrostSheet",
+			texture = "mf_frost_patch",
+			rel = "r",
+			lifetime = {3.53, 3.53},
+			rotation = {0, 360},
+			size = {
+				{0, 36, 0},
+				{0.06, 96, 0},
+				{1, 102, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.05, 0.25, 0},
+				{0.85, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 205, 255},
+				},
+				{
+					0.3,
+					{215, 236, 255},
+				},
+				{
+					1,
+					{120, 175, 250},
+				},
+			},
+			light_emission = 0.5,
+			ring_emit = {
+				{1.42, 1, 0, 0, 0.2},
+				{1.532, 1, 0.0657, 0.45, 0.2},
+				{1.502, 1, 0.1349, 0.328, 0.2},
+				{1.64, 1, 0.3014, 0.882, 0.2},
+				{1.511, 1, 0.3178, 0.365, 0.2},
+				{1.617, 1, 0.3219, 0.789, 0.2},
+				{1.595, 1, 0.3948, 0.701, 0.2},
+				{1.612, 1, 0.6082, 0.77, 0.2},
+				{1.582, 1, 0.6633, 0.649, 0.2},
+				{1.534, 1, 0.6677, 0.457, 0.2},
+				{1.529, 1, 0.67, 0.438, 0.2},
+				{1.59, 1, 0.7282, 0.68, 0.2},
+				{1.585, 1, 0.7444, 0.66, 0.2},
+				{1.602, 1, 0.8804, 0.727, 0.2},
+				{1.542, 1, 0.8878, 0.488, 0.2},
+				{1.529, 1, 0.9132, 0.437, 0.2},
+				{1.621, 1, 0.98, 0.806, 0.2},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "GroundGlow",
+			texture = "fx_glow",
+			rel = "r",
+			lifetime = {0.55, 0.65},
+			size = {
+				{0, 240, 0},
+				{1, 276, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.3, 0.45, 0},
+				{0.7, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 1,
+			ring_emit = {
+				{1.42, 1, 0, 0, 0.25},
+				{1.87, 1, 0, 0, 0.25},
+				{2.32, 1, 0, 0, 0.25},
+				{2.77, 1, 0, 0, 0.25},
+				{3.22, 1, 0, 0, 0.25},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PulseRing",
 			texture = "kk_circle_02",
 			rel = "r",
-			hu = "H",
-			lifetime = {1.7, 1.7},
+			lifetime = {0.55, 0.55},
 			size = {
-				{0, 81.4414, 0},
-				{0.05, 74.0376, 0},
-				{1, 75.8885, 0},
+				{0, 101.7, 0},
+				{1, 427.14, 0},
 			},
 			transparency = {
-				{0, 0, 0},
-				{0.85, 0.1, 0},
+				{0, 0.4, 0},
+				{0.6, 0.55, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 255, 255},
+					{230, 245, 255},
 				},
 				{
 					0.5,
-					{220, 232, 255},
+					{155, 210, 255},
 				},
 				{
 					1,
-					{165, 195, 250},
+					{85, 145, 245},
 				},
 			},
-			light_emission = 1,
-			brightness = 1.6,
-			zoffset = -6,
+			light_emission = 0.9,
 			ring_emit = {
-				{1, 1, 0, 0, 1},
+				{1.87, 1, 0, 0, 0.25},
+				{2.32, 1, 0, 0, 0.25},
+				{2.77, 1, 0, 0, 0.25},
 			},
-			speed = {0, 0},
-			spread = {0, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
 			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "CoronaFlare",
-			texture = "kk_star_09",
-			rel = "r",
-			hu = "H",
-			lifetime = {0.35, 0.35},
-			size = {
-				{0, 26, 0},
-				{0.2, 130, 0},
-				{1, 52, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{225, 240, 255},
-				},
-				{
-					1,
-					{170, 205, 255},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.5,
-			rotation = {0, 90},
-			zoffset = -5,
-			ring_emit = {
-				{1, 1, 0, 0, 1},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "ChargeRise",
-			texture = "kk_star_06",
-			rel = "r",
-			direction = "Top",
-			speed = {12, 22},
-			lifetime = {0.7, 1},
-			size = {
-				{0, 0, 0},
-				{0.08, 4.16, 0},
-				{0.22, 1.82, 0},
-				{0.38, 4.42, 0},
-				{0.55, 1.56, 0},
-				{0.72, 3.64, 0},
-				{1, 0, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{225, 240, 255},
-				},
-				{
-					1,
-					{170, 205, 255},
-				},
-			},
-			light_emission = 1,
-			brightness = 2,
-			rotation = {0, 45},
-			ring_emit = {
-				{0.075, 1, 0.7599, 0.843, 0.5},
-				{0.079, 1, 0.1806, 0.415, 0.5},
-				{0.081, 1, 0.8669, 0.887, 0.5},
-				{0.101, 1, 0.3178, 0.99, 0.5},
-				{0.111, 1, 0.2372, 0.818, 0.5},
-				{0.154, 1, 0.6605, 0.868, 0.5},
-				{0.169, 1, 0.67, 0.857, 0.5},
-				{0.178, 1, 0.4584, 0.177, 0.5},
-				{0.182, 1, 0.0657, 0.573, 0.5},
-				{0.194, 1, 0.8539, 0.561, 0.5},
-				{0.197, 1, 0.3291, 0.756, 0.5},
-				{0.214, 1, 0.8676, 0.611, 0.5},
-				{0.227, 1, 0.5269, 0.626, 0.5},
-				{0.251, 1, 0.6861, 0.532, 0.5},
-				{0.255, 1, 0.7262, 0.918, 0.5},
-				{0.269, 1, 0.166, 0.622, 0.5},
-				{0.411, 1, 0.8851, 0.962, 0.5},
-				{0.414, 1, 0.7316, 0.747, 0.5},
-				{0.454, 1, 0.7444, 0.855, 0.5},
-				{0.467, 1, 0.155, 0.917, 0.5},
-				{0.478, 1, 0.9676, 0.645, 0.5},
-				{0.501, 1, 0.0721, 0.437, 0.5},
-				{0.519, 1, 0.3948, 0.817, 0.5},
-				{0.523, 1, 0.9707, 0.746, 0.5},
-				{0.599, 1, 0.6901, 0.956, 0.5},
-				{0.608, 1, 0.3032, 0.535, 0.5},
-				{0.614, 1, 0.233, 0.711, 0.5},
-				{0.615, 1, 0.352, 0.717, 0.5},
-				{0.619, 1, 0.713, 0.999, 0.5},
-				{0.628, 1, 0.1821, 0.79, 0.5},
-				{0.629, 1, 0.4184, 0.867, 0.5},
-				{0.64, 1, 0.0595, 0.811, 0.5},
-				{0.667, 1, 0.177, 0.72, 0.5},
-				{0.672, 1, 0.5308, 0.396, 0.5},
-				{0.684, 1, 0.4072, 0.393, 0.5},
-				{0.692, 1, 0.1185, 0.486, 0.5},
-				{0.705, 1, 0.4896, 0.768, 0.5},
-				{0.707, 1, 0.239, 0.894, 0.5},
-				{0.737, 1, 0.1675, 0.398, 0.5},
-				{0.745, 1, 0.2143, 0.868, 0.5},
-				{0.747, 1, 0.68, 0.666, 0.5},
-				{0.778, 1, 0.7271, 0.183, 0.5},
-				{0.792, 1, 0.6616, 0.762, 0.5},
-				{0.795, 1, 0.0717, 0.855, 0.5},
-				{0.813, 1, 0.3224, 0.451, 0.5},
-				{0.831, 1, 0.0298, 0.946, 0.5},
-				{0.832, 1, 0.2709, 0.192, 0.5},
-				{0.834, 1, 0.7165, 0.253, 0.5},
-				{0.838, 1, 0.8689, 0.785, 0.5},
-				{0.854, 1, 0.3014, 0.943, 0.5},
-				{0.869, 1, 0.8746, 0.222, 0.5},
-				{0.879, 1, 0.5138, 0.479, 0.5},
-				{0.886, 1, 0.6551, 0.738, 0.5},
-				{0.895, 1, 0.6554, 0.369, 0.5},
-				{0.903, 1, 0.3257, 0.533, 0.5},
-				{0.918, 1, 0.6889, 0.364, 0.5},
-				{0.926, 1, 0.9062, 0.828, 0.5},
-				{0.943, 1, 0.826, 0.707, 0.5},
-				{0.945, 1, 0.6383, 0.77, 0.5},
-				{0.964, 1, 0.2418, 0.922, 0.5},
-			},
+			speed = {0.01, 0.01},
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "ChargeMist",
-			texture = "kk_smoke_04",
-			rel = "r",
-			direction = "Top",
-			speed = {2, 5},
-			drag = 1,
-			lifetime = {0.8, 1.1},
-			size = {
-				{0, 4, 0},
-				{1, 12, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.3, 0.6, 0},
-				{0.8, 0.7, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{215, 228, 248},
-				},
-				{
-					1,
-					{175, 190, 222},
-				},
-			},
-			rotation = {0, 360},
-			rot_speed = {-30, 30},
-			ring_emit = {
-				{0.16, 1, 0.3706, 0.896, 1},
-				{0.163, 1, 0.8429, 0.439, 1},
-				{0.174, 1, 0.3887, 0.852, 1},
-				{0.218, 1, 0.8996, 0.61, 1},
-				{0.236, 1, 0.9025, 0.918, 1},
-				{0.277, 1, 0.686, 0.71, 1},
-				{0.291, 1, 0.692, 0.742, 1},
-				{0.439, 1, 0.7541, 0.462, 1},
-				{0.471, 1, 0.8866, 0.702, 1},
-				{0.605, 1, 0.1897, 0.765, 1},
-				{0.627, 1, 0.3722, 0.826, 1},
-				{0.685, 1, 0.9998, 0.323, 1},
-				{0.695, 1, 0.7797, 0.552, 1},
-				{0.697, 1, 0.4389, 0.9, 1},
-				{0.705, 1, 0.173, 0.614, 1},
-				{0.715, 1, 0.6919, 0.987, 1},
-				{0.732, 1, 0.313, 0.585, 1},
-				{0.74, 1, 0.9638, 0.949, 1},
-			},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			light_emission = 0,
 			brightness = 1,
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "GuideLine",
-			texture = "fx_laser_thin",
-			rel = "h",
-			hu = "H",
-			orientation = "FacingCameraWorldUp",
-			lifetime = {0.2, 0.2},
-			size = {
-				{0, 31.5, 0},
-				{1, 31.5, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.3, 0.1, 0},
-				{1, 0.5, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.7,
-			ring_emit = {
-				{0.885, 1, 0, 0, 0.083},
-				{0.895, 1, 0, 0, 0.25},
-				{0.905, 1, 0, 0, 0.417},
-				{0.915, 1, 0, 0, 0.583},
-				{0.925, 1, 0, 0, 0.75},
-				{0.935, 1, 0, 0, 0.917},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "DropHead",
-			texture = "fx_glow",
-			rel = "r",
-			hu = "H",
-			direction = "Bottom",
-			speed_h = {6, 6},
-			lifetime = {0.16, 0.16},
-			size = {
-				{0, 31.2, 0},
-				{1, 39, 0},
-			},
-			transparency = {
-				{0, 0.2, 0},
-				{1, 0.4, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.3,
-			ring_emit = {
-				{1, 1, 0, 0, 1},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "ImpactFlash",
-			texture = "fx_glow",
-			rel = "r",
-			lifetime = {0.22, 0.22},
-			size = {
-				{0, 8, 0},
-				{0.25, 46.8, 0},
-				{1, 52, 0},
-			},
-			transparency = {
-				{0, 0.3, 0},
-				{0.4, 0.55, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.15,
-			zoffset = 3,
-			ring_emit = {
-				{1.15, 1, 0, 0, 4},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "ImpactStar",
-			texture = "kk_star_09",
-			rel = "r",
-			lifetime = {0.3, 0.3},
-			size = {
-				{0, 20, 0},
-				{0.15, 78, 0},
-				{1, 12, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{225, 240, 255},
-				},
-				{
-					1,
-					{170, 205, 255},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.2,
-			rotation = {0, 90},
-			zoffset = 4,
-			ring_emit = {
-				{1.15, 1, 0, 0, 8},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -16011,14 +16485,14 @@ local SPEC_Eclipse = {
 			name = "ShockRing",
 			texture = "kk_circle_02",
 			rel = "r",
-			lifetime = {0.5, 0.5},
+			lifetime = {0.6, 0.6},
 			size = {
-				{0, 88.14, 0},
-				{1, 317.304, 0},
+				{0, 406.8, 0},
+				{1, 976.32, 0},
 			},
 			transparency = {
-				{0, 0.2, 0},
-				{0.5, 0.5, 0},
+				{0, 0.15, 0},
+				{0.5, 0.45, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -16035,9 +16509,9 @@ local SPEC_Eclipse = {
 					{85, 145, 245},
 				},
 			},
-			light_emission = 0.6,
+			light_emission = 0.8,
 			ring_emit = {
-				{1.15, 1, 0, 0, 0.2},
+				{1.42, 1, 0, 0, 0.21},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -16058,14 +16532,14 @@ local SPEC_Eclipse = {
 			name = "ShockRingSharp",
 			texture = "kk_circle_02",
 			rel = "r",
-			lifetime = {0.32, 0.32},
+			lifetime = {0.42, 0.42},
 			size = {
-				{0, 88.14, 0},
-				{1, 423.072, 0},
+				{0, 406.8, 0},
+				{1, 1220.4, 0},
 			},
 			transparency = {
-				{0, 0.1, 0},
-				{0.6, 0.45, 0},
+				{0, 0.05, 0},
+				{0.6, 0.4, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -16082,9 +16556,9 @@ local SPEC_Eclipse = {
 					{165, 195, 250},
 				},
 			},
-			light_emission = 0.7,
+			light_emission = 0.9,
 			ring_emit = {
-				{1.15, 1, 0, 0, 0.21},
+				{1.42, 1, 0, 0, 0.22},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -16102,20 +16576,17 @@ local SPEC_Eclipse = {
 			emit = {},
 		},
 		{
-			name = "ColumnBeam",
-			texture = "fx_beam",
-			rel = "h",
-			hu = "H",
-			orientation = "FacingCameraWorldUp",
-			lifetime = {1.6, 1.6},
+			name = "DetRing",
+			texture = "kk_circle_02",
+			rel = "r",
+			lifetime = {0.7, 0.7},
 			size = {
-				{0, 42, 0},
-				{1, 42, 0},
+				{0, 122.04, 0},
+				{1, 1057.68, 0},
 			},
 			transparency = {
-				{0, 0.5, 0},
-				{0.1, 0.4, 0},
-				{0.85, 0.45, 0},
+				{0, 0.1, 0},
+				{0.5, 0.4, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -16132,22 +16603,18 @@ local SPEC_Eclipse = {
 					{85, 145, 245},
 				},
 			},
-			light_emission = 1,
-			brightness = 1.1,
+			light_emission = 0.9,
 			ring_emit = {
-				{1.012, 1, 0, 0, 0.92},
-				{1.033, 1, 0, 0, 0.78},
-				{1.054, 1, 0, 0, 0.64},
-				{1.075, 1, 0, 0, 0.5},
-				{1.096, 1, 0, 0, 0.36},
-				{1.117, 1, 0, 0, 0.22},
-				{1.138, 1, 0, 0, 0.08},
+				{3.55, 1, 0, 0, 0.23},
 			},
-			speed = {0, 0},
-			spread = {0, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
 			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
+			brightness = 1,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
@@ -16156,71 +16623,274 @@ local SPEC_Eclipse = {
 			emit = {},
 		},
 		{
-			name = "ColumnBody",
-			texture = "mf_moonlight_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
+			name = "DetRingSharp",
+			texture = "kk_circle_02",
 			rel = "r",
-			hu = "H",
-			orientation = "FacingCameraWorldUp",
-			direction = "Bottom",
-			speed_h = {0.18, 0.24},
-			lifetime = {0.6, 0.8},
+			lifetime = {0.5, 0.5},
 			size = {
-				{0, 52, 0},
-				{0.3, 59.8, 0},
-				{1, 61.1, 0},
+				{0, 122.04, 0},
+				{1, 1383.12, 0},
 			},
 			transparency = {
-				{0, 1, 0},
-				{0.2, 0.4, 0},
-				{0.75, 0.45, 0},
+				{0, 0, 0},
+				{0.6, 0.4, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{230, 245, 255},
+					{255, 255, 255},
 				},
 				{
 					0.5,
-					{155, 210, 255},
+					{220, 232, 255},
 				},
 				{
 					1,
-					{85, 145, 245},
+					{165, 195, 250},
 				},
 			},
-			light_emission = 0.55,
-			brightness = 0.85,
-			zoffset = -4,
-			zstream = {
-				{1, 1.08, 10.4, 26},
-				{1.08, 2.45, 26, 26},
-				{2.45, 2.6, 26, 0},
+			light_emission = 1,
+			ring_emit = {
+				{3.55, 1, 0, 0, 0.24},
 			},
-			zdist = {
-				r = {0, 0.25},
-				h = {0.05, 1},
-				area = false,
-			},
-			speed = {0, 0},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
 			spread = {0, 0},
 			accel = {0, 0, 0},
 			drag = 0,
+			brightness = 1,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
+			zoffset = 0,
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
 		},
 		{
-			name = "ColumnEdge",
-			texture = "mf_moonlight_2x2",
+			name = "ChargeRise",
+			texture = "kk_star_06",
+			rel = "r",
+			direction = "Top",
+			speed = {14, 28},
+			lifetime = {0.8, 1.2},
+			size = {
+				{0, 0, 0},
+				{0.08, 5.44, 0},
+				{0.22, 2.38, 0},
+				{0.38, 5.78, 0},
+				{0.55, 2.04, 0},
+				{0.72, 4.76, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 2,
+			rotation = {0, 45},
+			ring_emit = {
+				{0.05, 1, 0.0387, 0.875, 1.321},
+				{0.067, 1, 0.9895, 0.767, 2.404},
+				{0.087, 1, 0.9417, 0.907, 3.358},
+				{0.089, 1, 0.7521, 0.914, 3.507},
+				{0.09, 1, 0.4624, 0.789, 2.456},
+				{0.092, 1, 0.8355, 0.796, 2.309},
+				{0.122, 1, 0.5409, 0.637, 2.88},
+				{0.13, 1, 0.567, 0.818, 1.949},
+				{0.152, 1, 0.2687, 0.911, 4.208},
+				{0.152, 1, 0.9331, 0.705, 3.222},
+				{0.158, 1, 0.9035, 0.787, 4.692},
+				{0.16, 1, 0.1602, 0.704, 3.095},
+				{0.162, 1, 0.3154, 0.406, 4.371},
+				{0.166, 1, 0.9949, 0.525, 4.382},
+				{0.186, 1, 0.6779, 0.647, 3.066},
+				{0.206, 1, 0.4455, 0.905, 4.763},
+				{0.209, 1, 0.5407, 0.984, 1.087},
+				{0.213, 1, 0.0176, 0.64, 4.81},
+				{0.231, 1, 0.1054, 0.743, 1.609},
+				{0.235, 1, 0.0074, 0.992, 2.405},
+				{0.236, 1, 0.5308, 0.719, 3.621},
+				{0.245, 1, 0.6098, 0.423, 2.957},
+				{0.255, 1, 0.1806, 0.468, 1.124},
+				{0.268, 1, 0.8118, 0.895, 4.287},
+				{0.269, 1, 0.8592, 0.966, 4.229},
+				{0.272, 1, 0.0322, 0.881, 4.918},
+				{0.282, 1, 0.644, 0.872, 2.789},
+				{0.302, 1, 0.3908, 0.906, 1.839},
+				{0.303, 1, 0.3693, 0.21, 2.185},
+				{0.312, 1, 0.4738, 0.969, 3.648},
+				{0.313, 1, 0.5845, 0.946, 2.85},
+				{0.324, 1, 0.8223, 0.665, 3.444},
+				{0.337, 1, 0.4289, 0.712, 1.396},
+				{0.348, 1, 0.6643, 0.644, 1.645},
+				{0.35, 1, 0.9405, 0.515, 2.334},
+				{0.357, 1, 0.4935, 0.385, 4.587},
+				{0.358, 1, 0.8367, 0.667, 2.633},
+				{0.363, 1, 0.2274, 0.584, 2.486},
+				{0.365, 1, 0.0839, 0.738, 1.874},
+				{0.366, 1, 0.5323, 0.698, 3.744},
+				{0.375, 1, 0.3499, 0.965, 4.478},
+				{0.377, 1, 0.9162, 0.583, 1.085},
+				{0.381, 1, 0.6902, 0.837, 4.026},
+				{0.386, 1, 0.2146, 0.265, 3.706},
+				{0.388, 1, 0.6183, 0.659, 1.136},
+				{0.395, 1, 0.1829, 0.479, 4.533},
+				{0.395, 1, 0.6861, 0.984, 1.846},
+				{0.402, 1, 0.8534, 0.817, 2.003},
+				{0.429, 1, 0.6916, 0.768, 4.19},
+				{0.435, 1, 0.8539, 0.952, 1.607},
+				{0.441, 1, 0.1949, 0.951, 4.347},
+				{0.461, 1, 0.6761, 0.401, 1.913},
+				{0.465, 1, 0.8058, 0.983, 3.549},
+				{0.483, 1, 0.2897, 0.485, 1.447},
+				{0.489, 1, 0.173, 0.612, 4.456},
+				{0.49, 1, 0.9219, 0.773, 3.727},
+				{0.515, 1, 0.085, 0.868, 4.18},
+				{0.523, 1, 0.4608, 0.348, 1.851},
+				{0.533, 1, 0.1482, 0.592, 4.055},
+				{0.546, 1, 0.8369, 0.543, 2.734},
+				{0.548, 1, 0.8924, 0.982, 3.848},
+				{0.548, 1, 0.9267, 0.506, 2.467},
+				{0.55, 1, 0.8363, 0.952, 2.103},
+				{0.552, 1, 0.9524, 0.152, 1.312},
+				{0.556, 1, 0.7528, 0.557, 3.178},
+				{0.563, 1, 0.4101, 0.561, 2.731},
+				{0.569, 1, 0.5607, 0.799, 1.008},
+				{0.57, 1, 0.4796, 0.716, 2.4},
+				{0.576, 1, 0.5663, 0.422, 1.352},
+				{0.576, 1, 0.6708, 0.688, 4.753},
+				{0.606, 1, 0.0372, 0.491, 1.005},
+				{0.609, 1, 0.2383, 0.669, 4.079},
+				{0.609, 1, 0.4751, 0.318, 2.159},
+				{0.615, 1, 0.9261, 0.801, 4.482},
+				{0.623, 1, 0.0765, 0.72, 4.428},
+				{0.636, 1, 0.3924, 0.913, 3.757},
+				{0.64, 1, 0.8866, 0.949, 3.12},
+				{0.643, 1, 0.4952, 0.433, 1.288},
+				{0.665, 1, 0.5343, 0.995, 2.583},
+				{0.672, 1, 0.8937, 0.745, 4.883},
+				{0.675, 1, 0.233, 0.494, 3.377},
+				{0.681, 1, 0.068, 0.976, 2.928},
+				{0.689, 1, 0.2892, 0.723, 3.749},
+				{0.691, 1, 0.177, 0.8, 3.599},
+				{0.722, 1, 0.4705, 0.93, 2.54},
+				{0.743, 1, 0.5475, 0.832, 2.602},
+				{0.764, 1, 0.4334, 0.276, 1.098},
+				{0.768, 1, 0.3799, 0.938, 4.559},
+				{0.772, 1, 0.2804, 0.337, 1.442},
+				{0.773, 1, 0.5862, 0.839, 3.967},
+				{0.776, 1, 0.1538, 0.975, 2.384},
+				{0.783, 1, 0.4896, 0.728, 3.758},
+				{0.791, 1, 0.594, 0.82, 4.698},
+				{0.795, 1, 0.5212, 0.691, 4.987},
+				{0.8, 1, 0.9779, 0.708, 3.882},
+				{0.815, 1, 0.0097, 0.923, 2.087},
+				{0.833, 1, 0.6696, 0.332, 1.528},
+				{0.843, 1, 0.0823, 0.855, 2.829},
+				{0.854, 1, 0.5221, 0.87, 2.147},
+				{0.855, 1, 0.1318, 0.332, 1.264},
+				{0.86, 1, 0.9291, 0.136, 1.935},
+				{0.86, 1, 0.9865, 0.885, 1.363},
+				{0.876, 1, 0.8891, 0.339, 1.511},
+				{0.887, 1, 0.6618, 0.238, 4.2},
+				{0.889, 1, 0.8081, 0.997, 1.961},
+				{0.9, 1, 0.45, 0.857, 2.642},
+				{0.906, 1, 0.7123, 0.784, 1.738},
+				{0.911, 1, 0.3237, 0.513, 3.939},
+				{0.915, 1, 0.246, 0.526, 4.616},
+				{0.921, 1, 0.2249, 0.596, 3.035},
+				{0.931, 1, 0.2994, 0.825, 2.691},
+				{0.935, 1, 0.7599, 0.848, 1.107},
+				{0.94, 1, 0.6379, 0.112, 3.895},
+				{0.942, 1, 0.3887, 0.665, 1.425},
+				{0.951, 1, 0.1806, 0.755, 1.759},
+				{0.959, 1, 0.1862, 0.876, 2.543},
+				{0.96, 1, 0.0933, 0.371, 3.804},
+				{0.982, 1, 0.2073, 0.658, 1.043},
+				{0.984, 1, 0.4576, 0.974, 1.745},
+				{0.987, 1, 0.4184, 0.811, 3.436},
+				{0.992, 1, 0.1933, 0.902, 3.09},
+				{0.993, 1, 0.8533, 0.698, 4.211},
+				{0.995, 1, 0.8223, 0.628, 4.059},
+				{0.995, 1, 0.8556, 0.956, 3.189},
+				{1, 1, 0.148, 0.697, 1.361},
+				{1.019, 1, 0.9515, 0.555, 3.999},
+				{1.025, 1, 0.1682, 0.922, 2.383},
+				{1.026, 1, 0.291, 0.721, 3.416},
+				{1.03, 1, 0.5098, 0.854, 1.287},
+				{1.035, 1, 0.7085, 0.856, 3.109},
+				{1.051, 1, 0.1746, 0.888, 4.822},
+				{1.054, 1, 0.0299, 0.885, 4.03},
+				{1.054, 1, 0.3666, 0.448, 2.29},
+				{1.063, 1, 0.4585, 0.637, 3.825},
+				{1.077, 1, 0.9247, 0.703, 2.117},
+				{1.079, 1, 0.0239, 0.182, 2.084},
+				{1.08, 1, 0.1771, 0.797, 4.148},
+				{1.082, 1, 0.8258, 0.97, 1.217},
+				{1.087, 1, 0.2794, 0.784, 4.476},
+				{1.091, 1, 0.9625, 0.84, 3.631},
+				{1.094, 1, 0.6697, 0.27, 4.999},
+				{1.121, 1, 0.9817, 0.981, 3.488},
+				{1.128, 1, 0.7514, 0.214, 4.498},
+				{1.134, 1, 0.8728, 0.421, 1.887},
+				{1.135, 1, 0.0228, 0.52, 2.174},
+				{1.143, 1, 0.9279, 0.361, 3.291},
+				{1.147, 1, 0.7967, 0.886, 4.346},
+				{1.156, 1, 0.732, 0.62, 4.004},
+				{1.157, 1, 0.3349, 0.777, 3.898},
+				{1.17, 1, 0.689, 0.945, 4.219},
+				{1.171, 1, 0.6809, 0.555, 1.741},
+				{1.172, 1, 0.9246, 0.531, 2.303},
+				{1.175, 1, 0.7489, 0.72, 3.109},
+				{1.193, 1, 0.2754, 0.947, 4.855},
+				{1.204, 1, 0.763, 0.542, 3.949},
+				{1.23, 1, 0.655, 0.647, 2.801},
+				{1.233, 1, 0.9206, 0.928, 4.267},
+				{1.234, 1, 0.4521, 0.15, 3.271},
+				{1.237, 1, 0.299, 0.607, 1.583},
+				{1.237, 1, 0.53, 0.872, 2.343},
+				{1.241, 1, 0.6263, 0.292, 4.634},
+				{1.244, 1, 0.8985, 0.612, 4.677},
+				{1.248, 1, 0.7698, 0.902, 4.888},
+				{1.252, 1, 0.4374, 0.922, 1.967},
+				{1.254, 1, 0.2236, 0.538, 1.055},
+				{1.267, 1, 0.6919, 0.95, 4.514},
+				{1.281, 1, 0.2702, 0.435, 2.078},
+				{1.282, 1, 0.1574, 0.971, 4.061},
+				{1.283, 1, 0.9087, 0.469, 3.302},
+				{1.297, 1, 0.713, 0.352, 3.395},
+			},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ChargeIce",
+			texture = "mf_shard_2x2",
 			flipbook = {
 				layout = "Grid2x2",
 				mode = "Loop",
@@ -16228,54 +16898,285 @@ local SPEC_Eclipse = {
 				startRandom = true,
 			},
 			rel = "r",
-			hu = "H",
-			orientation = "FacingCameraWorldUp",
-			direction = "Bottom",
-			speed_h = {0.3, 0.4},
-			lifetime = {0.5, 0.7},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {8, 16},
+			drag = 0.6,
+			accel = {0, 6, 0},
+			lifetime = {1, 1.4},
 			size = {
-				{0, 26, 0},
-				{1, 33.8, 0},
+				{0, 0.5, 0},
+				{0.15, 2.2, 0.6},
+				{0.85, 2.2, 0.6},
+				{1, 0, 0},
 			},
 			transparency = {
-				{0, 1, 0},
-				{0.2, 0.5, 0},
-				{0.75, 0.55, 0},
+				{0, 0, 0},
+				{0.85, 0.1, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{110, 170, 255},
+					{200, 230, 255},
 				},
 				{
-					0.5,
-					{60, 115, 240},
+					0.4,
+					{120, 180, 255},
 				},
 				{
 					1,
-					{30, 60, 190},
+					{70, 120, 235},
 				},
 			},
-			light_emission = 1,
-			brightness = 1,
+			light_emission = 0.5,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-120, 120},
+			ring_emit = {
+				{0.12, 1, 0.7354, 0.727, 1.843},
+				{0.125, 1, 0.3929, 0.854, 1.913},
+				{0.144, 1, 0.3555, 0.581, 1.804},
+				{0.157, 1, 0.7781, 0.389, 1.423},
+				{0.168, 1, 0.3887, 0.925, 1.67},
+				{0.185, 1, 0.3803, 0.613, 1.108},
+				{0.196, 1, 0.2732, 0.935, 1.422},
+				{0.203, 1, 0.342, 0.938, 1.743},
+				{0.213, 1, 0.0365, 0.668, 1.975},
+				{0.228, 1, 0.9982, 0.834, 1.184},
+				{0.241, 1, 0.3125, 0.686, 1.612},
+				{0.246, 1, 0.4504, 0.818, 1.285},
+				{0.253, 1, 0.3782, 0.862, 1.442},
+				{0.254, 1, 0.086, 0.839, 1.484},
+				{0.272, 1, 0.6121, 0.554, 0.844},
+				{0.315, 1, 0.6218, 0.483, 1.627},
+				{0.318, 1, 0.9011, 0.659, 0.682},
+				{0.325, 1, 0.8142, 0.693, 1.727},
+				{0.332, 1, 0.4153, 0.839, 1.239},
+				{0.338, 1, 0.6166, 0.629, 0.832},
+				{0.354, 1, 0.514, 0.488, 0.627},
+				{0.363, 1, 0.9436, 0.622, 1.885},
+				{0.365, 1, 0.9283, 0.138, 1.947},
+				{0.371, 1, 0.2042, 0.846, 1.048},
+				{0.374, 1, 0.1154, 0.304, 1.374},
+				{0.378, 1, 0.3271, 0.997, 1.4},
+				{0.404, 1, 0.8172, 0.618, 1.954},
+				{0.418, 1, 0.4083, 0.94, 0.981},
+				{0.44, 1, 0.1845, 0.545, 1.913},
+				{0.445, 1, 0.5254, 0.974, 0.968},
+				{0.45, 1, 0.8486, 0.84, 1.039},
+				{0.451, 1, 0.7859, 0.771, 0.654},
+				{0.455, 1, 0.7502, 0.527, 0.943},
+				{0.468, 1, 0.607, 0.409, 0.856},
+				{0.48, 1, 0.5051, 0.685, 0.875},
+				{0.495, 1, 0.3537, 0.47, 1.578},
+				{0.496, 1, 0.8209, 0.561, 1.205},
+				{0.507, 1, 0.4272, 0.556, 0.808},
+				{0.508, 1, 0.1312, 0.332, 0.552},
+				{0.524, 1, 0.9879, 0.556, 1.175},
+				{0.536, 1, 0.3043, 0.644, 0.828},
+				{0.551, 1, 0.4608, 0.275, 1.246},
+				{0.553, 1, 0.4854, 0.289, 0.723},
+				{0.56, 1, 0.8511, 0.559, 1.412},
+				{0.578, 1, 0.8533, 0.643, 1.984},
+				{0.579, 1, 0.3927, 0.359, 1.809},
+				{0.589, 1, 0.779, 0.563, 1.982},
+				{0.596, 1, 0.7376, 0.709, 1.435},
+				{0.598, 1, 0.7507, 0.866, 1.823},
+				{0.602, 1, 0.2522, 0.659, 0.725},
+				{0.604, 1, 0.3694, 0.769, 0.971},
+				{0.628, 1, 0.5582, 0.96, 1.709},
+				{0.629, 1, 0.3396, 0.886, 1.935},
+				{0.631, 1, 0.0631, 0.938, 0.944},
+				{0.635, 1, 0.6157, 0.242, 1.302},
+				{0.64, 1, 0.58, 0.592, 1.282},
+				{0.645, 1, 0.5302, 0.365, 0.505},
+				{0.651, 1, 0.4595, 0.97, 0.775},
+				{0.654, 1, 0.8091, 0.765, 1.188},
+				{0.658, 1, 0.6489, 0.981, 1.163},
+				{0.66, 1, 0.0416, 0.973, 0.777},
+				{0.661, 1, 0.9185, 0.56, 1.347},
+				{0.667, 1, 0.7314, 0.652, 1.928},
+				{0.687, 1, 0.0439, 0.359, 1.01},
+				{0.692, 1, 0.3874, 0.671, 0.906},
+				{0.697, 1, 0.056, 0.526, 1.689},
+				{0.716, 1, 0.2997, 0.703, 1.762},
+				{0.733, 1, 0.2008, 0.613, 1.176},
+				{0.762, 1, 0.5684, 0.48, 1.07},
+				{0.764, 1, 0.445, 0.665, 0.663},
+				{0.769, 1, 0.561, 0.903, 0.976},
+				{0.77, 1, 0.8565, 0.438, 1.342},
+				{0.786, 1, 0.6753, 0.922, 1.173},
+				{0.791, 1, 0.5453, 0.317, 0.579},
+				{0.799, 1, 0.4782, 0.678, 1.766},
+				{0.803, 1, 0.8236, 0.778, 1.533},
+				{0.814, 1, 0.0201, 0.906, 1.476},
+				{0.82, 1, 0.2054, 0.893, 1.124},
+				{0.822, 1, 0.4437, 0.464, 1.796},
+				{0.827, 1, 0.0572, 0.552, 1.735},
+				{0.877, 1, 0.9857, 0.972, 1.788},
+				{0.882, 1, 0.4827, 0.62, 1.221},
+				{0.901, 1, 0.9465, 0.489, 0.605},
+				{0.902, 1, 0.3859, 0.609, 0.508},
+				{0.903, 1, 0.0422, 0.967, 0.87},
+				{0.911, 1, 0.894, 0.426, 1.57},
+				{0.914, 1, 0.1785, 0.246, 0.657},
+				{0.918, 1, 0.1497, 0.689, 1.392},
+				{0.934, 1, 0.7578, 0.856, 1.283},
+				{0.945, 1, 0.1624, 0.834, 1.307},
+				{0.949, 1, 0.5121, 0.49, 0.531},
+				{0.953, 1, 0.7539, 0.659, 0.611},
+				{0.964, 1, 0.5321, 0.581, 1.466},
+				{0.991, 1, 0.9199, 0.689, 0.545},
+				{1.01, 1, 0.4515, 0.527, 1.02},
+				{1.018, 1, 0.9374, 0.933, 1.881},
+				{1.047, 1, 0.6541, 0.629, 0.727},
+				{1.057, 1, 0.913, 0.748, 1.664},
+				{1.062, 1, 0.1085, 0.778, 0.952},
+				{1.065, 1, 0.3414, 0.814, 0.69},
+				{1.07, 1, 0.3138, 0.812, 1.423},
+				{1.08, 1, 0.4888, 0.435, 1.201},
+				{1.082, 1, 0.2856, 0.769, 0.903},
+				{1.086, 1, 0.8761, 0.85, 0.597},
+				{1.092, 1, 0.7361, 0.62, 1.839},
+				{1.099, 1, 0.2328, 0.467, 1.171},
+				{1.108, 1, 0.338, 0.98, 1.431},
+				{1.128, 1, 0.6435, 0.918, 1.765},
+				{1.131, 1, 0.726, 0.953, 0.603},
+				{1.137, 1, 0.211, 0.973, 1.498},
+			},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "InflowMist",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rel = "r",
+			direction = "Back",
+			spread = {14, 6},
+			speed = {26, 46},
+			drag = 1.2,
+			lifetime = {1.5, 2},
+			size = {
+				{0, 18, 3},
+				{1, 40, 5},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.25, 0.55, 0},
+				{0.75, 0.68, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.15,
+			rotation = {0, 360},
+			rot_speed = {-25, 25},
 			zoffset = -3,
-			zstream = {
-				{1, 1.08, 12, 30},
-				{1.08, 2.45, 30, 30},
-				{2.45, 2.6, 30, 0},
+			ring_emit = {
+				{0.1, 1, 0, 1.06, 14},
+				{0.1, 1, 0.0385, 1.06, 14},
+				{0.1, 1, 0.0769, 1.06, 14},
+				{0.1, 1, 0.1154, 1.06, 14},
+				{0.1, 1, 0.1538, 1.06, 14},
+				{0.1, 1, 0.1923, 1.06, 14},
+				{0.1, 1, 0.2308, 1.06, 14},
+				{0.1, 1, 0.2692, 1.06, 14},
+				{0.1, 1, 0.3077, 1.06, 14},
+				{0.1, 1, 0.3462, 1.06, 14},
+				{0.1, 1, 0.3846, 1.06, 14},
+				{0.1, 1, 0.4231, 1.06, 14},
+				{0.1, 1, 0.4615, 1.06, 14},
+				{0.1, 1, 0.5, 1.06, 14},
+				{0.1, 1, 0.5385, 1.06, 14},
+				{0.1, 1, 0.5769, 1.06, 14},
+				{0.1, 1, 0.6154, 1.06, 14},
+				{0.1, 1, 0.6538, 1.06, 14},
+				{0.1, 1, 0.6923, 1.06, 14},
+				{0.1, 1, 0.7308, 1.06, 14},
+				{0.1, 1, 0.7692, 1.06, 14},
+				{0.1, 1, 0.8077, 1.06, 14},
+				{0.1, 1, 0.8462, 1.06, 14},
+				{0.1, 1, 0.8846, 1.06, 14},
+				{0.1, 1, 0.9231, 1.06, 14},
+				{0.1, 1, 0.9615, 1.06, 14},
+				{0.45, 1, 0.0192, 1.06, 14},
+				{0.45, 1, 0.0577, 1.06, 14},
+				{0.45, 1, 0.0962, 1.06, 14},
+				{0.45, 1, 0.1346, 1.06, 14},
+				{0.45, 1, 0.1731, 1.06, 14},
+				{0.45, 1, 0.2115, 1.06, 14},
+				{0.45, 1, 0.25, 1.06, 14},
+				{0.45, 1, 0.2885, 1.06, 14},
+				{0.45, 1, 0.3269, 1.06, 14},
+				{0.45, 1, 0.3654, 1.06, 14},
+				{0.45, 1, 0.4038, 1.06, 14},
+				{0.45, 1, 0.4423, 1.06, 14},
+				{0.45, 1, 0.4808, 1.06, 14},
+				{0.45, 1, 0.5192, 1.06, 14},
+				{0.45, 1, 0.5577, 1.06, 14},
+				{0.45, 1, 0.5962, 1.06, 14},
+				{0.45, 1, 0.6346, 1.06, 14},
+				{0.45, 1, 0.6731, 1.06, 14},
+				{0.45, 1, 0.7115, 1.06, 14},
+				{0.45, 1, 0.75, 1.06, 14},
+				{0.45, 1, 0.7885, 1.06, 14},
+				{0.45, 1, 0.8269, 1.06, 14},
+				{0.45, 1, 0.8654, 1.06, 14},
+				{0.45, 1, 0.9038, 1.06, 14},
+				{0.45, 1, 0.9423, 1.06, 14},
+				{0.45, 1, 0.9808, 1.06, 14},
+				{0.8, 1, 0, 1.06, 14},
+				{0.8, 1, 0.0385, 1.06, 14},
+				{0.8, 1, 0.0769, 1.06, 14},
+				{0.8, 1, 0.1154, 1.06, 14},
+				{0.8, 1, 0.1538, 1.06, 14},
+				{0.8, 1, 0.1923, 1.06, 14},
+				{0.8, 1, 0.2308, 1.06, 14},
+				{0.8, 1, 0.2692, 1.06, 14},
+				{0.8, 1, 0.3077, 1.06, 14},
+				{0.8, 1, 0.3462, 1.06, 14},
+				{0.8, 1, 0.3846, 1.06, 14},
+				{0.8, 1, 0.4231, 1.06, 14},
+				{0.8, 1, 0.4615, 1.06, 14},
+				{0.8, 1, 0.5, 1.06, 14},
+				{0.8, 1, 0.5385, 1.06, 14},
+				{0.8, 1, 0.5769, 1.06, 14},
+				{0.8, 1, 0.6154, 1.06, 14},
+				{0.8, 1, 0.6538, 1.06, 14},
+				{0.8, 1, 0.6923, 1.06, 14},
+				{0.8, 1, 0.7308, 1.06, 14},
+				{0.8, 1, 0.7692, 1.06, 14},
+				{0.8, 1, 0.8077, 1.06, 14},
+				{0.8, 1, 0.8462, 1.06, 14},
+				{0.8, 1, 0.8846, 1.06, 14},
+				{0.8, 1, 0.9231, 1.06, 14},
+				{0.8, 1, 0.9615, 1.06, 14},
 			},
-			zdist = {
-				r = {0.7, 1},
-				h = {0.05, 1},
-				area = false,
-			},
-			speed = {0, 0},
-			spread = {0, 0},
 			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -16290,9 +17191,9 @@ local SPEC_Eclipse = {
 			speed_h = {0.9, 1.4},
 			lifetime = {0.25, 0.4},
 			size = {
-				{0, 6, 0},
-				{0.3, 24, 0},
-				{1, 14, 0},
+				{0, 14, 0},
+				{0.3, 55, 0},
+				{1, 30, 0},
 			},
 			color = {
 				{
@@ -16309,16 +17210,16 @@ local SPEC_Eclipse = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.3,
+			brightness = 1.4,
 			zstream = {
-				{1, 1.08, 28, 70},
-				{1.08, 2.45, 70, 70},
-				{2.45, 2.6, 70, 0},
+				{1.37, 1.52, 80, 200},
+				{1.52, 3.15, 200, 200},
+				{3.15, 3.3, 200, 0},
 			},
 			zdist = {
-				r = {0.1, 1},
-				h = {0.2, 1},
-				area = false,
+				r = {0.05, 1},
+				h = {0.2, 0.62},
+				area = true,
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -16341,15 +17242,15 @@ local SPEC_Eclipse = {
 			rel = "r",
 			hu = "H",
 			direction = "Bottom",
-			speed_h = {0.25, 0.4},
+			speed_h = {0.2, 0.32},
 			lifetime = {0.8, 1.2},
 			size = {
 				{0, 0, 0},
-				{0.08, 3.2, 0},
-				{0.22, 1.4, 0},
-				{0.38, 3.4, 0},
-				{0.55, 1.2, 0},
-				{0.72, 2.8, 0},
+				{0.08, 7.04, 0},
+				{0.22, 3.08, 0},
+				{0.38, 7.48, 0},
+				{0.55, 2.64, 0},
+				{0.72, 6.16, 0},
 				{1, 0, 0},
 			},
 			color = {
@@ -16367,17 +17268,17 @@ local SPEC_Eclipse = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.9,
+			brightness = 2,
 			rotation = {0, 45},
 			zstream = {
-				{1, 1.08, 24, 60},
-				{1.08, 2.45, 60, 60},
-				{2.45, 2.6, 60, 0},
+				{1.37, 1.52, 64, 160},
+				{1.52, 3.15, 160, 160},
+				{3.15, 3.3, 160, 0},
 			},
 			zdist = {
-				r = {0, 1.1},
-				h = {0.1, 1},
-				area = false,
+				r = {0, 1.05},
+				h = {0.1, 0.62},
+				area = true,
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -16395,52 +17296,61 @@ local SPEC_Eclipse = {
 			emit = {},
 		},
 		{
-			name = "GroundGlow",
-			texture = "fx_glow",
+			name = "BaseMist",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
 			rel = "r",
-			lifetime = {0.5, 0.6},
+			direction = "Front",
+			spread = {30, 10},
+			speed = {6, 16},
+			drag = 0.8,
+			accel = {0, 2, 0},
+			lifetime = {1.4, 2},
 			size = {
-				{0, 57.2, 0},
-				{1, 62.4, 0},
+				{0, 30, 4},
+				{1, 55, 6},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.3, 0.55, 0},
-				{0.7, 0.6, 0},
+				{0.25, 0.6, 0},
+				{0.8, 0.74, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{230, 245, 255},
+					{238, 246, 255},
 				},
 				{
-					0.5,
-					{155, 210, 255},
+					0.35,
+					{200, 222, 252},
 				},
 				{
 					1,
-					{85, 145, 245},
+					{160, 188, 236},
 				},
 			},
-			light_emission = 1,
-			brightness = 1,
-			ring_emit = {
-				{1.2, 1, 0, 0, 0.1},
-				{1.5, 1, 0, 0, 0.1},
-				{1.8, 1, 0, 0, 0.1},
-				{2.1, 1, 0, 0, 0.1},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-20, 20},
+			zoffset = -5,
+			zstream = {
+				{1.37, 1.52, 14.4, 36},
+				{1.52, 3.15, 36, 36},
+				{3.15, 3.3, 36, 0},
 			},
-			decal = true,
-			orientation = "VelocityPerpendicular",
-			direction = "Top",
-			speed = {0.01, 0.01},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
+			zdist = {
+				r = {0.55, 1.12},
+				h = {18, 26},
+				area = false,
+			},
+			brightness = 1,
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -16457,14 +17367,14 @@ local SPEC_Eclipse = {
 			rel = "r",
 			orientation = "VelocityParallel",
 			direction = "Top",
-			spread = {20, 20},
-			speed = {16, 26},
+			spread = {18, 18},
+			speed = {22, 34},
 			drag = 12,
-			lifetime = {1.2, 1.4},
+			lifetime = {1.3, 1.6},
 			size = {
 				{0, 0.5, 0},
-				{0.12, 7, 2},
-				{0.85, 7.4, 2},
+				{0.12, 11, 3},
+				{0.85, 11.5, 3},
 				{1, 0, 0},
 			},
 			transparency = {
@@ -16489,32 +17399,96 @@ local SPEC_Eclipse = {
 			light_emission = 0.5,
 			brightness = 1.5,
 			ring_emit = {
-				{1.199, 1, 0.8127, 1.001, 0.5},
-				{1.204, 1, 0.0341, 0.715, 0.5},
-				{1.204, 1, 0.0925, 0.975, 0.5},
-				{1.204, 1, 0.2702, 1.043, 0.5},
-				{1.206, 1, 0.2508, 0.868, 0.5},
-				{1.208, 1, 0.1841, 0.882, 0.5},
-				{1.209, 1, 0.3693, 0.523, 0.5},
-				{1.227, 1, 0.4705, 0.788, 0.5},
-				{1.233, 1, 0.9443, 1.014, 0.5},
-				{1.234, 1, 0.0881, 0.492, 0.5},
-				{1.241, 1, 0.0823, 0.85, 0.5},
-				{1.254, 1, 0.1933, 0.92, 0.5},
-				{1.254, 1, 0.511, 0.998, 0.5},
-				{1.259, 1, 0.7528, 0.695, 0.5},
-				{1.264, 1, 0.4521, 1.024, 0.5},
-				{1.274, 1, 0.0864, 0.84, 0.5},
-				{1.28, 1, 0.2337, 0.274, 0.5},
-				{1.281, 1, 0.0379, 0.728, 0.5},
-				{1.304, 1, 0.0163, 1.036, 0.5},
-				{1.313, 1, 0.9586, 0.883, 0.5},
-				{1.329, 1, 0.8048, 0.996, 0.5},
-				{1.331, 1, 0.8647, 1.011, 0.5},
-				{1.341, 1, 0.9193, 0.669, 0.5},
-				{1.343, 1, 0.8572, 0.807, 0.5},
-				{1.346, 1, 0.7285, 0.842, 0.5},
-				{1.349, 1, 0.3054, 0.97, 0.5},
+				{1.57, 1, 0.0425, 0.597, 0.5},
+				{1.618, 1, 0.0819, 0.706, 0.5},
+				{1.619, 1, 0.0873, 0.679, 0.5},
+				{1.589, 1, 0.0894, 0.576, 0.5},
+				{1.583, 1, 0.0958, 0.559, 0.5},
+				{1.631, 1, 0.1008, 0.763, 0.5},
+				{1.622, 1, 0.1058, 0.788, 0.5},
+				{1.491, 1, 0.1217, 0.262, 0.5},
+				{1.594, 1, 0.1249, 0.596, 0.5},
+				{1.644, 1, 0.1273, 0.804, 0.5},
+				{1.486, 1, 0.138, 0.196, 0.5},
+				{1.476, 1, 0.1409, 0.188, 0.5},
+				{1.672, 1, 0.1588, 0.933, 0.5},
+				{1.663, 1, 0.1598, 0.86, 0.5},
+				{1.65, 1, 0.1617, 0.906, 0.5},
+				{1.636, 1, 0.1629, 0.829, 0.5},
+				{1.625, 1, 0.1848, 0.752, 0.5},
+				{1.662, 1, 0.1926, 0.936, 0.5},
+				{1.642, 1, 0.2144, 0.799, 0.5},
+				{1.669, 1, 0.2215, 0.972, 0.5},
+				{1.518, 1, 0.222, 0.375, 0.5},
+				{1.576, 1, 0.223, 0.599, 0.5},
+				{1.468, 1, 0.2318, 0.189, 0.5},
+				{1.681, 1, 0.2337, 0.995, 0.5},
+				{1.496, 1, 0.254, 0.241, 0.5},
+				{1.503, 1, 0.2555, 0.216, 0.5},
+				{1.624, 1, 0.2571, 0.759, 0.5},
+				{1.649, 1, 0.2643, 0.808, 0.5},
+				{1.649, 1, 0.2682, 0.905, 0.5},
+				{1.624, 1, 0.2785, 0.771, 0.5},
+				{1.557, 1, 0.2825, 0.438, 0.5},
+				{1.553, 1, 0.283, 0.495, 0.5},
+				{1.644, 1, 0.2887, 0.893, 0.5},
+				{1.626, 1, 0.2926, 0.815, 0.5},
+				{1.69, 1, 0.3026, 0.998, 0.5},
+				{1.547, 1, 0.3286, 0.428, 0.5},
+				{1.684, 1, 0.3428, 0.981, 0.5},
+				{1.604, 1, 0.3488, 0.637, 0.5},
+				{1.608, 1, 0.3512, 0.651, 0.5},
+				{1.608, 1, 0.3678, 0.649, 0.5},
+				{1.666, 1, 0.372, 0.894, 0.5},
+				{1.52, 1, 0.3741, 0.366, 0.5},
+				{1.651, 1, 0.3927, 0.869, 0.5},
+				{1.672, 1, 0.4028, 0.929, 0.5},
+				{1.536, 1, 0.4233, 0.409, 0.5},
+				{1.636, 1, 0.4355, 0.855, 0.5},
+				{1.663, 1, 0.4639, 0.932, 0.5},
+				{1.624, 1, 0.4697, 0.767, 0.5},
+				{1.587, 1, 0.4766, 0.631, 0.5},
+				{1.672, 1, 0.4995, 0.998, 0.5},
+				{1.618, 1, 0.5007, 0.723, 0.5},
+				{1.626, 1, 0.501, 0.796, 0.5},
+				{1.636, 1, 0.517, 0.788, 0.5},
+				{1.678, 1, 0.5224, 0.992, 0.5},
+				{1.591, 1, 0.5389, 0.605, 0.5},
+				{1.502, 1, 0.5438, 0.228, 0.5},
+				{1.646, 1, 0.5531, 0.841, 0.5},
+				{1.617, 1, 0.5641, 0.75, 0.5},
+				{1.682, 1, 0.5803, 0.969, 0.5},
+				{1.55, 1, 0.5823, 0.485, 0.5},
+				{1.607, 1, 0.6046, 0.658, 0.5},
+				{1.576, 1, 0.6289, 0.508, 0.5},
+				{1.557, 1, 0.6317, 0.448, 0.5},
+				{1.613, 1, 0.6352, 0.704, 0.5},
+				{1.549, 1, 0.6453, 0.405, 0.5},
+				{1.578, 1, 0.6461, 0.567, 0.5},
+				{1.637, 1, 0.652, 0.789, 0.5},
+				{1.608, 1, 0.6588, 0.749, 0.5},
+				{1.577, 1, 0.6674, 0.583, 0.5},
+				{1.596, 1, 0.6884, 0.666, 0.5},
+				{1.548, 1, 0.69, 0.507, 0.5},
+				{1.651, 1, 0.6977, 0.919, 0.5},
+				{1.664, 1, 0.7042, 0.905, 0.5},
+				{1.584, 1, 0.725, 0.634, 0.5},
+				{1.672, 1, 0.7912, 0.958, 0.5},
+				{1.674, 1, 0.8142, 0.909, 0.5},
+				{1.637, 1, 0.8196, 0.859, 0.5},
+				{1.563, 1, 0.8243, 0.536, 0.5},
+				{1.641, 1, 0.8359, 0.812, 0.5},
+				{1.522, 1, 0.8519, 0.322, 0.5},
+				{1.56, 1, 0.8547, 0.514, 0.5},
+				{1.474, 1, 0.8683, 0.21, 0.5},
+				{1.614, 1, 0.8713, 0.713, 0.5},
+				{1.664, 1, 0.8801, 0.968, 0.5},
+				{1.513, 1, 0.8905, 0.342, 0.5},
+				{1.573, 1, 0.9609, 0.542, 0.5},
+				{1.538, 1, 0.9616, 0.455, 0.5},
+				{1.542, 1, 0.9772, 0.481, 0.5},
+				{1.564, 1, 0.9835, 0.463, 0.5},
+				{1.586, 1, 0.9866, 0.654, 0.5},
 			},
 			accel = {0, 0, 0},
 			rotation = {0, 0},
@@ -16525,17 +17499,17 @@ local SPEC_Eclipse = {
 			emit = {},
 		},
 		{
-			name = "EndFlash",
+			name = "ImpactFlash",
 			texture = "fx_glow",
-			rel = "r",
-			lifetime = {0.25, 0.25},
+			lifetime = {0.28, 0.28},
 			size = {
-				{0, 10, 0},
-				{0.3, 41.6, 0},
-				{1, 46.8, 0},
+				{0, 30, 0},
+				{0.2, 288, 0},
+				{1, 312, 0},
 			},
 			transparency = {
-				{0, 0.4, 0},
+				{0, 0.25, 0},
+				{0.3, 0.6, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -16552,26 +17526,246 @@ local SPEC_Eclipse = {
 					{85, 145, 245},
 				},
 			},
-			light_emission = 1,
-			brightness = 1,
+			brightness = 2,
+			zoffset = 4,
 			ring_emit = {
-				{2.6, 1, 0, 0, 4},
+				{1.42, 1, 0, 0, 30},
 			},
+			bill = true,
+			rel = "r",
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
 			accel = {0, 0, 0},
 			drag = 0,
+			light_emission = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
 		},
 		{
-			name = "EndShards",
+			name = "ImpactStar",
+			texture = "kk_star_09",
+			lifetime = {0.35, 0.35},
+			rotation = {0, 90},
+			size = {
+				{0, 40, 0},
+				{0.15, 384, 0},
+				{1, 40, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			brightness = 2.5,
+			zoffset = 5,
+			ring_emit = {
+				{1.42, 1, 0, 0, 30},
+			},
+			bill = true,
+			rel = "r",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DustRing",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rel = "r",
+			direction = "Front",
+			spread = {10, 6},
+			speed = {60, 110},
+			drag = 2.2,
+			accel = {0, 3, 0},
+			lifetime = {1.4, 2},
+			size = {
+				{0, 20, 3},
+				{1, 52, 6},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.3, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.15,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			ring_emit = {
+				{1.48, 1, 0, 0.98, 17},
+				{1.48, 1, 0.025, 0.98, 17},
+				{1.48, 1, 0.05, 0.98, 17},
+				{1.48, 1, 0.075, 0.98, 17},
+				{1.48, 1, 0.1, 0.98, 17},
+				{1.48, 1, 0.125, 0.98, 17},
+				{1.48, 1, 0.15, 0.98, 17},
+				{1.48, 1, 0.175, 0.98, 17},
+				{1.48, 1, 0.2, 0.98, 17},
+				{1.48, 1, 0.225, 0.98, 17},
+				{1.48, 1, 0.25, 0.98, 17},
+				{1.48, 1, 0.275, 0.98, 17},
+				{1.48, 1, 0.3, 0.98, 17},
+				{1.48, 1, 0.325, 0.98, 17},
+				{1.48, 1, 0.35, 0.98, 17},
+				{1.48, 1, 0.375, 0.98, 17},
+				{1.48, 1, 0.4, 0.98, 17},
+				{1.48, 1, 0.425, 0.98, 17},
+				{1.48, 1, 0.45, 0.98, 17},
+				{1.48, 1, 0.475, 0.98, 17},
+				{1.48, 1, 0.5, 0.98, 17},
+				{1.48, 1, 0.525, 0.98, 17},
+				{1.48, 1, 0.55, 0.98, 17},
+				{1.48, 1, 0.575, 0.98, 17},
+				{1.48, 1, 0.6, 0.98, 17},
+				{1.48, 1, 0.625, 0.98, 17},
+				{1.48, 1, 0.65, 0.98, 17},
+				{1.48, 1, 0.675, 0.98, 17},
+				{1.48, 1, 0.7, 0.98, 17},
+				{1.48, 1, 0.725, 0.98, 17},
+				{1.48, 1, 0.75, 0.98, 17},
+				{1.48, 1, 0.775, 0.98, 17},
+				{1.48, 1, 0.8, 0.98, 17},
+				{1.48, 1, 0.825, 0.98, 17},
+				{1.48, 1, 0.85, 0.98, 17},
+				{1.48, 1, 0.875, 0.98, 17},
+				{1.48, 1, 0.9, 0.98, 17},
+				{1.48, 1, 0.925, 0.98, 17},
+				{1.48, 1, 0.95, 0.98, 17},
+				{1.48, 1, 0.975, 0.98, 17},
+			},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DustRingHigh",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rel = "r",
+			direction = "Front",
+			pitch = 35,
+			spread = {12, 10},
+			speed = {50, 90},
+			drag = 2,
+			accel = {0, 4, 0},
+			lifetime = {1.2, 1.8},
+			size = {
+				{0, 18, 3},
+				{1, 44, 5},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{0.3, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -2,
+			ring_emit = {
+				{1.52, 1, 0.0179, 0.95, 26},
+				{1.52, 1, 0.0536, 0.95, 26},
+				{1.52, 1, 0.0893, 0.95, 26},
+				{1.52, 1, 0.125, 0.95, 26},
+				{1.52, 1, 0.1607, 0.95, 26},
+				{1.52, 1, 0.1964, 0.95, 26},
+				{1.52, 1, 0.2321, 0.95, 26},
+				{1.52, 1, 0.2679, 0.95, 26},
+				{1.52, 1, 0.3036, 0.95, 26},
+				{1.52, 1, 0.3393, 0.95, 26},
+				{1.52, 1, 0.375, 0.95, 26},
+				{1.52, 1, 0.4107, 0.95, 26},
+				{1.52, 1, 0.4464, 0.95, 26},
+				{1.52, 1, 0.4821, 0.95, 26},
+				{1.52, 1, 0.5179, 0.95, 26},
+				{1.52, 1, 0.5536, 0.95, 26},
+				{1.52, 1, 0.5893, 0.95, 26},
+				{1.52, 1, 0.625, 0.95, 26},
+				{1.52, 1, 0.6607, 0.95, 26},
+				{1.52, 1, 0.6964, 0.95, 26},
+				{1.52, 1, 0.7321, 0.95, 26},
+				{1.52, 1, 0.7679, 0.95, 26},
+				{1.52, 1, 0.8036, 0.95, 26},
+				{1.52, 1, 0.8393, 0.95, 26},
+				{1.52, 1, 0.875, 0.95, 26},
+				{1.52, 1, 0.9107, 0.95, 26},
+				{1.52, 1, 0.9464, 0.95, 26},
+				{1.52, 1, 0.9821, 0.95, 26},
+			},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EdgeShards",
 			texture = "mf_shard_2x2",
 			flipbook = {
 				layout = "Grid2x2",
@@ -16580,15 +17774,16 @@ local SPEC_Eclipse = {
 				startRandom = true,
 			},
 			rel = "r",
-			direction = "Top",
-			spread = {70, 70},
-			speed = {30, 70},
-			drag = 0.5,
-			accel = {0, -110, 0},
-			lifetime = {0.6, 0.9},
+			direction = "Front",
+			pitch = 45,
+			spread = {25, 20},
+			speed = {60, 120},
+			drag = 0.4,
+			accel = {0, -140, 0},
+			lifetime = {0.9, 1.3},
 			size = {
-				{0, 2, 0.6},
-				{1, 1.3, 0.4},
+				{0, 3.2, 0.8},
+				{1, 2.2, 0.6},
 			},
 			transparency = {
 				{0, 0, 0},
@@ -16614,32 +17809,66 @@ local SPEC_Eclipse = {
 			rotation = {0, 360},
 			rot_speed = {-500, 500},
 			ring_emit = {
-				{2.604, 2, 0.5237, 0.733, 1},
-				{2.605, 2, 0.4289, 0.547, 1},
-				{2.605, 2, 0.9865, 0.824, 1},
-				{2.607, 2, 0.0955, 0.886, 1},
-				{2.607, 2, 0.3512, 0.993, 1},
-				{2.607, 2, 0.9524, 0.678, 1},
-				{2.611, 2, 0.0839, 0.565, 1},
-				{2.612, 2, 0.3463, 0.963, 1},
-				{2.613, 2, 0.788, 0.905, 1},
-				{2.614, 2, 0.2606, 0.438, 1},
-				{2.614, 2, 0.4751, 0.705, 1},
-				{2.617, 2, 0.3863, 0.726, 1},
-				{2.617, 2, 0.9405, 0.555, 1},
-				{2.621, 2, 0.3499, 0.744, 1},
-				{2.622, 2, 0.2467, 0.326, 1},
-				{2.623, 2, 0.5424, 0.509, 1},
-				{2.625, 2, 0.082, 0.311, 1},
-				{2.63, 2, 0.5035, 0.965, 1},
-				{2.634, 2, 0.5926, 0.878, 1},
-				{2.641, 2, 0.0819, 0.486, 1},
-				{2.645, 2, 0.5273, 0.748, 1},
-				{2.647, 2, 0.1458, 0.65, 1},
-				{2.647, 2, 0.747, 0.602, 1},
-				{2.647, 2, 0.7817, 0.772, 1},
-				{2.647, 2, 0.8167, 0.934, 1},
-				{2.648, 2, 0.1746, 0.905, 1},
+				{1.5, 1, 0, 0.97, 3},
+				{1.5, 1, 0.0167, 0.97, 3},
+				{1.5, 1, 0.0333, 0.97, 3},
+				{1.5, 1, 0.05, 0.97, 3},
+				{1.5, 1, 0.0667, 0.97, 3},
+				{1.5, 1, 0.0833, 0.97, 3},
+				{1.5, 1, 0.1, 0.97, 3},
+				{1.5, 1, 0.1167, 0.97, 3},
+				{1.5, 1, 0.1333, 0.97, 3},
+				{1.5, 1, 0.15, 0.97, 3},
+				{1.5, 1, 0.1667, 0.97, 3},
+				{1.5, 1, 0.1833, 0.97, 3},
+				{1.5, 1, 0.2, 0.97, 3},
+				{1.5, 1, 0.2167, 0.97, 3},
+				{1.5, 1, 0.2333, 0.97, 3},
+				{1.5, 1, 0.25, 0.97, 3},
+				{1.5, 1, 0.2667, 0.97, 3},
+				{1.5, 1, 0.2833, 0.97, 3},
+				{1.5, 1, 0.3, 0.97, 3},
+				{1.5, 1, 0.3167, 0.97, 3},
+				{1.5, 1, 0.3333, 0.97, 3},
+				{1.5, 1, 0.35, 0.97, 3},
+				{1.5, 1, 0.3667, 0.97, 3},
+				{1.5, 1, 0.3833, 0.97, 3},
+				{1.5, 1, 0.4, 0.97, 3},
+				{1.5, 1, 0.4167, 0.97, 3},
+				{1.5, 1, 0.4333, 0.97, 3},
+				{1.5, 1, 0.45, 0.97, 3},
+				{1.5, 1, 0.4667, 0.97, 3},
+				{1.5, 1, 0.4833, 0.97, 3},
+				{1.5, 1, 0.5, 0.97, 3},
+				{1.5, 1, 0.5167, 0.97, 3},
+				{1.5, 1, 0.5333, 0.97, 3},
+				{1.5, 1, 0.55, 0.97, 3},
+				{1.5, 1, 0.5667, 0.97, 3},
+				{1.5, 1, 0.5833, 0.97, 3},
+				{1.5, 1, 0.6, 0.97, 3},
+				{1.5, 1, 0.6167, 0.97, 3},
+				{1.5, 1, 0.6333, 0.97, 3},
+				{1.5, 1, 0.65, 0.97, 3},
+				{1.5, 1, 0.6667, 0.97, 3},
+				{1.5, 1, 0.6833, 0.97, 3},
+				{1.5, 1, 0.7, 0.97, 3},
+				{1.5, 1, 0.7167, 0.97, 3},
+				{1.5, 1, 0.7333, 0.97, 3},
+				{1.5, 1, 0.75, 0.97, 3},
+				{1.5, 1, 0.7667, 0.97, 3},
+				{1.5, 1, 0.7833, 0.97, 3},
+				{1.5, 1, 0.8, 0.97, 3},
+				{1.5, 1, 0.8167, 0.97, 3},
+				{1.5, 1, 0.8333, 0.97, 3},
+				{1.5, 1, 0.85, 0.97, 3},
+				{1.5, 1, 0.8667, 0.97, 3},
+				{1.5, 1, 0.8833, 0.97, 3},
+				{1.5, 1, 0.9, 0.97, 3},
+				{1.5, 1, 0.9167, 0.97, 3},
+				{1.5, 1, 0.9333, 0.97, 3},
+				{1.5, 1, 0.95, 0.97, 3},
+				{1.5, 1, 0.9667, 0.97, 3},
+				{1.5, 1, 0.9833, 0.97, 3},
 			},
 			zoffset = 0,
 			orientation = "FacingCamera",
@@ -16648,19 +17877,391 @@ local SPEC_Eclipse = {
 			emit = {},
 		},
 		{
-			name = "EndGlints",
+			name = "CollapseGlow",
+			texture = "fx_glow",
+			hu = "H",
+			lifetime = {0.3, 0.3},
+			direction = "Bottom",
+			speed_h = {2.2, 2.2},
+			size = {
+				{0, 96, 0},
+				{1, 48, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{1, 0.4, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			brightness = 2.2,
+			ring_emit = {
+				{3.28, 1, 0, 0, 0.85},
+			},
+			bill = true,
+			rel = "r",
+			speed = {0, 0},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetFlash",
+			texture = "fx_glow",
+			lifetime = {0.38, 0.38},
+			size = {
+				{0, 40, 0},
+				{0.15, 300, 0},
+				{1, 324, 0},
+			},
+			transparency = {
+				{0, 0.25, 0},
+				{0.3, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			brightness = 2.4,
+			zoffset = 4,
+			ring_emit = {
+				{3.55, 1, 0, 0, 40},
+			},
+			bill = true,
+			rel = "r",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetStar",
+			texture = "kk_star_09",
+			lifetime = {0.4, 0.4},
+			rotation = {0, 90},
+			size = {
+				{0, 60, 0},
+				{0.15, 456, 0},
+				{1, 60, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			brightness = 2.8,
+			zoffset = 5,
+			ring_emit = {
+				{3.55, 1, 0, 0, 40},
+			},
+			bill = true,
+			rel = "r",
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetDome",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rel = "r",
+			direction = "Front",
+			pitch = 30,
+			spread = {14, 12},
+			speed = {70, 130},
+			drag = 2,
+			accel = {0, 3, 0},
+			lifetime = {1.3, 1.9},
+			size = {
+				{0, 26, 4},
+				{1, 70, 8},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{0.3, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.25,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -1,
+			ring_emit = {
+				{3.55, 1, 0, 0.35, 26},
+				{3.55, 1, 0.0294, 0.35, 26},
+				{3.55, 1, 0.0588, 0.35, 26},
+				{3.55, 1, 0.0882, 0.35, 26},
+				{3.55, 1, 0.1176, 0.35, 26},
+				{3.55, 1, 0.1471, 0.35, 26},
+				{3.55, 1, 0.1765, 0.35, 26},
+				{3.55, 1, 0.2059, 0.35, 26},
+				{3.55, 1, 0.2353, 0.35, 26},
+				{3.55, 1, 0.2647, 0.35, 26},
+				{3.55, 1, 0.2941, 0.35, 26},
+				{3.55, 1, 0.3235, 0.35, 26},
+				{3.55, 1, 0.3529, 0.35, 26},
+				{3.55, 1, 0.3824, 0.35, 26},
+				{3.55, 1, 0.4118, 0.35, 26},
+				{3.55, 1, 0.4412, 0.35, 26},
+				{3.55, 1, 0.4706, 0.35, 26},
+				{3.55, 1, 0.5, 0.35, 26},
+				{3.55, 1, 0.5294, 0.35, 26},
+				{3.55, 1, 0.5588, 0.35, 26},
+				{3.55, 1, 0.5882, 0.35, 26},
+				{3.55, 1, 0.6176, 0.35, 26},
+				{3.55, 1, 0.6471, 0.35, 26},
+				{3.55, 1, 0.6765, 0.35, 26},
+				{3.55, 1, 0.7059, 0.35, 26},
+				{3.55, 1, 0.7353, 0.35, 26},
+				{3.55, 1, 0.7647, 0.35, 26},
+				{3.55, 1, 0.7941, 0.35, 26},
+				{3.55, 1, 0.8235, 0.35, 26},
+				{3.55, 1, 0.8529, 0.35, 26},
+				{3.55, 1, 0.8824, 0.35, 26},
+				{3.55, 1, 0.9118, 0.35, 26},
+				{3.55, 1, 0.9412, 0.35, 26},
+				{3.55, 1, 0.9706, 0.35, 26},
+				{3.55, 1, 0.025, 0.12, 48},
+				{3.55, 1, 0.075, 0.12, 48},
+				{3.55, 1, 0.125, 0.12, 48},
+				{3.55, 1, 0.175, 0.12, 48},
+				{3.55, 1, 0.225, 0.12, 48},
+				{3.55, 1, 0.275, 0.12, 48},
+				{3.55, 1, 0.325, 0.12, 48},
+				{3.55, 1, 0.375, 0.12, 48},
+				{3.55, 1, 0.425, 0.12, 48},
+				{3.55, 1, 0.475, 0.12, 48},
+				{3.55, 1, 0.525, 0.12, 48},
+				{3.55, 1, 0.575, 0.12, 48},
+				{3.55, 1, 0.625, 0.12, 48},
+				{3.55, 1, 0.675, 0.12, 48},
+				{3.55, 1, 0.725, 0.12, 48},
+				{3.55, 1, 0.775, 0.12, 48},
+				{3.55, 1, 0.825, 0.12, 48},
+				{3.55, 1, 0.875, 0.12, 48},
+				{3.55, 1, 0.925, 0.12, 48},
+				{3.55, 1, 0.975, 0.12, 48},
+			},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetShards",
+			texture = "mf_shard_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rel = "r",
+			direction = "Top",
+			spread = {70, 70},
+			speed = {60, 140},
+			drag = 0.4,
+			accel = {0, -150, 0},
+			lifetime = {0.9, 1.4},
+			size = {
+				{0, 4.5, 1.2},
+				{1, 3, 0.8},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-500, 500},
+			ring_emit = {
+				{3.551, 2, 0.7221, 0.328, 19.735},
+				{3.551, 2, 0.7297, 0.388, 12.623},
+				{3.552, 2, 0.5158, 0.472, 19.177},
+				{3.552, 2, 0.7912, 0.494, 20.998},
+				{3.554, 2, 0.5039, 0.743, 19.546},
+				{3.555, 2, 0.6754, 0.348, 15.98},
+				{3.555, 2, 0.9681, 0.736, 13.24},
+				{3.556, 2, 0.3183, 0.851, 14.663},
+				{3.557, 2, 0.4234, 0.575, 11.465},
+				{3.557, 2, 0.9877, 0.886, 19.893},
+				{3.558, 2, 0.0828, 0.339, 20.063},
+				{3.558, 2, 0.6756, 0.837, 10.458},
+				{3.56, 2, 0.3111, 0.728, 14.628},
+				{3.56, 2, 0.3469, 0.915, 15.161},
+				{3.561, 2, 0.7791, 0.619, 19.421},
+				{3.562, 2, 0.4729, 0.713, 15.647},
+				{3.563, 2, 0.1312, 0.993, 24.925},
+				{3.563, 2, 0.4401, 0.741, 17.267},
+				{3.563, 2, 0.4942, 0.252, 5.245},
+				{3.563, 2, 0.627, 0.765, 13.993},
+				{3.564, 2, 0.7954, 0.768, 18.235},
+				{3.564, 2, 0.8643, 0.892, 18.874},
+				{3.565, 2, 0.5669, 0.674, 16.321},
+				{3.567, 2, 0.2826, 0.985, 7.193},
+				{3.568, 2, 0.2416, 0.89, 11.056},
+				{3.568, 2, 0.3121, 0.266, 8.846},
+				{3.569, 2, 0.1772, 0.335, 23.063},
+				{3.569, 2, 0.9256, 0.985, 23.208},
+				{3.569, 2, 0.9436, 0.938, 17.31},
+				{3.57, 2, 0.6147, 0.966, 20.812},
+				{3.57, 2, 0.8632, 0.884, 9.017},
+				{3.57, 2, 0.9513, 0.932, 10.234},
+				{3.571, 2, 0.1868, 0.898, 5.297},
+				{3.571, 2, 0.2744, 0.36, 12.438},
+				{3.573, 2, 0.0074, 0.734, 17.729},
+				{3.573, 2, 0.3575, 0.961, 19.217},
+				{3.573, 2, 0.407, 0.926, 9.84},
+				{3.573, 2, 0.6211, 0.276, 22.106},
+				{3.574, 2, 0.6016, 0.929, 19.738},
+				{3.575, 2, 0.5949, 0.557, 21.395},
+				{3.576, 2, 0.3246, 0.902, 7.415},
+				{3.577, 2, 0.2384, 0.91, 23.817},
+				{3.578, 2, 0.2461, 0.927, 13.927},
+				{3.579, 2, 0.3304, 0.798, 20.696},
+				{3.579, 2, 0.4582, 0.603, 7.963},
+				{3.582, 2, 0.8241, 0.564, 9.835},
+				{3.584, 2, 0.4723, 0.584, 13.188},
+				{3.585, 2, 0.5492, 0.357, 9.558},
+				{3.585, 2, 0.6666, 0.397, 21.449},
+				{3.585, 2, 0.857, 0.035, 24.875},
+				{3.586, 2, 0.1899, 0.739, 5.381},
+				{3.586, 2, 0.3546, 0.326, 7.37},
+				{3.586, 2, 0.9962, 0.762, 10.573},
+				{3.588, 2, 0.2923, 0.534, 20.868},
+				{3.589, 2, 0.0089, 0.883, 21.819},
+				{3.589, 2, 0.1884, 0.738, 18.013},
+				{3.59, 2, 0.6382, 0.673, 9.267},
+				{3.591, 2, 0.0629, 0.494, 21.515},
+				{3.592, 2, 0.77, 0.625, 18.227},
+				{3.593, 2, 0.7889, 0.992, 19.229},
+				{3.594, 2, 0.0015, 0.858, 24.198},
+				{3.594, 2, 0.0471, 0.361, 21.834},
+				{3.595, 2, 0.4974, 0.741, 18.39},
+				{3.595, 2, 0.5174, 0.712, 17.227},
+				{3.596, 2, 0.5355, 0.329, 14.352},
+				{3.597, 2, 0.2464, 0.306, 9.328},
+				{3.597, 2, 0.6062, 0.764, 19.077},
+				{3.598, 2, 0.134, 0.309, 14.865},
+				{3.599, 2, 0.165, 0.78, 17.867},
+				{3.599, 2, 0.2885, 0.408, 8.765},
+			},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "DetGlitter",
 			texture = "kk_star_06",
 			rel = "r",
 			direction = "Top",
-			speed = {4, 10},
-			lifetime = {0.8, 1.3},
+			speed = {4, 14},
+			drag = 0.8,
+			accel = {0, -6, 0},
+			lifetime = {1.4, 2.2},
 			size = {
 				{0, 0, 0},
-				{0.08, 4.48, 0},
-				{0.22, 1.96, 0},
-				{0.38, 4.76, 0},
-				{0.55, 1.68, 0},
-				{0.72, 3.92, 0},
+				{0.08, 5.76, 0},
+				{0.22, 2.52, 0},
+				{0.38, 6.12, 0},
+				{0.55, 2.16, 0},
+				{0.72, 5.04, 0},
 				{1, 0, 0},
 			},
 			color = {
@@ -16678,53 +18279,181 @@ local SPEC_Eclipse = {
 				},
 			},
 			light_emission = 1,
-			brightness = 2,
+			brightness = 2.2,
 			rotation = {0, 45},
 			ring_emit = {
-				{2.604, 1, 0.0133, 0.58, 6.276},
-				{2.613, 1, 0.4019, 1.089, 1.151},
-				{2.615, 1, 0.5962, 0.107, 5.273},
-				{2.627, 1, 0.2686, 0.767, 1.579},
-				{2.659, 1, 0.6698, 0.344, 1.457},
-				{2.663, 1, 0.1772, 0.963, 7.968},
-				{2.686, 1, 0.6429, 0.906, 7.794},
-				{2.691, 1, 0.5711, 0.675, 1.63},
-				{2.695, 1, 0.7604, 0.966, 5.338},
-				{2.729, 1, 0.8857, 0.944, 6.415},
-				{2.74, 1, 0.1246, 1.026, 8.363},
-				{2.773, 1, 0.8103, 0.198, 4.615},
-				{2.778, 1, 0.4449, 1.067, 3.124},
-				{2.783, 1, 0.7117, 0.926, 1.055},
-				{2.785, 1, 0.2503, 0.668, 4.031},
-				{2.808, 1, 0.2614, 1.098, 4.024},
-				{2.809, 1, 0.0313, 0.595, 8.51},
-				{2.814, 1, 0.6265, 0.696, 1.943},
-				{2.816, 1, 0.421, 0.758, 5.225},
-				{2.855, 1, 0.4918, 0.937, 9.915},
-				{2.858, 1, 0.5051, 0.739, 9.566},
-				{2.865, 1, 0.0317, 0.985, 6.58},
-				{2.868, 1, 0.4468, 1.066, 4.997},
-				{2.868, 1, 0.6848, 0.41, 6.507},
-				{2.871, 1, 0.7563, 0.794, 9.225},
-				{2.872, 1, 0.034, 0.482, 6.678},
-				{2.876, 1, 0.4521, 0.958, 6.753},
-				{2.885, 1, 0.9857, 0.481, 9.487},
-				{2.901, 1, 0.3324, 0.873, 9.699},
-				{2.922, 1, 0.7752, 0.88, 3.728},
-				{2.934, 1, 0.0572, 0.635, 4.617},
-				{2.935, 1, 0.3985, 0.707, 9.674},
-				{2.935, 1, 0.8965, 0.728, 3.729},
-				{2.942, 1, 0.6121, 0.816, 8.655},
-				{2.957, 1, 0.3967, 0.93, 3.612},
-				{2.966, 1, 0.2644, 0.188, 7.295},
-				{2.97, 1, 0.1857, 1.027, 7.824},
-				{2.981, 1, 0.1092, 0.954, 4.73},
-				{2.981, 1, 0.2597, 0.322, 9.373},
-				{2.996, 1, 0.689, 0.657, 3.325},
+				{3.55, 1, 0.8059, 0.62, 25.948},
+				{3.55, 1, 0.8679, 0.511, 67.167},
+				{3.553, 1, 0.039, 0.549, 58.57},
+				{3.553, 1, 0.6093, 1.036, 66.697},
+				{3.555, 1, 0.5678, 0.788, 68.2},
+				{3.555, 1, 0.7359, 0.469, 10.67},
+				{3.559, 1, 0.0199, 0.809, 48.503},
+				{3.56, 1, 0.1073, 0.362, 23.266},
+				{3.56, 1, 0.7521, 1.095, 26.364},
+				{3.564, 1, 0.5546, 0.786, 66.384},
+				{3.565, 1, 0.2537, 0.795, 61.666},
+				{3.566, 1, 0.8225, 0.785, 48.37},
+				{3.573, 1, 0.2793, 0.146, 11.449},
+				{3.576, 1, 0.2402, 0.754, 62.916},
+				{3.577, 1, 0.0115, 0.804, 54.887},
+				{3.577, 1, 0.0886, 0.237, 45.543},
+				{3.585, 1, 0.1934, 0.921, 39.942},
+				{3.59, 1, 0.666, 0.784, 63.631},
+				{3.592, 1, 0.848, 1.016, 16.488},
+				{3.593, 1, 0.1527, 0.459, 25.203},
+				{3.593, 1, 0.7036, 0.795, 39.769},
+				{3.596, 1, 0.1022, 0.749, 63.79},
+				{3.596, 1, 0.4259, 1.008, 44.031},
+				{3.602, 1, 0.6526, 0.374, 15.429},
+				{3.602, 1, 0.9169, 0.719, 67.016},
+				{3.603, 1, 0.6972, 0.574, 48.342},
+				{3.607, 1, 0.9741, 0.701, 54.142},
+				{3.609, 1, 0.9003, 0.692, 65.625},
+				{3.612, 1, 0.9, 0.858, 18.148},
+				{3.614, 1, 0.6627, 0.832, 39.08},
+				{3.618, 1, 0.9939, 0.437, 59.993},
+				{3.626, 1, 0.9708, 0.878, 12.546},
+				{3.629, 1, 0.408, 0.898, 20.475},
+				{3.631, 1, 0.326, 1.043, 33.38},
+				{3.631, 1, 0.7308, 0.439, 54.916},
+				{3.633, 1, 0.4035, 0.274, 8.937},
+				{3.636, 1, 0.6212, 0.907, 58.616},
+				{3.644, 1, 0.7911, 0.725, 52.665},
+				{3.647, 1, 0.4771, 0.906, 14.143},
+				{3.653, 1, 0.1054, 0.9, 39.697},
+				{3.654, 1, 0.8452, 0.447, 25.127},
+				{3.658, 1, 0.9839, 0.956, 42.071},
+				{3.659, 1, 0.7004, 0.874, 66.882},
+				{3.66, 1, 0.4766, 0.433, 65.769},
+				{3.662, 1, 0.9522, 0.733, 43.667},
+				{3.664, 1, 0.3593, 0.17, 25.475},
+				{3.665, 1, 0.7789, 0.762, 44.742},
+				{3.668, 1, 0.8866, 0.856, 37.254},
+				{3.674, 1, 0.5969, 0.64, 10.279},
+				{3.678, 1, 0.1548, 0.879, 16.967},
+				{3.679, 1, 0.2876, 0.575, 36.527},
+				{3.682, 1, 0.7431, 0.95, 38.777},
+				{3.683, 1, 0.359, 0.96, 53.333},
+				{3.685, 1, 0.8923, 0.83, 14.609},
+				{3.692, 1, 0.0085, 0.839, 45.387},
+				{3.692, 1, 0.0486, 0.809, 38.34},
+				{3.694, 1, 0.5948, 0.867, 46.051},
+				{3.698, 1, 0.5916, 0.533, 50.3},
+				{3.699, 1, 0.7131, 0.925, 47.491},
+				{3.699, 1, 0.8873, 1.083, 11.809},
+				{3.703, 1, 0.7734, 0.694, 14.232},
+				{3.705, 1, 0.8083, 0.448, 69.647},
+				{3.713, 1, 0.7224, 0.248, 61.722},
+				{3.717, 1, 0.5048, 0.473, 56.332},
+				{3.718, 1, 0.0237, 1.05, 46.852},
+				{3.724, 1, 0.6477, 0.934, 61.496},
+				{3.724, 1, 0.6673, 0.743, 23.134},
+				{3.727, 1, 0.9736, 0.296, 18.739},
+				{3.731, 1, 0.0135, 0.087, 55.597},
+				{3.739, 1, 0.21, 0.871, 32.987},
+				{3.743, 1, 0.4084, 0.26, 63.414},
+				{3.743, 1, 0.4328, 1.051, 33.39},
+				{3.745, 1, 0.0838, 0.785, 61.731},
+				{3.747, 1, 0.1224, 0.819, 68.342},
+				{3.756, 1, 0.1913, 0.796, 68.553},
+				{3.757, 1, 0.2443, 0.974, 30.885},
+				{3.766, 1, 0.5026, 0.877, 26.904},
+				{3.767, 1, 0.6402, 0.647, 65.269},
+				{3.767, 1, 0.9877, 0.797, 20.423},
+				{3.768, 1, 0.3639, 0.898, 40.764},
+				{3.768, 1, 0.4674, 1.071, 12.273},
+				{3.77, 1, 0.5396, 0.911, 10.496},
+				{3.771, 1, 0.2188, 1.019, 61.817},
+				{3.775, 1, 0.9068, 0.076, 39.485},
+				{3.778, 1, 0.9404, 0.745, 34.766},
+				{3.786, 1, 0.1846, 0.811, 65.273},
+				{3.786, 1, 0.8749, 0.479, 66.065},
+				{3.787, 1, 0.614, 0.909, 38.908},
+				{3.788, 1, 0.4854, 1.003, 64.967},
+				{3.79, 1, 0.1653, 0.762, 46.367},
+				{3.794, 1, 0.3918, 0.383, 32.84},
+				{3.796, 1, 0.6477, 0.66, 55.762},
+				{3.798, 1, 0.6101, 0.123, 11.302},
+				{3.805, 1, 0.3744, 0.811, 66.708},
+				{3.806, 1, 0.5223, 0.147, 45.897},
+				{3.813, 1, 0.8809, 0.527, 62.566},
+				{3.814, 1, 0.3534, 0.695, 26.835},
+				{3.815, 1, 0.2683, 0.666, 52.542},
+				{3.816, 1, 0.5654, 0.279, 60.404},
+				{3.83, 1, 0.488, 0.83, 53.085},
+				{3.831, 1, 0.0273, 0.74, 8.099},
+				{3.834, 1, 0.9524, 0.276, 52.067},
+				{3.835, 1, 0.5115, 1.038, 32.867},
+				{3.839, 1, 0.3398, 0.698, 36.517},
+				{3.842, 1, 0.6107, 0.753, 15.459},
+				{3.842, 1, 0.7606, 0.603, 10.979},
+				{3.846, 1, 0.7786, 0.87, 63.668},
+				{3.847, 1, 0.9573, 0.681, 12.133},
+				{3.856, 1, 0.9744, 0.25, 20.078},
+				{3.864, 1, 0.0006, 0.85, 21.652},
+				{3.868, 1, 0.4591, 0.895, 50.653},
+				{3.873, 1, 0.5413, 0.835, 54.423},
+				{3.878, 1, 0.8887, 0.714, 8.483},
+				{3.887, 1, 0.5508, 1.003, 19.349},
+				{3.887, 1, 0.7366, 0.993, 49.198},
+				{3.892, 1, 0.2429, 0.269, 24.439},
+				{3.897, 1, 0.7359, 0.989, 43.538},
+				{3.9, 1, 0.3406, 0.878, 30.017},
+				{3.906, 1, 0.0856, 1.1, 18.27},
+				{3.907, 1, 0.5342, 0.615, 47.023},
+				{3.911, 1, 0.6393, 0.153, 42.82},
+				{3.912, 1, 0.4576, 1.029, 13.378},
+				{3.913, 1, 0.1037, 0.627, 26.394},
+				{3.913, 1, 0.1667, 0.841, 23.477},
+				{3.914, 1, 0.5372, 0.954, 28.211},
+				{3.916, 1, 0.1049, 0.426, 49.718},
+				{3.918, 1, 0.923, 0.668, 32.727},
+				{3.922, 1, 0.8598, 0.653, 10.67},
+				{3.929, 1, 0.5543, 0.513, 53.576},
+				{3.929, 1, 0.7522, 1.019, 15.184},
+				{3.93, 1, 0.5902, 0.679, 55.044},
+				{3.933, 1, 0.1677, 0.983, 50.919},
+				{3.936, 1, 0.4408, 0.709, 21.706},
+				{3.939, 1, 0.5084, 1.08, 61.793},
+				{3.941, 1, 0.7033, 0.419, 32.613},
+				{3.942, 1, 0.3253, 1.074, 58.748},
+				{3.943, 1, 0.3785, 0.97, 34.344},
+				{3.95, 1, 0.5296, 0.96, 17.265},
+				{3.96, 1, 0.7738, 0.481, 32.171},
+				{3.965, 1, 0.2174, 0.946, 32.325},
+				{3.965, 1, 0.4804, 0.724, 50.083},
+				{3.97, 1, 0.6235, 0.835, 14.974},
+				{3.974, 1, 0.8557, 0.518, 8.873},
+				{3.976, 1, 0.8134, 1.063, 37.308},
+				{3.981, 1, 0.3898, 0.594, 33.317},
+				{3.983, 1, 0.1801, 0.439, 18.853},
+				{3.988, 1, 0.7967, 0.94, 49.521},
+				{3.99, 1, 0.9842, 0.946, 15.489},
+				{3.991, 1, 0.7937, 0.833, 43.357},
+				{3.995, 1, 0.1089, 0.45, 32.726},
+				{3.998, 1, 0.6961, 0.449, 12.66},
+				{4.004, 1, 0.9465, 0.997, 10.153},
+				{4.008, 1, 0.1102, 0.923, 40.654},
+				{4.008, 1, 0.2081, 0.809, 53.437},
+				{4.011, 1, 0.9112, 0.933, 47.355},
+				{4.013, 1, 0.8898, 1.058, 25.994},
+				{4.014, 1, 0.3534, 0.544, 66.724},
+				{4.021, 1, 0.9428, 0.934, 14.081},
+				{4.023, 1, 0.3165, 1.035, 11.553},
+				{4.024, 1, 0.9265, 0.564, 64.297},
+				{4.026, 1, 0.0526, 0.956, 26.646},
+				{4.027, 1, 0.124, 0.826, 40.368},
+				{4.029, 1, 0.2168, 0.406, 30.992},
+				{4.029, 1, 0.5735, 0.706, 35.528},
+				{4.029, 1, 0.7008, 0.489, 35.866},
+				{4.032, 1, 0.9135, 0.634, 53.707},
+				{4.034, 1, 0.6015, 0.884, 8.43},
+				{4.037, 1, 0.7109, 0.335, 22.975},
+				{4.046, 1, 0.1701, 1.061, 18.935},
+				{4.05, 1, 0.0397, 0.925, 34.307},
 			},
 			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -16736,57 +18465,193 @@ local SPEC_Eclipse = {
 			line_u = 0,
 			emit = {},
 		},
+		{
+			name = "AfterMist",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rel = "r",
+			direction = "Top",
+			spread = {60, 60},
+			speed = {2, 6},
+			drag = 1,
+			lifetime = {1.8, 2.4},
+			size = {
+				{0, 22, 3},
+				{1, 44, 5},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.3, 0.68, 0},
+				{0.8, 0.78, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-15, 15},
+			zoffset = -4,
+			ring_emit = {
+				{3.669, 1, 0.2421, 0.834, 18.326},
+				{3.672, 1, 0.6297, 0.615, 17.523},
+				{3.701, 1, 0.3023, 0.862, 18.387},
+				{3.749, 1, 0.1263, 0.293, 16.298},
+				{3.749, 1, 0.6508, 0.934, 19.956},
+				{3.755, 1, 0.4535, 0.52, 18.367},
+				{3.757, 1, 0.2509, 0.696, 15.134},
+				{3.759, 1, 0.0937, 0.654, 17.343},
+				{3.764, 1, 0.6304, 0.575, 19.178},
+				{3.775, 1, 0.5584, 0.774, 18.525},
+				{3.775, 1, 0.794, 0.398, 15.634},
+				{3.811, 1, 0.2523, 0.852, 18.441},
+				{3.812, 1, 0.1503, 0.703, 17.033},
+				{3.814, 1, 0.7712, 0.862, 19.857},
+				{3.848, 1, 0.4897, 0.85, 18.279},
+				{3.853, 1, 0.4286, 0.346, 16.513},
+				{3.877, 1, 0.5754, 0.567, 19.782},
+				{3.884, 1, 0.068, 0.98, 17.198},
+				{3.886, 1, 0.832, 0.591, 19.78},
+				{3.89, 1, 0.9973, 0.888, 15.183},
+				{3.895, 1, 0.8683, 0.755, 18.283},
+				{3.905, 1, 0.7754, 0.557, 16.229},
+				{3.908, 1, 0.3723, 0.892, 18.664},
+				{3.914, 1, 0.1101, 0.584, 17.581},
+				{3.925, 1, 0.8937, 0.299, 18.338},
+				{3.986, 1, 0.045, 0.908, 17.876},
+				{4.001, 1, 0.0075, 0.726, 18.912},
+				{4.002, 1, 0.6209, 0.884, 16.383},
+				{4.008, 1, 0.5913, 0.937, 16.235},
+				{4.015, 1, 0.9989, 0.876, 16.14},
+				{4.027, 1, 0.8597, 0.463, 16.41},
+				{4.07, 1, 0.5731, 0.969, 18.139},
+				{4.08, 1, 0.0233, 0.965, 16.588},
+				{4.111, 1, 0.5881, 0.89, 17.813},
+				{4.117, 1, 0.7693, 0.825, 19.032},
+				{4.146, 1, 0.2331, 0.381, 16.373},
+			},
+			accel = {0, 0, 0},
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
 	},
-	shake_ramp = {0, 2.6, 0.1, 1.2, 1.6},
+	shakes = {
+		{1.42, 2.2, 0.8},
+		{3.55, 2.6, 1},
+	},
+	shake_ramp = {0, 3.3, 0.15, 1.3, 1.8},
 	zone = {
-		radius = 26,
-		height = 150,
-		charge = 1,
-		collapse = 2.6,
+		radius = 120,
+		height = 340,
+		charge = 1.3,
+		collapse = 3.3,
 	},
 	lights = {
 		{
-			t = 0,
-			h = 0.9,
-			hu = "H",
-			color = {190, 215, 255},
-			brightness = 3,
-			range = 80,
-			rise = 0.4,
-			hold = 0.5,
-			fall = 0.2,
+			t = 0.3,
+			h = 10,
+			color = {150, 190, 255},
+			brightness = 1.5,
+			range = 60,
+			rise = 0.8,
+			hold = 0.2,
+			fall = 0.3,
+			ring = {6, 0.6},
 		},
 		{
-			t = 1.15,
-			h = 6,
+			t = 1.42,
+			h = 8,
 			color = {190, 225, 255},
-			brightness = 9,
-			range = 70,
+			brightness = 10,
+			range = 60,
 			rise = 0.03,
-			hold = 0.05,
+			hold = 0.08,
 			fall = 0.6,
 		},
 		{
-			t = 1.15,
-			h = 0.3,
-			hu = "H",
-			color = {150, 200, 255},
-			brightness = 5,
-			range = 70,
-			rise = 0.1,
-			hold = 1.2,
-			fall = 0.4,
+			t = 1.42,
+			h = 8,
+			color = {190, 225, 255},
+			brightness = 10,
+			range = 60,
+			rise = 0.03,
+			hold = 0.08,
+			fall = 0.6,
+			ring = {6, 0.62},
 		},
 		{
-			t = 2.6,
-			h = 4,
-			color = {190, 225, 255},
-			brightness = 5,
-			range = 50,
-			rise = 0.02,
-			hold = 0.03,
-			fall = 0.5,
+			t = 1.52,
+			h = 14,
+			color = {150, 200, 255},
+			brightness = 4,
+			range = 60,
+			rise = 0.1,
+			hold = 1.58,
+			fall = 0.3,
+			ring = {6, 0.55},
 		},
+		{
+			t = 3.55,
+			h = 10,
+			color = {200, 230, 255},
+			brightness = 12,
+			range = 60,
+			rise = 0.02,
+			hold = 0.05,
+			fall = 0.8,
+		},
+		{
+			t = 3.55,
+			h = 10,
+			color = {200, 230, 255},
+			brightness = 12,
+			range = 60,
+			rise = 0.02,
+			hold = 0.05,
+			fall = 0.8,
+			ring = {8, 0.6},
+		},
+	},
+	times = {
+		Eclipse = 1.3,
+		Impact = 1.42,
+		Collapse = 3.3,
+		Detonation = 3.55,
+	},
+	screen = {
+		range = 3,
+		cc = {
+			{0, 0, 0, 0, 255, 255, 255},
+			{0.4, -0.04, 0.04, -0.08, 228, 236, 255},
+			{1.3, -0.16, 0.14, -0.22, 188, 204, 255},
+			{3.3, -0.16, 0.14, -0.22, 188, 204, 255},
+			{3.55, 0.06, 0.1, -0.1, 232, 242, 255},
+			{4.85, 0, 0, 0, 255, 255, 255},
+		},
+		flash = {
+			{1.42, 0.45, 0.03, 0.35},
+			{3.55, 0.6, 0.03, 0.55},
+		},
+		flash_color = {226, 238, 255},
 	},
 	cubes = {
 		gravity = 160,
@@ -16810,30 +18675,43 @@ local SPEC_Eclipse = {
 			{
 				name = "Lift",
 				mode = "lift",
-				count = 30,
-				t = {0.1, 0.6},
-				r = {0.12, 0.9},
-				size = {0.25, 1.1},
-				skew = 1.8,
-				lift = {1, 6},
-				release = {1.15, 1.18},
-				out = {18, 48},
-				up = {45, 90},
+				count = 90,
+				t = {0.15, 1},
+				r = {0.1, 0.95},
+				size = {0.5, 3},
+				skew = 2.2,
+				lift = {3, 14},
+				release = {1.42, 1.47},
+				out = {25, 70},
+				up = {50, 110},
 				dissolve = 0.35,
-				neon = 0.5,
+				neon = 0.4,
 			},
 			{
 				name = "Blast",
 				mode = "blast",
-				count = 120,
-				t = {1.15, 1.2},
-				r = {0.25, 1.05},
-				size = {0.12, 1.2},
-				skew = 2.8,
-				out = {18, 60},
-				up = {26, 80},
-				dissolve = 0.4,
-				neon = 0.35,
+				count = 260,
+				t = {1.42, 1.5},
+				r = {0.15, 1.05},
+				size = {0.4, 3.2},
+				skew = 2.6,
+				out = {25, 90},
+				up = {35, 110},
+				dissolve = 0.35,
+				neon = 0.3,
+			},
+			{
+				name = "DetBlast",
+				mode = "blast",
+				count = 140,
+				t = {3.55, 3.6},
+				r = {0.05, 0.9},
+				size = {0.4, 2.6},
+				skew = 2.4,
+				out = {40, 120},
+				up = {40, 120},
+				dissolve = 0.5,
+				neon = 0.5,
 			},
 		},
 		fx = {
@@ -16845,7 +18723,7 @@ local SPEC_Eclipse = {
 			lifetime = {0.25, 0.4},
 			size = {
 				{0, 0, 0},
-				{0.2, 1.8, 0},
+				{0.2, 2.2, 0},
 				{1, 0, 0},
 			},
 			color = {
@@ -16880,12 +18758,737 @@ local SPEC_Eclipse = {
 			emit = {},
 		},
 	},
+	zbeams = {
+		{
+			count = 1,
+			r = 0,
+			a0 = 0,
+			spin = 0,
+			wobble = 0,
+			near = 0,
+			zoffset = 0,
+			name = "Guide",
+			texture = "mf_blade_line",
+			width = 0.016,
+			tex_len = 1,
+			speed = 0,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{235, 244, 255},
+				},
+			},
+			transparency = {
+				{0, 0.1},
+				{1, 0.1},
+			},
+			brightness = 2.4,
+			light_emission = 1,
+			drop = {1.02, 0.14},
+			h = {0, 0.985},
+			width_t = {
+				{1.02, 1},
+				{1.3, 1.6},
+				{1.42, 0},
+			},
+			alpha_t = {
+				{1.02, 0},
+				{1.39, 0},
+				{1.42, 1},
+			},
+			rim = false,
+		},
+		{
+			count = 14,
+			r = 0.74,
+			a0 = 0,
+			spin = 10,
+			wobble = 0.05,
+			near = 0.85,
+			zoffset = 0,
+			name = "Curtain",
+			texture = "mf_moonbeam",
+			width = 0.55,
+			tex_len = 0.35,
+			speed = 1.3,
+			color = {
+				{
+					0,
+					{215, 232, 255},
+				},
+				{
+					0.5,
+					{165, 208, 255},
+				},
+				{
+					1,
+					{130, 185, 255},
+				},
+			},
+			transparency = {
+				{0, 1},
+				{0.3, 1},
+				{0.42, 0.42},
+				{0.92, 0.34},
+				{1, 0.45},
+			},
+			brightness = 1,
+			light_emission = 1,
+			width_t = {
+				{1.3, 0.35},
+				{1.42, 1.1},
+				{1.54, 1},
+				{3.25, 1},
+				{3.48, 0.05},
+				{3.53, 0.03},
+				{3.55, 0},
+			},
+			alpha_t = {
+				{1.3, 0.4},
+				{1.42, 0},
+				{3.3, 0},
+				{3.5, 0.2},
+				{3.55, 0.5},
+			},
+			r_t = {
+				{3.25, 1},
+				{3.48, 0.04},
+			},
+			drop = {1.3, 0.12},
+			h = {0, 0.985},
+			rim = false,
+		},
+		{
+			count = 1,
+			r = 0,
+			a0 = 0.13,
+			spin = 0,
+			wobble = 0.03,
+			near = 0.75,
+			zoffset = 0,
+			name = "Body",
+			texture = "mf_moonbeam",
+			width = 1.6,
+			tex_len = 0.5,
+			speed = 0.9,
+			color = {
+				{
+					0,
+					{150, 195, 255},
+				},
+				{
+					1,
+					{90, 150, 250},
+				},
+			},
+			transparency = {
+				{0, 1},
+				{0.3, 1},
+				{0.42, 0.6},
+				{1, 0.62},
+			},
+			brightness = 0.85,
+			light_emission = 1,
+			width_t = {
+				{1.3, 0.35},
+				{1.42, 1.1},
+				{1.54, 1},
+				{3.25, 1},
+				{3.48, 0.05},
+				{3.53, 0.03},
+				{3.55, 0},
+			},
+			alpha_t = {
+				{1.3, 0.4},
+				{1.42, 0},
+				{3.3, 0},
+				{3.5, 0.2},
+				{3.55, 0.5},
+			},
+			drop = {1.3, 0.12},
+			h = {0, 0.985},
+			rim = false,
+		},
+		{
+			count = 1,
+			r = 0,
+			a0 = 0,
+			spin = 0,
+			wobble = 0,
+			near = 0.6,
+			zoffset = 0,
+			name = "Heart",
+			texture = "mf_blade_glow",
+			width = 0.5,
+			tex_len = 1,
+			speed = 0,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{215, 235, 255},
+				},
+			},
+			transparency = {
+				{0, 1},
+				{0.3, 1},
+				{0.42, 0.25},
+				{1, 0.2},
+			},
+			brightness = 1.5,
+			light_emission = 1,
+			width_t = {
+				{1.3, 0.35},
+				{1.42, 1.1},
+				{1.54, 1},
+				{3.25, 1},
+				{3.48, 0.05},
+				{3.53, 0.03},
+				{3.55, 0},
+			},
+			alpha_t = {
+				{1.3, 0.4},
+				{1.42, 0},
+				{3.3, 0},
+				{3.5, 0.2},
+				{3.55, 0.5},
+			},
+			drop = {1.3, 0.12},
+			h = {0, 0.985},
+			rim = false,
+		},
+		{
+			count = 1,
+			r = 0,
+			a0 = 0,
+			spin = 0,
+			wobble = 0,
+			near = 0,
+			zoffset = 0,
+			name = "Core",
+			texture = "mf_blade_line",
+			width = 0.08,
+			tex_len = 1,
+			speed = 0,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{235, 244, 255},
+				},
+			},
+			transparency = {
+				{0, 1},
+				{0.3, 1},
+				{0.42, 0},
+				{1, 0},
+			},
+			brightness = 2.4,
+			light_emission = 1,
+			width_t = {
+				{1.3, 0.6},
+				{1.42, 1.2},
+				{1.52, 1},
+				{3.3, 1},
+				{3.45, 1.5},
+				{3.52, 1.8},
+				{3.55, 0},
+			},
+			alpha_t = {
+				{1.3, 0.2},
+				{1.42, 0},
+			},
+			drop = {1.3, 0.12},
+			h = {0, 0.985},
+			rim = false,
+		},
+		{
+			count = 1,
+			r = 1,
+			a0 = 0,
+			spin = 0,
+			wobble = 0,
+			near = 0,
+			zoffset = 0,
+			name = "Rim",
+			texture = "mf_blade_line",
+			rim = true,
+			width = 0.022,
+			tex_len = 1,
+			speed = 0,
+			color = {
+				{
+					0,
+					{235, 245, 255},
+				},
+				{
+					1,
+					{175, 215, 255},
+				},
+			},
+			transparency = {
+				{0, 1},
+				{0.3, 1},
+				{0.42, 0.1},
+				{1, 0.15},
+			},
+			brightness = 2.2,
+			light_emission = 1,
+			width_t = {
+				{1.3, 0.35},
+				{1.42, 1.1},
+				{1.54, 1},
+				{3.25, 1},
+				{3.48, 0.05},
+				{3.53, 0.03},
+				{3.55, 0},
+			},
+			alpha_t = {
+				{1.3, 0.4},
+				{1.42, 0},
+				{3.3, 0},
+				{3.5, 0.2},
+				{3.55, 0.5},
+			},
+			r_t = {
+				{3.25, 1},
+				{3.48, 0.04},
+			},
+			drop = {1.3, 0.12},
+			h = {0, 0.985},
+		},
+	},
+	zfield = {
+		groups = {
+			{
+				hold = {1, 1},
+				sink = 0.4,
+				name = "IceCrown",
+				count = 40,
+				ring = true,
+				r = {0.96, 1.04},
+				lean = "radial",
+				wid = {3.5, 6},
+				thick = {18, 34},
+				len = {3.5, 6},
+				tilt = {22, 42},
+				yaw = 25,
+				pitch = 8,
+				show = 0.85,
+				rise = 0.16,
+				t = 1.44,
+				sweep = 0.2,
+				delay = {0, 0.06},
+				end_at = {3.55, 3.6},
+				big = {
+					frac = 0.2,
+					k = 1.35,
+				},
+				["end"] = "shatter",
+				ice = {
+					color = {150, 200, 255},
+					material = "Ice",
+					transparency = 0.22,
+				},
+				tip = 0.8,
+				mesh = "IceCrown",
+				shatter = {
+					{
+						name = "CrownBreak",
+						texture = "mf_shard_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 10},
+						},
+						shape = {
+							type = "Box",
+							size = {7, 26, 7},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {85, 85},
+						speed = {25, 60},
+						drag = 0.4,
+						accel = {0, -120, 0},
+						lifetime = {0.7, 1.1},
+						size = {
+							{0, 3.2, 0.8},
+							{1, 2.2, 0.6},
+						},
+						transparency = {
+							{0, 0, 0},
+							{0.85, 0.1, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{200, 230, 255},
+							},
+							{
+								0.4,
+								{120, 180, 255},
+							},
+							{
+								1,
+								{70, 120, 235},
+							},
+						},
+						light_emission = 0.45,
+						brightness = 1.5,
+						rotation = {0, 360},
+						rot_speed = {-500, 500},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "CrownBreakGlint",
+						texture = "kk_star_06",
+						emit = {
+							{0, 3},
+						},
+						shape = {
+							type = "Box",
+							size = {8, 24, 8},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {3, 9},
+						drag = 2,
+						lifetime = {0.4, 0.7},
+						size = {
+							{0, 0, 0},
+							{0.08, 5.76, 0},
+							{0.22, 2.52, 0},
+							{0.38, 6.12, 0},
+							{0.55, 2.16, 0},
+							{0.72, 5.04, 0},
+							{1, 0, 0},
+						},
+						color = {
+							{
+								0,
+								{255, 255, 255},
+							},
+							{
+								0.5,
+								{225, 240, 255},
+							},
+							{
+								1,
+								{170, 205, 255},
+							},
+						},
+						light_emission = 1,
+						brightness = 2.2,
+						rotation = {0, 45},
+						accel = {0, 0, 0},
+						transparency = {
+							{0, 0, 0},
+							{1, 0, 0},
+						},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "CrownBreakMist",
+						texture = "fx_smoke_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 1},
+						},
+						offset = {0, 10, 0},
+						direction = "Top",
+						spread = {60, 60},
+						speed = {4, 10},
+						drag = 1.5,
+						accel = {0, 2, 0},
+						lifetime = {0.9, 1.3},
+						size = {
+							{0, 12, 2},
+							{1, 26, 3},
+						},
+						transparency = {
+							{0, 0.5, 0},
+							{0.4, 0.62, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{220, 236, 255},
+							},
+							{
+								1,
+								{175, 200, 240},
+							},
+						},
+						light_emission = 0.2,
+						rotation = {0, 360},
+						zoffset = -1,
+						brightness = 1,
+						rot_speed = {0, 0},
+						orientation = "FacingCamera",
+						line_u = 0,
+					},
+				},
+			},
+			{
+				hold = {1, 1},
+				sink = 0.4,
+				name = "IceCrystals",
+				count = 60,
+				r = {0.12, 0.9},
+				lean = "radial",
+				wid = {2.5, 4.5},
+				thick = {8, 18},
+				len = {2.5, 4.5},
+				tilt = {10, 40},
+				yaw = 30,
+				pitch = 12,
+				show = 0.75,
+				rise = 0.12,
+				t = 1.42,
+				sweep = 0.22,
+				delay = {0, 0.05},
+				end_at = {3.53, 3.63},
+				big = {
+					frac = 0.15,
+					k = 1.5,
+				},
+				["end"] = "shatter",
+				ice = {
+					color = {150, 200, 255},
+					material = "Ice",
+					transparency = 0.22,
+				},
+				tip = 0.8,
+				mesh = "IceCrystals",
+				shatter = {
+					{
+						name = "CrownBreak",
+						texture = "mf_shard_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 5},
+						},
+						shape = {
+							type = "Box",
+							size = {4.2, 15.6, 4.2},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {85, 85},
+						speed = {25, 60},
+						drag = 0.4,
+						accel = {0, -120, 0},
+						lifetime = {0.7, 1.1},
+						size = {
+							{0, 3.2, 0.8},
+							{1, 2.2, 0.6},
+						},
+						transparency = {
+							{0, 0, 0},
+							{0.85, 0.1, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{200, 230, 255},
+							},
+							{
+								0.4,
+								{120, 180, 255},
+							},
+							{
+								1,
+								{70, 120, 235},
+							},
+						},
+						light_emission = 0.45,
+						brightness = 1.5,
+						rotation = {0, 360},
+						rot_speed = {-500, 500},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "CrownBreakGlint",
+						texture = "kk_star_06",
+						emit = {
+							{0, 1},
+						},
+						shape = {
+							type = "Box",
+							size = {4.8, 14.4, 4.8},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {3, 9},
+						drag = 2,
+						lifetime = {0.4, 0.7},
+						size = {
+							{0, 0, 0},
+							{0.08, 5.76, 0},
+							{0.22, 2.52, 0},
+							{0.38, 6.12, 0},
+							{0.55, 2.16, 0},
+							{0.72, 5.04, 0},
+							{1, 0, 0},
+						},
+						color = {
+							{
+								0,
+								{255, 255, 255},
+							},
+							{
+								0.5,
+								{225, 240, 255},
+							},
+							{
+								1,
+								{170, 205, 255},
+							},
+						},
+						light_emission = 1,
+						brightness = 2.2,
+						rotation = {0, 45},
+						accel = {0, 0, 0},
+						transparency = {
+							{0, 0, 0},
+							{1, 0, 0},
+						},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "CrownBreakMist",
+						texture = "fx_smoke_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 1},
+						},
+						offset = {0, 10, 0},
+						direction = "Top",
+						spread = {60, 60},
+						speed = {4, 10},
+						drag = 1.5,
+						accel = {0, 2, 0},
+						lifetime = {0.9, 1.3},
+						size = {
+							{0, 12, 2},
+							{1, 26, 3},
+						},
+						transparency = {
+							{0, 0.5, 0},
+							{0.4, 0.62, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{220, 236, 255},
+							},
+							{
+								1,
+								{175, 200, 240},
+							},
+						},
+						light_emission = 0.2,
+						rotation = {0, 360},
+						zoffset = -1,
+						brightness = 1,
+						rot_speed = {0, 0},
+						orientation = "FacingCamera",
+						line_u = 0,
+					},
+				},
+			},
+			{
+				hold = {1, 1},
+				sink = 0.5,
+				name = "ZoneSlabs",
+				count = 70,
+				r = {0.1, 1},
+				lean = "radial",
+				wid = {4, 8},
+				thick = {1, 2},
+				len = {4, 8},
+				tilt = {15, 45},
+				yaw = 14,
+				pitch = 10,
+				show = 0.6,
+				rise = 0.08,
+				t = 1.42,
+				sweep = 0.25,
+				delay = {0, 0.05},
+				end_at = {3.85, 4.35},
+				ground = true,
+				mesh = "ZoneSlabs",
+			},
+		},
+	},
 }
 
--- MOONFANG SKILL 4 (Eclipse): una luna llena aparece sobre la zona y se va eclipsando mientras la zona se agrieta en escarcha y los pedazos del suelo levitan; al quedar cubierta (1 s) cae una columna de luz de luna que hace volar la tierra y el cristal; a los 2.6 s se apaga y queda un anillo de cristal roto. cf = centro de la zona en el suelo. El golpe es a los 1.15 s.
--- radius = radio de la zona en studs (por defecto 26 × escala); height = altura del pilar (por defecto 150 × escala).
+-- MOONFANG SKILL 4 (Eclipse, la ULTIMATE): una luna gigante aparece sobre la zona y se eclipsa mientras en el suelo se dibuja el círculo lunar y el hielo flota hacia ella; al quedar tapada cae una columna de luz de luna del ancho de toda la zona que congela el suelo (corona de picos de hielo en el borde, campo de cristales, escombros); al final la columna colapsa y todo el hielo revienta en una detonación. cf = centro de la zona en el suelo. Golpes: la columna a los 1.42 s y la detonación a los 3.55 s (ver EclipseTimes).
+-- radius = radio de la zona en studs (por defecto 120 × escala); height = altura del pilar (por defecto 340 × escala).
 function MoonfangVFX.Eclipse(cf: CFrame, radius: number?, height: number?, scale: number?, shake: number?): Part
 	return playZone(SPEC_Eclipse, cf, scale, radius, height, shake)
 end
+
+-- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la cámara
+MoonfangVFX.EclipseTimes = {
+	Eclipse = 1.3,
+	Impact = 1.42,
+	Collapse = 3.3,
+	Detonation = 3.55,
+}
 
 return MoonfangVFX

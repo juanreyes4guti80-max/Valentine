@@ -10,6 +10,7 @@ debajo del suelo, como hace el depth test de Roblox.
 
 Unidades: studs; Y arriba (como Roblox).
 """
+import copy
 import math
 import os
 import random
@@ -228,6 +229,31 @@ def draw_sprite(buf, spr, cx, cy, light, bright, mask_fn=None):
     dst = buf[ya:yb, xa:xb]
     dst *= (1 - a * (1 - light))
     dst += rgb * a
+
+
+def apply_screen(buf, Sc, t, cam, o0, zone):
+    """La corrección de color (ColorCorrectionEffect) y el destello de pantalla de una ULTIMATE, como runScreen en el
+    módulo: se nota entero dentro de la zona y se apaga a Sc["range"] × radio."""
+    d = math.hypot(cam.C[0] - o0[0], cam.C[2] - o0[2])
+    k = min(max(1 - (d - zone["R"]) / max((Sc["range"] - 1) * zone["R"], 1.0), 0.0), 1.0)
+    rows = Sc["cc"]
+    v = [float(np.interp(t, [r[0] for r in rows], [r[j] for r in rows])) for j in range(1, 7)]
+    b, c, sat = v[0] * k, v[1] * k, v[2] * k
+    tint = np.array([1 - (1 - v[3] / 255) * k, 1 - (1 - v[4] / 255) * k, 1 - (1 - v[5] / 255) * k], np.float32)
+    out = np.clip(buf, 0, None) + b
+    out = (out - 0.5) * (1 + c) + 0.5
+    gray = (out @ np.array([0.299, 0.587, 0.114], np.float32))[..., None]
+    out = gray + (out - gray) * (1 + sat)
+    out = out * tint
+    al = 0.0
+    for (ft, fa, up, down) in Sc["flash"]:
+        tt = t - ft
+        if tt >= 0:
+            w = tt / up if tt < up else 1 - min(max((tt - up) / down, 0.0), 1.0)
+            al = max(al, w * fa)
+    if al > 0:
+        out = out * (1 - al * k) + np.array(Sc["flash_color"], np.float32) / 255 * al * k
+    return out.astype(np.float32)
 
 
 def apply_bloom(buf, threshold=0.92, intensity=0.55, sigmas=(4, 14)):
@@ -541,7 +567,19 @@ def make_slab(rng, SL, s, x, z, across_yaw, side, t_s):
     y0 = top * (2 * SL["show"] - 1)                              # show = qué fracción asoma del suelo
     return {"t": t_s, "x": x, "z": z, "size": (w, th, ln), "R3": R3, "y0": y0, "drop": y0 + top + 0.3 * s,
             "hold": rng.uniform(*SL["hold"]), "rise": SL["rise"], "sink": SL["sink"],
-            "ice": SL["ice"] if ice else None, "shatter": SL.get("end") == "shatter", "L": SL}
+            "ice": SL["ice"] if ice else None, "shatter": SL.get("end") == "shatter", "L": SL,
+            "tip_s": SL["tip"] * min(w, ln) if SL.get("tip") else 0.0}
+
+
+# la punta de un cristal: un cubo parado sobre un vértice (su diagonal (1, 1, 1) hacia arriba) en la cara de arriba
+TIP_ROT = None
+
+
+def tip_rot():
+    global TIP_ROT
+    if TIP_ROT is None:
+        TIP_ROT = axis_angle(np.array([-1.0, 0.0, 1.0]) / math.sqrt(2), math.acos(1 / math.sqrt(3)))
+    return TIP_ROT
 
 
 def slab_poses(slabs, t, o0, Rf, ground_y):
@@ -563,7 +601,11 @@ def slab_poses(slabs, t, o0, Rf, ground_y):
             continue
         P = o0 + Rf @ np.array([L["x"], 0.0, L["z"]])
         P[1] = ground_y + y
-        out.append((P, Rf @ L["R3"], L["size"], L))
+        R3 = Rf @ L["R3"]
+        out.append((P, R3, L["size"], L))
+        if L.get("tip_s"):
+            ts = L["tip_s"]
+            out.append((P + R3 @ np.array([0.0, L["size"][1] / 2, 0.0]), R3 @ tip_rot(), (ts, ts, ts), L))
     return out
 
 
@@ -637,6 +679,36 @@ class ConeField:
                 yaw = math.atan2(z, x) if G.get("lean") == "radial" else rng.uniform(0, 2 * math.pi)
                 t_s = wave_t(F["wave"], u) + rng.uniform(*G["delay"])
                 self.slabs.append(make_slab(rng, G, scale, x, z, yaw, 1, t_s))
+
+
+class ZoneField:
+    """Cristales y losas que brotan en una zona circular (lo mismo que runZoneField en el módulo). Cada grupo reparte
+    `count` piezas entre r = (r0, r1) (fracción del radio; ring = parejas alrededor del anillo); brotan cuando la
+    onda que sale del centro llega a su radio (t + sweep·r) y se inclinan hacia afuera (lean = "radial"). Con end_at
+    = (t0, t1) todas terminan a la vez: las de hielo (end = "shatter") revientan. Los tamaños siguen al radio."""
+
+    def __init__(self, F, zone, scale, radius0):
+        rng = random.Random(F.get("seed", 9))
+        R = zone["R"]
+        k = self.k = R / radius0
+        self.slabs = []
+        for G in F["groups"]:
+            G = dict({"hold": (1.0, 1.0), "sink": 0.4}, **G)
+            n = G["count"]
+            for i in range(n):
+                if G.get("ring"):
+                    ang = 2 * math.pi * (i + rng.uniform(-0.35, 0.35)) / n
+                    r = rng.uniform(*G["r"])
+                else:
+                    ang = rng.uniform(0, 2 * math.pi)
+                    r = math.sqrt(rng.uniform(G["r"][0] ** 2, G["r"][1] ** 2))
+                x, z = math.cos(ang) * r * R, math.sin(ang) * r * R
+                yaw = ang if G.get("lean") == "radial" else rng.uniform(0, 2 * math.pi)
+                t_s = G["t"] + G.get("sweep", 0.0) * r + rng.uniform(*G["delay"])
+                SL = make_slab(rng, G, k, x, z, yaw, 1, t_s)
+                if G.get("end_at"):
+                    SL["hold"] = max(0.05, rng.uniform(*G["end_at"]) - t_s - SL["rise"])
+                self.slabs.append(SL)
 
 
 class BladeGeo:
@@ -1030,6 +1102,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         zone["s"] = scale
         zev, zst, cubes = zone_setup(spec, zone, o0, scale, rng, ground_y)
         events += zev
+        if spec.get("zfield"):
+            field = ZoneField(spec["zfield"], zone, scale, spec["zone"]["radius"])
     events.sort(key=lambda e: e[0])
     clears = sorted(((L["clear_at"], L) for L in spec["layers"] if L.get("clear_at") is not None), key=lambda c: c[0])
     fades = [L for L in spec["layers"] if L.get("fade_at")]
@@ -1073,7 +1147,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                     P[1] = ground_y + SLb["y0"]
                     for LL in SLb["L"].get("shatter", []):
                         for _ in range(LL["emit"][0][1]):
-                            parts.append(spawn(LL, P, rng, scale, Rf))
+                            parts.append(spawn(LL, P, rng, getattr(field, "k", scale), Rf))
         # la hoja que vuela suelta su estela (emisores pegados a ella, por tasa)
         if blade_geo is not None:
             for ei_, E in enumerate(spec["blade"].get("emitters", [])):
@@ -1195,6 +1269,18 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 if w > 0.02 and bfade < 0.999 and kg > 0:
                     dz = cam.to_cam((bA + bB) * 0.5)[2] - Bm.get("zoffset", 0.0) * scale
                     items.append((dz, 4, (Bm, bA, bB, w, bfade), None, None))
+        if draw and spec.get("zbeams") and zone is not None:     # la columna de una zona: cintas que caen
+            for zi, ZB in enumerate(spec["zbeams"]):
+                Bm = {"texture": ZB["texture"], "mode": "Wrap", "tex_len": ZB["tex_len"] * zone["H"] / scale,
+                      "speed": ZB["speed"], "w0": 1.0, "w1": 1.0, "color": ZB["color"],
+                      "transparency": ZB["transparency"], "brightness": ZB["brightness"],
+                      "light_emission": ZB["light_emission"]}
+                for top, bot, w, bfade in zone_beams_at(ZB, zi, t, zone, cam.C - o0):
+                    A_, B_ = o0 + top, o0 + bot
+                    bfade = near_fade(ZB, bfade, w, cam.C, A_)
+                    if bfade < 0.999:
+                        dz = cam.to_cam((A_ + B_) * 0.5)[2] - ZB.get("zoffset", 0.0) * scale
+                        items.append((dz, 4, (Bm, A_, B_, w, bfade), None, None))
         if draw and field is not None:           # los bloques de hielo y las losas que deja la ola triangular
             for P, R3, size3, SLb in slab_poses(field.slabs, t, o0, Rf, ground_y):
                 d = cam.to_cam(P)
@@ -1280,6 +1366,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 extra_draw(buf, t)
             if bloom:
                 buf = apply_bloom(buf, **bloom)
+            if spec.get("screen") and zone is not None:
+                buf = apply_screen(buf, spec["screen"], t, cam, o0, zone)
             img = Image.fromarray((np.clip(buf, 0, 1) * 255).astype(np.uint8))
             img.save(os.path.join(out_dir, f"{fi:04d}.png"))
             stats.append(len(parts))
@@ -1318,10 +1406,26 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0, occ=None):
     """occ = profundidad por píxel (a lo largo del rayo) de lo que tapa a las partículas (la figura del aura)."""
     L = p.L
     tl = min(p.age / p.life, 1.0)
-    # Roblox no dibuja partículas de más de 100 studs (el tamaño de la secuencia por la escala)
-    size = min(max(eval_seq(L["size"], tl, p.r_size) * p.ks, 0.0), 100.0) * p.gm
+    # Roblox no dibuja partículas de más de 100 studs (el tamaño de la secuencia por la escala); las capas bill
+    # (BillboardGuis: la luna del cielo, los destellos gigantes) y las decal (Parts con Decal) no tienen tope
+    cap = 1e9 if (L.get("bill") or L.get("decal")) else 100.0
+    size = min(max(eval_seq(L["size"], tl, p.r_size) * p.ks, 0.0), cap) * p.gm
     if size <= 0.01:
         return
+    if L.get("bill") and (L.get("slide") or L.get("zoffset")):
+        # BillboardGui.StudsOffset (en el marco de la cámara): slide = corrimiento en pantalla y zoffset = hacia la
+        # cámara de verdad (a diferencia del ZOffset de las partículas, se ve un poco más grande)
+        p0 = p.pos
+        p = copy.copy(p)
+        p.pos = p0 + cam.R[2] * -L.get("zoffset", 0.0) * p.ks
+        if L.get("slide"):
+            sl = L["slide"]
+            ts = [k[0] for k in sl]
+            p.pos = p.pos + cam.R[0] * np.interp(tl, ts, [k[1] for k in sl]) * p.ks + \
+                cam.R[1] * np.interp(tl, ts, [k[2] for k in sl]) * p.ks
+        d = cam.to_cam(p.pos)
+        if d[2] <= 0.5:
+            return
     tr = eval_seq(L.get("transparency", [(0, 0), (1, 0)]), tl, p.r_tr)
     if amul < 1.0:                     # la capa se está desvaneciendo (fade_at)
         tr = 1 - (1 - tr) * amul
@@ -1332,7 +1436,10 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0, occ=None):
     if fb:
         layout, mode, fps = fb[0], fb[1], fb[2]
         n = {"None": 1, "Grid2x2": 4, "Grid4x4": 16, "Grid8x8": 64}[layout]
-        if mode == "OneShot":
+        if L.get("flip_t"):           # bill: cuadro según la vida ([(t, cuadro)]), p. ej. la luna que se eclipsa
+            ft = L["flip_t"]
+            idx = min(max(int(round(np.interp(tl, [k[0] for k in ft], [k[1] for k in ft]))), 0), n - 1)
+        elif mode == "OneShot":
             idx = min(int(tl * n), n - 1)
         elif mode == "Loop":
             idx = (p.frame0 + int(p.age * fps)) % n
@@ -1342,6 +1449,8 @@ def draw_particle(buf, tb, cam, p, d, scale, ground_y, amul=1.0, occ=None):
         layout, idx = "None", 0
     light = L.get("light_emission", 0.0)
     bright = L.get("brightness", 1.0)
+    if L.get("bill"):
+        light = 0.0               # una ImageLabel no tiene LightEmission: mezcla alfa (Brightness sí la hace brillar)
     ori = L.get("orientation", "FacingCamera")
     z = d[2]
     f = cam.f
@@ -1576,6 +1685,54 @@ def zone_setup(spec, zone, o0, scale, rng, ground_y):
     return events, zst, cubes
 
 
+def zone_beams_at(ZB, zi, t, zone, cam_rel):
+    """Las cintas (Beams FaceCamera) de la columna de una zona en el segundo t: (arriba, abajo, ancho, desvanecido)
+    respecto al centro de la zona en el suelo. Bajan de la luna en ZB["drop"] = (t0, duración); count cintas en un
+    anillo de r × radio que gira spin grados/s (count 1 y r 0 = una sola en el eje). rim: dos cintas finas en el
+    contorno de la columna visto desde la cámara (cam_rel = la cámara respecto al centro): el delineado."""
+    t0, dur = ZB["drop"]
+    if t < t0:
+        return []
+    wk = eval_seq(ZB["width_t"], t)
+    fade = eval_seq(ZB["alpha_t"], t)
+    if wk <= 1e-3 or fade >= 0.999:
+        return []
+    H, R = zone["H"], zone["R"]
+    top = ZB["h"][1] * H
+    u = min((t - t0) / max(dur, 1e-3), 1.0)
+    bot = top + (ZB["h"][0] * H - top) * (1 - (1 - u) ** 2)
+    rr = ZB.get("r", 0.0) * R * (eval_seq(ZB["r_t"], t) if ZB.get("r_t") else 1.0)
+    pts = []
+    if ZB.get("rim"):
+        d = math.hypot(cam_rel[0], cam_rel[2])
+        if d <= rr * 1.02:
+            return []                     # la cámara está dentro: no hay contorno
+        ux, uz = cam_rel[0] / d, cam_rel[2] / d
+        c = rr / d
+        sn = math.sqrt(max(1 - c * c, 0.0))
+        pts = [(rr * (c * ux - sn * uz), rr * (c * uz + sn * ux)), (rr * (c * ux + sn * uz), rr * (c * uz - sn * ux))]
+    else:
+        n = ZB.get("count", 1)
+        for i in range(n):
+            ang = 2 * math.pi * (ZB.get("a0", 0.0) + i / n) + math.radians(ZB.get("spin", 0.0)) * (t - t0)
+            pts.append((math.cos(ang) * rr, math.sin(ang) * rr))
+    out = []
+    for i, (x, z) in enumerate(pts):
+        w = ZB["width"] * R * wk * (1 + ZB.get("wobble", 0.0) * smooth_noise(zi * 7.1 + i * 3.3, t * 2.3))
+        out.append((np.array([x, top, z]), np.array([x, bot, z]), w, fade))
+    return out
+
+
+def near_fade(ZB, fade, w, camC, top):
+    """Con la cámara dentro de la columna, las cintas cercanas se aclaran (hasta ZB["near"]) para no tapar la vista."""
+    k = ZB.get("near", 0.0)
+    if k <= 0:
+        return fade
+    d = math.hypot(camC[0] - top[0], camC[2] - top[2])
+    close = 1 - min(max((d - 0.5 * w) / max(w, 1e-3), 0.0), 1.0)
+    return 1 - (1 - fade) * (1 - k * close)
+
+
 def zone_stream_step(z, t, dt, rng, zone, o0):
     L = z["L"]
     rate = 0.0
@@ -1625,6 +1782,18 @@ def flat_rot(rot):
 def orthonormal(m):
     u, _, vt = np.linalg.svd(m)
     return u @ vt
+
+
+def zone_light_points(Lt, zone, s):
+    """Dónde va cada PointLight de una luz de zona (respecto al centro): una en el eje a la altura h o, con
+    ring = (cuántas, fracción del radio), un anillo de luces (el alcance de una PointLight no pasa de 60 studs)."""
+    y = Lt["h"] * (zone["H"] if Lt.get("hu") == "H" else s)
+    ring = Lt.get("ring")
+    if not ring:
+        return [np.array([0.0, y, 0.0])]
+    n, rf = ring
+    return [np.array([math.cos(2 * math.pi * i / n) * rf * zone["R"], y, math.sin(2 * math.pi * i / n) * rf * zone["R"]])
+            for i in range(n)]
 
 
 def light_at(Lt, t):
@@ -1857,14 +2026,15 @@ class CubeSim:
                 inten = light_at(Lt, t)
                 if inten <= 0:
                     continue
-                lp = self.o0 + np.array([0, Lt["h"] * (self.zone["H"] if Lt.get("hu") == "H" else self.s), 0])
-                dv = lp - c.pos
-                d = np.linalg.norm(dv)
-                rng_ = Lt["range"] * self.s
-                if d >= rng_:
-                    continue
-                fall = (1 - d / rng_) ** 2
-                col = col + c.col * (np.array(Lt["color"], float) / 255) * inten * 0.16 * max(0.0, float(n @ dv) / d) * fall
+                for lo in zone_light_points(Lt, self.zone, self.s):
+                    dv = self.o0 + lo - c.pos
+                    d = np.linalg.norm(dv)
+                    rng_ = min(Lt["range"] * self.s, 60.0)
+                    if d >= rng_:
+                        continue
+                    fall = (1 - d / rng_) ** 2
+                    col = col + c.col * (np.array(Lt["color"], float) / 255) * inten * 0.16 * \
+                        max(0.0, float(n @ dv) / d) * fall
             if neon_u > 0:
                 col = col * (1 - neon_u) + c.ncol * 1.3 * neon_u
             m = Image.new("L", (pw * ss, ph * ss), 0)

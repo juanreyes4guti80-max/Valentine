@@ -165,7 +165,8 @@ M.task = {
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
 	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0,
-	lensMax = 0, beamMaxW = 0, beamsOff = 0, maxPSize = 0, flashMin = 1, cataRocks = 0, slabs = 0, gash = 0 }
+	lensMax = 0, beamMaxW = 0, beamsOff = 0, maxPSize = 0, flashMin = 1, cataRocks = 0, slabs = 0, gash = 0,
+	bills = 0, billMax = 0, tips = 0 }
 M.orbPath = {}
 M.byClass = {}
 local live = {}
@@ -201,6 +202,7 @@ function Inst.new(class)
 	M.stats.created += 1
 	M.byClass[class] = o
 	if class == "Decal" then M.stats.decals += 1 end
+	if class == "BillboardGui" then M.stats.bills += 1 end
 	setmetatable(o, {
 		__index = function(self, k)
 			if k == "Emit" then return function(_, n)
@@ -257,6 +259,9 @@ function Inst.new(class)
 			end
 			if k == "Name" and v == "Rock" then M.stats.rocks += 1 end
 			if k == "Name" and v == "Slab" then M.stats.slabs += 1 end
+			if k == "Name" and v == "SlabTip" then M.stats.tips += 1 end
+			-- la luna y los destellos gigantes (BillboardGui): su tamaño en studs
+			if class == "BillboardGui" and k == "Size" then M.stats.billMax = math.max(M.stats.billMax, v[1]) end
 			if k == "Name" and v == "GashSeam" then M.stats.gash += 1 end
 			if k == "Name" and v == "Cube" then M.stats.cubes += 1 end
 			if props.Name == "Cube" and k == "Color" and v.G > v.R and v.G > v.B then M.stats.cubeGreen += 1 end

@@ -501,8 +501,24 @@ assert(R.stats.maxRate > 10, "IceWave: el frente no soltó su humo")
 assert(R.liveNamed("Slab") == 0, "IceWave: quedaron bloques en el suelo")
 print(("%-17s   ola: bloques y losas=%d rocas=%d raycasts=%d"):format("", R.stats.slabs, R.stats.rocks, R.stats.raycasts))
 run("LunarHowl", function() return MOON.LunarHowl(R.CFrame.new(0, 14, 0), 1, 1) end, 5)
-run("Eclipse", function() return MOON.Eclipse(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 6)
-assert(R.stats.cubes > 40, "Eclipse: casi no hubo pedazos")
+run("Eclipse", function() return MOON.Eclipse(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 8.5)
+assert(R.stats.cubes > 200, "Eclipse: casi no hubo pedazos")
+assert(R.stats.bills >= 8, "Eclipse: no salieron la luna ni los destellos gigantes (BillboardGui)")
+assert(R.stats.billMax > 250, "Eclipse: la luna no es gigante")
+assert(R.stats.beamMaxW > 150, "Eclipse: no se armó la columna de luz (Beams)")
+assert(R.stats.slabs >= 120, "Eclipse: casi no brotaron cristales ni losas")
+assert(R.stats.tips >= 60, "Eclipse: los cristales no tienen punta")
+for _, nm in { "Slab", "SlabTip", "Moon", "Curtain", "Light" } do
+	assert(R.liveNamed(nm) == 0, "Eclipse: quedaron piezas " .. nm)
+end
+print(("%-17s   eclipse: luna y destellos=%d (máx %.0f studs) columna máx %.0f studs | cristales y losas=%d puntas=%d cubos=%d"):format(
+	"", R.stats.bills, R.stats.billMax, R.stats.beamMaxW, R.stats.slabs, R.stats.tips, R.stats.cubes))
+print(("%-17s   tiempos: %s"):format("", (function()
+	local o = {}
+	for k, v in MOON.EclipseTimes do table.insert(o, k .. "=" .. v) end
+	table.sort(o)
+	return table.concat(o, " ")
+end)()))
 runAura("MoonGuard", MOON, "MoonGuard")
 runAura("LunarAura", MOON, "LunarAura")
 print("RUNTIME OK")

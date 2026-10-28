@@ -17,7 +17,7 @@ import math
 import random
 
 import vfx_aura as AU
-from vfx_omnivora import scatter, center
+from vfx_omnivora import scatter, center, ring
 
 STATIC2x2 = ("Grid2x2", "Random", 0, True)
 ONESHOT = ("Grid4x4", "OneShot", 30, False)
@@ -953,121 +953,299 @@ LUNAR_HOWL = {
 }
 
 # ----------------------------------------------------------------------------- SKILL 4: Eclipse
-ER, EH = 26.0, 150.0       # radio de la zona y altura de la luna (escala 1)
-TE_C, TE_E = 1.0, 2.6      # la luna queda eclipsada y cae la columna / fin de la columna
+# Una luna gigante aparece sobre la zona y se eclipsa: en el suelo se dibuja el círculo lunar, la escarcha agrieta
+# la zona y el hielo y los pedazos de suelo flotan hacia la luna. Al quedar tapada (TE_C) cae una columna de luz de
+# luna de todo el ancho de la zona (TE_I): congela el suelo, brota una corona de picos de hielo en el borde y un
+# campo de cristales, y vuela la tierra. La columna colapsa hacia el centro (TE_E) y todo el hielo revienta en una
+# detonación (TE_D). La luna y el círculo usan BillboardGui y Decals (sin el tope de 100 studs de las partículas);
+# la columna son Beams.
+ER, EH = 120.0, 340.0      # radio de la zona y altura de la luna (escala 1)
+MD = 2.6 * ER              # tamaño de la luna (el disco se ve de ~0.8 MD)
+TE_C = 1.3                 # la luna queda eclipsada y cae la columna
+TE_I = TE_C + 0.12         # la columna toca el suelo
+TE_E = 3.3                 # la columna colapsa hacia el centro
+TE_D = TE_E + 0.25         # detonación de hielo
+SKY = dict(bill=True, rel="r", hu="H")
+BIG = dict(bill=True, rel="r")
+SIGIL_D = 2 * ER / 0.958   # mf_eclipse_sigil: el anillo de afuera queda en el radio
+FROSTY = [(0, (150, 205, 255)), (0.3, (215, 236, 255)), (1, (120, 175, 250))]
 
 
-def EW(rate, rin=0.08, rout=0.15):
-    return [(TE_C, TE_C + rin, rate * 0.4, rate), (TE_C + rin, TE_E - rout, rate, rate), (TE_E - rout, TE_E, rate, 0.0)]
+def EW(rate, t0=TE_I, t1=TE_E, rin=0.1, rout=0.15):
+    return [(t0 - 0.05, t0 + rin, rate * 0.4, rate), (t0 + rin, t1 - rout, rate, rate), (t1 - rout, t1, rate, 0.0)]
+
+
+def pulses(t0, t1, every):
+    out, t = [], t0
+    while t < t1 - 1e-6:
+        out += center(round(t, 3), 0.25)
+        t += every
+    return out
 
 
 def eclipse_layers(g):
-    D = 3.39 * ER
+    D = 3.39 * ER                          # kk_circle_02: el anillo queda en el radio
+    ML = TE_D + 1.2                        # vida de la luna
+
+    def fr(t):                             # segundo t -> fracción de la vida de la luna
+        return round(t / ML, 4)
     L = [
-        # ---------------- carga: la zona y la luna que se eclipsa ----------------
-        dict(name="ZoneRing", texture="kk_circle_02", rel="r", lifetime=(TE_C + 0.2, TE_C + 0.2),
-             size=[(0, 1.2 * D), (0.15, D), (1, D)], transparency=[(0, 1), (0.1, 0.15), (0.85, 0.1), (1, 1)],
-             color=ICE, light_emission=0.8, ring_emit=center(0.0, 0.14), **DECAL),
-        dict(name="ZoneCracks", texture="mf_frost_cracks", rel="r", lifetime=(3.4, 3.4), rotation=(0, 360),
-             size=[(0, 0.4 * ER), (0.12, 2.2 * ER), (1, 2.3 * ER)],
-             transparency=[(0, 1), (0.08, 0.3), (0.26, 0.15), (0.3, 0.02), (0.5, 0.2), (0.85, 0.35), (1, 1)],
-             color=FROST, light_emission=0.85, ring_emit=center(0.1, 0.16), **DECAL),
-        dict(name="ZoneShade", texture="fx_glow", rel="r", lifetime=(3.6, 3.6),
-             size=[(0, 10), (0.15, 2.3 * ER), (1, 2.4 * ER)], transparency=[(0, 1), (0.12, 0.45), (0.8, 0.45), (1, 1)],
+        # ================= el cielo: la luna gigante que se eclipsa, la corona y el anillo de diamante =================
+        # (la luna va delante de la columna: zoffset alto; lo que está detrás de ella solo se ve por fuera del disco)
+        dict(name="MoonHalo", texture="fx_glow", lifetime=(ML, ML),
+             size=[(0, 0.5 * MD), (0.06, 1.9 * MD), (1, 2.0 * MD)],
+             transparency=[(0, 1), (0.05, 0.45), (fr(TE_C - 0.3), 0.5), (fr(TE_C), 0.75), (fr(TE_D), 0.75),
+                           (fr(TE_D + 0.1), 0.35), (0.85, 0.5), (1, 1)],
+             color=CRYST, brightness=1.2, zoffset=50, ring_emit=center(0.0, 1.0), **SKY),
+        dict(name="CoronaRays", texture="fx_halo", lifetime=(TE_D - TE_C + 0.6, TE_D - TE_C + 0.6),
+             rotation=(0, 360), rot_speed=(7, 10),
+             size=[(0, 0.95 * MD), (0.05, 1.32 * MD), (1, 1.42 * MD)],
+             transparency=[(0, 1), (0.05, 0.4), (0.8, 0.5), (1, 1)], color=SILVER, brightness=1.3, zoffset=55,
+             ring_emit=center(TE_C - 0.08, 1.0), **SKY),
+        # la luna: mf_moon_eclipse_4x4 (cuadro 0 llena ... 15 tapada); vuelve a llena con la detonación
+        dict(name="Moon", texture="mf_moon_eclipse_4x4", flipbook=("Grid4x4", "OneShot", 0, False),
+             flip_t=[(0, 0), (fr(TE_C - 1.0), 0), (fr(TE_C), 15), (fr(TE_D - 0.01), 15), (fr(TE_D), 0), (1, 0)],
+             lifetime=(ML, ML), size=[(0, 0.35 * MD), (0.05, 1.05 * MD), (0.09, MD), (1, MD)],
+             transparency=[(0, 1), (0.04, 0.0), (0.88, 0.0), (1, 1)], color=MOONC, brightness=1.7, zoffset=60,
+             ring_emit=center(0.0, 1.0), **SKY),
+        dict(name="Corona", texture="kk_circle_02", lifetime=(TE_D - TE_C, TE_D - TE_C),
+             size=[(0, 1.9 * MD), (0.04, 1.5 * MD), (1, 1.55 * MD)], transparency=[(0, 0.0), (0.9, 0.1), (1, 1)],
+             color=SILVER, brightness=2.6, zoffset=62, ring_emit=center(TE_C, 1.0), **SKY),
+        # el anillo de diamante: el último rayo de luna por el borde, justo antes de quedar tapada
+        dict(name="DiamondGlow", texture="fx_glow", lifetime=(0.45, 0.45),
+             size=[(0, 0.1 * MD), (0.2, 0.5 * MD), (1, 0.3 * MD)], transparency=[(0, 0.2), (0.6, 0.4), (1, 1)],
+             slide=[(0, 0.29 * MD, 0.27 * MD), (1, 0.29 * MD, 0.27 * MD)], color=ICE, brightness=2.4, zoffset=64,
+             ring_emit=center(TE_C - 0.06, 1.0), **SKY),
+        dict(name="DiamondStar", texture="kk_star_09", lifetime=(0.45, 0.45), rotation=(10, 20),
+             size=[(0, 0.05 * MD), (0.18, 1.1 * MD), (1, 0.15 * MD)], transparency=[(0, 0.0), (1, 0.4)],
+             slide=[(0, 0.29 * MD, 0.27 * MD), (1, 0.29 * MD, 0.27 * MD)], color=GLINT, brightness=3.0,
+             zoffset=65, ring_emit=center(TE_C - 0.06, 1.0), **SKY),
+        # la luz vuelve de golpe con la detonación
+        dict(name="MoonReturn", texture="fx_glow", lifetime=(0.6, 0.6),
+             size=[(0, 0.9 * MD), (0.2, 1.7 * MD), (1, 1.9 * MD)], transparency=[(0, 0.1), (0.4, 0.5), (1, 1)],
+             color=ICE, brightness=2.4, zoffset=63, ring_emit=center(TE_D, 1.0), **SKY),
+        # la cabeza de la columna que baja de la luna al suelo en 0.12 s
+        dict(name="DropHead", texture="fx_glow", direction="Bottom", speed_h=(8.2, 8.2), lifetime=(0.12, 0.12),
+             size=[(0, 1.0 * ER), (1, 1.5 * ER)], transparency=[(0, 0.1), (1, 0.25)], color=ICE, brightness=2.0,
+             ring_emit=center(TE_C, 1.0), **SKY),
+
+        # ================= el suelo: círculo lunar, sombra, grietas y escarcha =================
+        dict(name="ZoneShade", texture="fx_glow", rel="r", lifetime=(TE_D + 1.3, TE_D + 1.3),
+             size=[(0, 0.4 * ER), (0.1, 2.5 * ER), (1, 2.6 * ER)], transparency=[(0, 1), (0.08, 0.4), (0.85, 0.45),
+                                                                                 (1, 1)],
              color=NIGHT, ring_emit=center(0.05, 0.1), **DECAL),
-        dict(name="Moon", texture="mf_moon", rel="r", hu="H", lifetime=(TE_E + 0.6, TE_E + 0.6),
-             size=[(0, 1.0 * ER), (0.12, 2.6 * ER), (1, 2.7 * ER)],
-             transparency=[(0, 1), (0.08, 0.0), (0.92, 0.1), (1, 1)], color=MOONC, light_emission=0.35,
-             brightness=1.3, zoffset=-8, ring_emit=center(0.0, 1.0)),
-        dict(name="MoonHalo", texture="fx_glow", rel="r", hu="H", lifetime=(TE_E + 0.6, TE_E + 0.6),
-             size=[(0, 2 * ER), (0.12, 5.0 * ER), (1, 5.2 * ER)], transparency=[(0, 1), (0.1, 0.45), (0.9, 0.5), (1, 1)],
-             color=CRYST, light_emission=1.0, brightness=0.9, zoffset=-9, ring_emit=center(0.0, 1.0)),
-        # la sombra que cubre la luna (empieza a un lado y se corre hasta taparla a los TE_C s)
-        dict(name="Shadow", texture="fx_glow", rel="r", hu="H", lifetime=(0.75, 0.75),
-             size=[(0, 0.8 * ER), (1, 2.5 * ER)], transparency=[(0, 1), (0.4, 0.4), (1, 0)], color=SHADOW, zoffset=-7,
-             ring_emit=center(TE_C - 0.75, 1.0)),
-        dict(name="ShadowHold", texture="fx_glow", rel="r", hu="H", lifetime=(TE_E - TE_C + 0.1, TE_E - TE_C + 0.1),
-             size=[(0, 2.5 * ER), (1, 2.5 * ER)], transparency=[(0, 0), (0.85, 0), (1, 1)], color=SHADOW, zoffset=-7,
-             ring_emit=center(TE_C, 1.0)),
-        dict(name="Corona", texture="kk_circle_02", rel="r", hu="H", lifetime=(TE_E - TE_C + 0.1, TE_E - TE_C + 0.1),
-             size=[(0, 2.2 * D * 0.42), (0.05, 2.0 * D * 0.42), (1, 2.05 * D * 0.42)],
-             transparency=[(0, 0.0), (0.85, 0.1), (1, 1)], color=SILVER, light_emission=1.0, brightness=1.6,
-             zoffset=-6, ring_emit=center(TE_C, 1.0)),
-        dict(name="CoronaFlare", texture="kk_star_09", rel="r", hu="H", lifetime=(0.35, 0.35),
-             size=[(0, 1 * ER), (0.2, 5 * ER), (1, 2 * ER)], color=GLINT, light_emission=1.0, brightness=1.5,
-             rotation=(0, 90), zoffset=-5, ring_emit=center(TE_C, 1.0)),
-        # lo que sube de la zona mientras carga (destellos y escarcha)
-        dict(name="ChargeRise", texture="kk_star_06", rel="r", direction="Top", speed=(12, 22), lifetime=(0.7, 1.0),
-             size=twinkle(1.3), color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45),
-             ring_emit=scatter(g, 60, (0.05, TE_C), (0.1, 1.0), 0.5)),
-        dict(name="ChargeMist", texture="kk_smoke_04", rel="r", direction="Top", speed=(2, 5), drag=1,
-             lifetime=(0.8, 1.1), size=[(0, 4), (1, 12)], transparency=[(0, 1), (0.3, 0.6), (0.8, 0.7), (1, 1)],
-             color=MIST, rotation=(0, 360), rot_speed=(-30, 30), ring_emit=scatter(g, 18, (0.1, 0.8), (0.2, 1.0), 1.0)),
-        dict(name="GuideLine", texture="fx_laser_thin", rel="h", hu="H", orientation=UP, lifetime=(0.2, 0.2),
-             size=[(0, 0.21 * EH), (1, 0.21 * EH)], transparency=[(0, 1), (0.3, 0.1), (1, 0.5)], color=SILVER,
-             light_emission=1.0, brightness=1.7,
-             ring_emit=[(round(TE_C - 0.12 + 0.06 * (i + 0.5) / 6, 3), 1, 0.0, 0.0, round((i + 0.5) / 6, 3))
-                        for i in range(6)]),
-        # ---------------- cae la columna de luz de luna ----------------
-        dict(name="DropHead", texture="fx_glow", rel="r", hu="H", direction="Bottom", speed_h=(6.0, 6.0),
-             lifetime=(0.16, 0.16), size=[(0, 1.2 * ER), (1, 1.5 * ER)], transparency=[(0, 0.2), (1, 0.4)],
-             color=ICE, light_emission=1.0, brightness=1.3, ring_emit=center(TE_C, 1.0)),
-        dict(name="ImpactFlash", texture="fx_glow", rel="r", lifetime=(0.22, 0.22),
-             size=[(0, 8), (0.25, 1.8 * ER), (1, 2.0 * ER)], transparency=[(0, 0.3), (0.4, 0.55), (1, 1)], color=ICE,
-             light_emission=1.0, brightness=1.15, zoffset=3, ring_emit=center(TE_C + 0.15, 4.0)),
-        dict(name="ImpactStar", texture="kk_star_09", rel="r", lifetime=(0.3, 0.3),
-             size=[(0, 20), (0.15, 3.0 * ER), (1, 12)], color=GLINT, light_emission=1.0, brightness=1.2,
-             rotation=(0, 90), zoffset=4, ring_emit=center(TE_C + 0.15, 8.0)),
-        dict(name="ShockRing", texture="kk_circle_02", rel="r", lifetime=(0.5, 0.5),
-             size=[(0, D), (1, D * 3.6)], transparency=[(0, 0.2), (0.5, 0.5), (1, 1)], color=ICE,
-             light_emission=0.6, ring_emit=center(TE_C + 0.15, 0.2), **DECAL),
-        dict(name="ShockRingSharp", texture="kk_circle_02", rel="r", lifetime=(0.32, 0.32),
-             size=[(0, D), (1, D * 4.8)], transparency=[(0, 0.1), (0.6, 0.45), (1, 1)], color=SILVER,
-             light_emission=0.7, ring_emit=center(TE_C + 0.15, 0.21), **DECAL),
-        dict(name="ColumnBeam", texture="fx_beam", rel="h", hu="H", orientation=UP, lifetime=(TE_E - TE_C, TE_E - TE_C),
-             size=[(0, 0.28 * EH), (1, 0.28 * EH)], transparency=[(0, 0.5), (0.1, 0.4), (0.85, 0.45), (1, 1)],
-             color=ICE, light_emission=1.0, brightness=1.1,
-             ring_emit=[(round(TE_C + 0.15 * (1 - h), 3), 1, 0.0, 0.0, h) for h in (0.92, 0.78, 0.64, 0.5, 0.36,
-                                                                                 0.22, 0.08)]),
-        # el cuerpo: luz de luna que CAE (al revés que el pilar de Omnívora), luminosa y transparente
-        dict(name="ColumnBody", texture="mf_moonlight_2x2", flipbook=STATIC2x2, rel="r", hu="H", orientation=UP,
-             direction="Bottom", speed_h=(0.18, 0.24), lifetime=(0.6, 0.8),
-             size=[(0, 2.0 * ER), (0.3, 2.3 * ER), (1, 2.35 * ER)],
-             transparency=[(0, 1), (0.2, 0.4), (0.75, 0.45), (1, 1)], color=ICE, light_emission=0.55,
-             brightness=0.85, zoffset=-4, zstream=EW(26), zdist={"r": (0.0, 0.25), "h": (0.05, 1.0)}),
-        dict(name="ColumnEdge", texture="mf_moonlight_2x2", flipbook=STATIC2x2, rel="r", hu="H", orientation=UP,
-             direction="Bottom", speed_h=(0.3, 0.4), lifetime=(0.5, 0.7), size=[(0, 1.0 * ER), (1, 1.3 * ER)],
-             transparency=[(0, 1), (0.2, 0.5), (0.75, 0.55), (1, 1)], color=CRYST, light_emission=1.0, brightness=1.0,
-             zoffset=-3, zstream=EW(30), zdist={"r": (0.7, 1.0), "h": (0.05, 1.0)}),
+        dict(name="Sigil", texture="mf_eclipse_sigil", rel="r", lifetime=(TE_D + 0.05, TE_D + 0.05),
+             rotation=(0, 360), rot_speed=(6, 6),
+             size=[(0, 1.25 * SIGIL_D), (0.06, SIGIL_D), (1, SIGIL_D)],
+             transparency=[(0, 1), (0.05, 0.15), (0.3, 0.05), (0.97, 0.05), (1, 1)], color=FROSTY,
+             light_emission=1.0, ring_emit=center(0.05, 0.16), **DECAL),
+        dict(name="SigilFlash", texture="mf_eclipse_sigil", rel="r", lifetime=(0.5, 0.5), rotation=(0, 360),
+             size=[(0, SIGIL_D), (1, 1.06 * SIGIL_D)], transparency=[(0, 0.0), (1, 1)], color=WHITE,
+             light_emission=1.0, ring_emit=center(TE_I, 0.2), **DECAL),
+        dict(name="ZoneCracks", texture="mf_frost_cracks", rel="r", lifetime=(TE_D + 1.0, TE_D + 1.0),
+             rotation=(0, 360), size=[(0, 0.2 * ER), (0.08, 1.1 * ER), (1, 1.15 * ER)],
+             transparency=[(0, 1), (0.05, 0.3), (0.85, 0.35), (1, 1)], color=FROST, light_emission=0.85,
+             ring_emit=center(0.15, 0.18), **DECAL),
+        dict(name="ZoneCracksOut", texture="mf_frost_cracks", rel="r", lifetime=(TE_D + 0.6, TE_D + 0.6),
+             rotation=(0, 360), size=[(0, 0.15 * ER), (0.08, 0.75 * ER), (1, 0.8 * ER)],
+             transparency=[(0, 1), (0.05, 0.35), (0.85, 0.4), (1, 1)], color=FROST, light_emission=0.85,
+             ring_emit=[(round(0.25 + 0.5 * (e[3] - 0.4) / 0.55, 3), 1, e[2], e[3], 0.19)
+                        for e in scatter(g, 14, 0.0, (0.4, 0.95), 0.19)], **DECAL),
+        # al caer la columna el suelo se congela (de adentro hacia afuera)
+        dict(name="FrostSheet", texture="mf_frost_patch", rel="r", lifetime=(TE_D + 1.4 - TE_I, TE_D + 1.4 - TE_I),
+             rotation=(0, 360), size=[(0, 0.3 * ER), (0.06, 0.8 * ER), (1, 0.85 * ER)],
+             transparency=[(0, 1), (0.05, 0.25), (0.85, 0.3), (1, 1)], color=FROSTY, light_emission=0.5,
+             ring_emit=center(TE_I, 0.2) + [(round(TE_I + 0.25 * e[3], 3), 1, e[2], e[3], 0.2)
+                                             for e in scatter(g, 16, 0.0, (0.3, 0.95), 0.2)], **DECAL),
+        dict(name="GroundGlow", texture="fx_glow", rel="r", lifetime=(0.55, 0.65),
+             size=[(0, 2.0 * ER), (1, 2.3 * ER)], transparency=[(0, 1), (0.3, 0.45), (0.7, 0.55), (1, 1)], color=ICE,
+             light_emission=1.0, ring_emit=pulses(TE_I, TE_E, 0.45), **DECAL),
+        dict(name="PulseRing", texture="kk_circle_02", rel="r", lifetime=(0.55, 0.55),
+             size=[(0, 0.25 * D), (1, 1.05 * D)], transparency=[(0, 0.4), (0.6, 0.55), (1, 1)], color=ICE,
+             light_emission=0.9, ring_emit=pulses(TE_I + 0.45, TE_E - 0.2, 0.45), **DECAL),
+        dict(name="ShockRing", texture="kk_circle_02", rel="r", lifetime=(0.6, 0.6),
+             size=[(0, D), (1, D * 2.4)], transparency=[(0, 0.15), (0.5, 0.45), (1, 1)], color=ICE,
+             light_emission=0.8, ring_emit=center(TE_I, 0.21), **DECAL),
+        dict(name="ShockRingSharp", texture="kk_circle_02", rel="r", lifetime=(0.42, 0.42),
+             size=[(0, D), (1, D * 3.0)], transparency=[(0, 0.05), (0.6, 0.4), (1, 1)], color=SILVER,
+             light_emission=0.9, ring_emit=center(TE_I, 0.22), **DECAL),
+        dict(name="DetRing", texture="kk_circle_02", rel="r", lifetime=(0.7, 0.7),
+             size=[(0, 0.3 * D), (1, D * 2.6)], transparency=[(0, 0.1), (0.5, 0.4), (1, 1)], color=ICE,
+             light_emission=0.9, ring_emit=center(TE_D, 0.23), **DECAL),
+        dict(name="DetRingSharp", texture="kk_circle_02", rel="r", lifetime=(0.5, 0.5),
+             size=[(0, 0.3 * D), (1, D * 3.4)], transparency=[(0, 0.0), (0.6, 0.4), (1, 1)], color=SILVER,
+             light_emission=1.0, ring_emit=center(TE_D, 0.24), **DECAL),
+
+        # ================= la carga: brillos, hielo que flota hacia la luna y niebla que entra =================
+        dict(name="ChargeRise", texture="kk_star_06", rel="r", direction="Top", speed=(14, 28), lifetime=(0.8, 1.2),
+             size=twinkle(1.7), color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45),
+             ring_emit=scatter(g, 170, (0.05, TE_C), (0.08, 1.0), (1.0, 5.0))),
+        dict(name="ChargeIce", texture="mf_shard_2x2", flipbook=STATIC2x2, rel="r", direction="Top", spread=(15, 15),
+             speed=(8, 16), drag=0.6, accel=(0, 6, 0), lifetime=(1.0, 1.4),
+             size=[(0, 0.5), (0.15, 2.2, 0.6), (0.85, 2.2, 0.6), (1, 0)], transparency=[(0, 0), (0.85, 0.1), (1, 1)],
+             color=SHARD, light_emission=0.5, brightness=1.4, rotation=(0, 360), rot_speed=(-120, 120),
+             ring_emit=scatter(g, 110, (0.1, TE_C - 0.15), (0.12, 1.0), (0.5, 2.0))),
+        dict(name="InflowMist", texture="fx_smoke_2x2", flipbook=STATIC2x2, rel="r", direction="Back",
+             spread=(14, 6), speed=(26, 46), drag=1.2, lifetime=(1.5, 2.0),
+             size=[(0, 18, 3), (1, 40, 5)], transparency=[(0, 1), (0.25, 0.55), (0.75, 0.68), (1, 1)],
+             color=ICE_FOG, light_emission=0.15, rotation=(0, 360), rot_speed=(-25, 25), zoffset=-3,
+             ring_emit=ring(0.1, 26, 1.06, 14.0) + ring(0.45, 26, 1.06, 14.0, a0=0.5 / 26) +
+             ring(0.8, 26, 1.06, 14.0)),
+
+        # ================= la columna (además de los Beams): lo que cae y lo que sube de la base =================
         dict(name="FallingStreaks", texture="kk_trace_01", rel="r", hu="H", orientation="VelocityParallel",
-             direction="Bottom", speed_h=(0.9, 1.4), lifetime=(0.25, 0.4), size=[(0, 6), (0.3, 24), (1, 14)],
-             color=ICE, light_emission=1.0, brightness=1.3, zstream=EW(70), zdist={"r": (0.1, 1.0), "h": (0.2, 1.0)}),
-        dict(name="FallingStars", texture="fx_spark002", rel="r", hu="H", direction="Bottom", speed_h=(0.25, 0.4),
-             lifetime=(0.8, 1.2), size=twinkle(1.0), color=GLINT, light_emission=1.0, brightness=1.9, rotation=(0, 45),
-             zstream=EW(60), zdist={"r": (0.0, 1.1), "h": (0.1, 1.0)}),
-        dict(name="GroundGlow", texture="fx_glow", rel="r", lifetime=(0.5, 0.6),
-             size=[(0, 2.2 * ER), (1, 2.4 * ER)], transparency=[(0, 1), (0.3, 0.55), (0.7, 0.6), (1, 1)], color=ICE,
-             light_emission=1.0, brightness=1.0,
-             ring_emit=[c for t in (1.2, 1.5, 1.8, 2.1) for c in center(t, 0.1)], **DECAL),
+             direction="Bottom", speed_h=(0.9, 1.4), lifetime=(0.25, 0.4), size=[(0, 14), (0.3, 55), (1, 30)],
+             color=ICE, light_emission=1.0, brightness=1.4, zstream=EW(200),
+             zdist={"r": (0.05, 1.0), "h": (0.2, 0.62), "area": True}),
+        dict(name="FallingStars", texture="fx_spark002", rel="r", hu="H", direction="Bottom", speed_h=(0.2, 0.32),
+             lifetime=(0.8, 1.2), size=twinkle(2.2), color=GLINT, light_emission=1.0, brightness=2.0,
+             rotation=(0, 45), zstream=EW(160), zdist={"r": (0.0, 1.05), "h": (0.1, 0.62), "area": True}),
+        dict(name="BaseMist", texture="fx_smoke_2x2", flipbook=STATIC2x2, rel="r", direction="Front", spread=(30, 10),
+             speed=(6, 16), drag=0.8, accel=(0, 2, 0), lifetime=(1.4, 2.0), size=[(0, 30, 4), (1, 55, 6)],
+             transparency=[(0, 1), (0.25, 0.6), (0.8, 0.74), (1, 1)], color=ICE_FOG, light_emission=0.2,
+             rotation=(0, 360), rot_speed=(-20, 20), zoffset=-5, zstream=EW(36),
+             zdist={"r": (0.55, 1.12), "h": (18.0, 26.0)}),
         dict(name="GroundSpikes", texture="mf_shard_2x2", flipbook=STATIC2x2, rel="r", orientation="VelocityParallel",
-             direction="Top", spread=(20, 20), speed=(16, 26), drag=12, lifetime=(1.2, 1.4),
-             size=[(0, 0.5), (0.12, 7, 2), (0.85, 7.4, 2), (1, 0)], transparency=[(0, 0), (0.85, 0.1), (1, 1)],
+             direction="Top", spread=(18, 18), speed=(22, 34), drag=12, lifetime=(1.3, 1.6),
+             size=[(0, 0.5), (0.12, 11, 3), (0.85, 11.5, 3), (1, 0)], transparency=[(0, 0), (0.85, 0.1), (1, 1)],
              color=SHARD, light_emission=0.5, brightness=1.5,
-             ring_emit=scatter(g, 26, (TE_C + 0.15, TE_C + 0.35), (0.25, 1.05), 0.5)),
-        # ---------------- fin: la columna se apaga y queda un anillo de cristal roto ----------------
-        dict(name="EndFlash", texture="fx_glow", rel="r", lifetime=(0.25, 0.25), size=[(0, 10), (0.3, 1.6 * ER), (1, 1.8 * ER)],
-             transparency=[(0, 0.4), (1, 1)], color=ICE, light_emission=1.0, brightness=1.0,
-             ring_emit=center(TE_E, 4.0)),
-        dict(name="EndShards", texture="mf_shard_2x2", flipbook=STATIC2x2, rel="r", direction="Top", spread=(70, 70),
-             speed=(30, 70), drag=0.5, accel=(0, -110, 0), lifetime=(0.6, 0.9), size=[(0, 2.0, 0.6), (1, 1.3, 0.4)],
-             transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.4,
-             rotation=(0, 360), rot_speed=(-500, 500), ring_emit=scatter(g, 26, (TE_E, TE_E + 0.05), (0.3, 1.0), 1.0, n=2)),
-        dict(name="EndGlints", texture="kk_star_06", rel="r", direction="Top", speed=(4, 10), lifetime=(0.8, 1.3),
-             size=twinkle(1.4), color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45),
-             ring_emit=scatter(g, 40, (TE_E, TE_E + 0.4), (0.1, 1.1), (1.0, 10.0))),
+             ring_emit=[(round(TE_I + 0.25 * e[3] + 0.03 * g.random(), 3), 1, e[2], e[3], 0.5)
+                        for e in scatter(g, 90, 0.0, (0.15, 1.0), 0.5)]),
+
+        # ================= el golpe: destello, estrella, polvo que rueda hacia afuera, esquirlas =================
+        dict(name="ImpactFlash", texture="fx_glow", lifetime=(0.28, 0.28),
+             size=[(0, 30), (0.2, 2.4 * ER), (1, 2.6 * ER)], transparency=[(0, 0.25), (0.3, 0.6), (1, 1)], color=ICE,
+             brightness=2.0, zoffset=4, ring_emit=center(TE_I, 30.0), **BIG),
+        dict(name="ImpactStar", texture="kk_star_09", lifetime=(0.35, 0.35), rotation=(0, 90),
+             size=[(0, 40), (0.15, 3.2 * ER), (1, 40)], color=GLINT, brightness=2.5, zoffset=5,
+             ring_emit=center(TE_I, 30.0), **BIG),
+        dict(name="DustRing", texture="fx_smoke_2x2", flipbook=STATIC2x2, rel="r", direction="Front", spread=(10, 6),
+             speed=(60, 110), drag=2.2, accel=(0, 3, 0), lifetime=(1.4, 2.0), size=[(0, 20, 3), (1, 52, 6)],
+             transparency=[(0, 0.35), (0.3, 0.5), (1, 1)], color=ICE_FOG, light_emission=0.15, rotation=(0, 360),
+             rot_speed=(-30, 30), zoffset=-2, ring_emit=ring(TE_I + 0.06, 40, 0.98, 17.0)),
+        dict(name="DustRingHigh", texture="fx_smoke_2x2", flipbook=STATIC2x2, rel="r", direction="Front", pitch=35,
+             spread=(12, 10), speed=(50, 90), drag=2.0, accel=(0, 4, 0), lifetime=(1.2, 1.8),
+             size=[(0, 18, 3), (1, 44, 5)], transparency=[(0, 0.45), (0.3, 0.55), (1, 1)], color=ICE_FOG,
+             light_emission=0.2, rotation=(0, 360), rot_speed=(-30, 30), zoffset=-2,
+             ring_emit=ring(TE_I + 0.1, 28, 0.95, 26.0, a0=0.5 / 28)),
+        dict(name="EdgeShards", texture="mf_shard_2x2", flipbook=STATIC2x2, rel="r", direction="Front", pitch=45,
+             spread=(25, 20), speed=(60, 120), drag=0.4, accel=(0, -140, 0), lifetime=(0.9, 1.3),
+             size=[(0, 3.2, 0.8), (1, 2.2, 0.6)], transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD,
+             light_emission=0.45, brightness=1.4, rotation=(0, 360), rot_speed=(-500, 500),
+             ring_emit=ring(TE_I + 0.08, 60, 0.97, 3.0)),
+
+        # ================= la detonación: la columna colapsa y todo el hielo revienta =================
+        dict(name="CollapseGlow", texture="fx_glow", hu="H", lifetime=(0.3, 0.3), direction="Bottom",
+             speed_h=(2.2, 2.2), size=[(0, 0.8 * ER), (1, 0.4 * ER)], transparency=[(0, 0.2), (1, 0.4)], color=ICE,
+             brightness=2.2, ring_emit=center(TE_E - 0.02, 0.85), **BIG),
+        dict(name="DetFlash", texture="fx_glow", lifetime=(0.38, 0.38),
+             size=[(0, 40), (0.15, 2.5 * ER), (1, 2.7 * ER)], transparency=[(0, 0.25), (0.3, 0.6), (1, 1)],
+             color=ICE, brightness=2.4, zoffset=4, ring_emit=center(TE_D, 40.0), **BIG),
+        dict(name="DetStar", texture="kk_star_09", lifetime=(0.4, 0.4), rotation=(0, 90),
+             size=[(0, 60), (0.15, 3.8 * ER), (1, 60)], color=GLINT, brightness=2.8, zoffset=5,
+             ring_emit=center(TE_D, 40.0), **BIG),
+        dict(name="DetDome", texture="fx_smoke_2x2", flipbook=STATIC2x2, rel="r", direction="Front", pitch=30,
+             spread=(14, 12), speed=(70, 130), drag=2.0, accel=(0, 3, 0), lifetime=(1.3, 1.9),
+             size=[(0, 26, 4), (1, 70, 8)], transparency=[(0, 0.3), (0.3, 0.5), (1, 1)], color=ICE_FOG,
+             light_emission=0.25, rotation=(0, 360), rot_speed=(-30, 30), zoffset=-1,
+             ring_emit=ring(TE_D, 34, 0.35, 26.0) + ring(TE_D, 20, 0.12, 48.0, a0=0.025)),
+        dict(name="DetShards", texture="mf_shard_2x2", flipbook=STATIC2x2, rel="r", direction="Top", spread=(70, 70),
+             speed=(60, 140), drag=0.4, accel=(0, -150, 0), lifetime=(0.9, 1.4), size=[(0, 4.5, 1.2), (1, 3, 0.8)],
+             transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.5,
+             rotation=(0, 360), rot_speed=(-500, 500), ring_emit=scatter(g, 70, (TE_D, TE_D + 0.05), (0.0, 1.0),
+                                                                         (5.0, 25.0), n=2)),
+        dict(name="DetGlitter", texture="kk_star_06", rel="r", direction="Top", speed=(4, 14), drag=0.8,
+             accel=(0, -6, 0), lifetime=(1.4, 2.2), size=twinkle(1.8), color=GLINT, light_emission=1.0,
+             brightness=2.2, rotation=(0, 45), ring_emit=scatter(g, 170, (TE_D, TE_D + 0.5), (0.0, 1.1),
+                                                                 (8.0, 70.0))),
+        dict(name="AfterMist", texture="fx_smoke_2x2", flipbook=STATIC2x2, rel="r", direction="Top", spread=(60, 60),
+             speed=(2, 6), drag=1, lifetime=(1.8, 2.4), size=[(0, 22, 3), (1, 44, 5)],
+             transparency=[(0, 1), (0.3, 0.68), (0.8, 0.78), (1, 1)], color=ICE_FOG, light_emission=0.2,
+             rotation=(0, 360), rot_speed=(-15, 15), zoffset=-4,
+             ring_emit=scatter(g, 36, (TE_D + 0.1, TE_D + 0.6), (0.1, 1.0), (15.0, 20.0))),
     ]
     return L
 
+
+# las columnas de luz: Beams que miran a la cámara (sin tope de tamaño). drop = cuándo y en cuánto bajan de la luna;
+# width × radio; tex_len × altura; r_t encoge el anillo de cortinas al colapsar.
+W_T = [(TE_C, 0.35), (TE_I, 1.1), (TE_I + 0.12, 1.0), (TE_E - 0.05, 1.0), (TE_E + 0.18, 0.05), (TE_D - 0.02, 0.03),
+       (TE_D, 0.0)]
+A_T = [(TE_C, 0.4), (TE_I, 0.0), (TE_E, 0.0), (TE_E + 0.2, 0.2), (TE_D, 0.5)]
+R_T = [(TE_E - 0.05, 1.0), (TE_E + 0.18, 0.04)]
+DROP = dict(drop=(TE_C, TE_I - TE_C), h=(0.0, 0.985))
+TOPFADE = [(0, 1), (0.3, 1), (0.42, 0.42)]   # arriba no se ve (la tapa la luna): sale de debajo del disco
+ECLIPSE_ZBEAMS = [
+    # la línea guía que baja justo antes de la columna
+    dict(name="Guide", texture="mf_blade_line", count=1, width=0.016, tex_len=1.0, speed=0.0, color=WHITE,
+         transparency=[(0, 0.1), (1, 0.1)], brightness=2.4, light_emission=1.0, drop=(TE_C - 0.28, 0.14),
+         h=(0.0, 0.985), width_t=[(TE_C - 0.28, 1.0), (TE_C, 1.6), (TE_I, 0.0)],
+         alpha_t=[(TE_C - 0.28, 0.0), (TE_I - 0.03, 0.0), (TE_I, 1.0)]),
+    # cortinas de luz en un anillo: de lejos se suman en los bordes (la columna se ve redonda) y desde adentro rodean
+    dict(name="Curtain", texture="mf_moonbeam", count=14, r=0.74, spin=10, width=0.55, tex_len=0.35, speed=1.3,
+         color=[(0, (215, 232, 255)), (0.5, (165, 208, 255)), (1, (130, 185, 255))],
+         transparency=TOPFADE + [(0.92, 0.34), (1, 0.45)], brightness=1.0, light_emission=1.0,
+         width_t=W_T, alpha_t=A_T, r_t=R_T, near=0.85, wobble=0.05, **DROP),
+    dict(name="Body", texture="mf_moonbeam", count=1, width=1.6, tex_len=0.5, speed=0.9, a0=0.13,
+         color=[(0, (150, 195, 255)), (1, (90, 150, 250))], transparency=[(0, 1), (0.3, 1), (0.42, 0.6),
+                                                                           (1, 0.62)],
+         brightness=0.85, light_emission=1.0, width_t=W_T, alpha_t=A_T, near=0.75, wobble=0.03, **DROP),
+    dict(name="Heart", texture="mf_blade_glow", count=1, width=0.5, tex_len=1.0, speed=0.0,
+         color=[(0, (255, 255, 255)), (1, (215, 235, 255))], transparency=[(0, 1), (0.3, 1), (0.42, 0.25),
+                                                                            (1, 0.2)],
+         brightness=1.5,
+         light_emission=1.0, width_t=W_T, alpha_t=A_T, near=0.6, **DROP),
+    dict(name="Core", texture="mf_blade_line", count=1, width=0.08, tex_len=1.0, speed=0.0, color=WHITE,
+         transparency=[(0, 1), (0.3, 1), (0.42, 0.0), (1, 0.0)], brightness=2.4, light_emission=1.0,
+         width_t=[(TE_C, 0.6), (TE_I, 1.2), (TE_I + 0.1, 1.0), (TE_E, 1.0), (TE_E + 0.15, 1.5), (TE_D - 0.03, 1.8),
+                  (TE_D, 0.0)], alpha_t=[(TE_C, 0.2), (TE_I, 0.0)], **DROP),
+    # el contorno: dos líneas finas en los bordes de la columna vista desde la cámara
+    dict(name="Rim", texture="mf_blade_line", rim=True, r=1.0, width=0.022, tex_len=1.0, speed=0.0,
+         color=[(0, (235, 245, 255)), (1, (175, 215, 255))], transparency=[(0, 1), (0.3, 1), (0.42, 0.1),
+                                                                            (1, 0.15)],
+         brightness=2.2, light_emission=1.0, width_t=W_T, alpha_t=A_T, r_t=R_T, **DROP),
+]
+
+# los cristales de hielo (Parts de material Ice) y las losas del suelo: brotan con la onda que sale del centro
+CROWN_BREAK = [dict(name="CrownBreak", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0, 10)],
+                    shape={"type": "Box", "size": (7, 26, 7)}, direction="Top", spread=(85, 85), speed=(25, 60),
+                    drag=0.4, accel=(0, -120, 0), lifetime=(0.7, 1.1), size=[(0, 3.2, 0.8), (1, 2.2, 0.6)],
+                    transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.5,
+                    rotation=(0, 360), rot_speed=(-500, 500)),
+               dict(name="CrownBreakGlint", texture="kk_star_06", emit=[(0, 3)],
+                    shape={"type": "Box", "size": (8, 24, 8)}, direction="Top", spread=(80, 80), speed=(3, 9),
+                    drag=2, lifetime=(0.4, 0.7), size=twinkle(1.8), color=GLINT, light_emission=1.0, brightness=2.2,
+                    rotation=(0, 45)),
+               dict(name="CrownBreakMist", texture="fx_smoke_2x2", flipbook=STATIC2x2, emit=[(0, 1)],
+                    offset=(0, 10, 0), direction="Top", spread=(60, 60), speed=(4, 10), drag=1.5, accel=(0, 2, 0),
+                    lifetime=(0.9, 1.3), size=[(0, 12, 2), (1, 26, 3)], transparency=[(0, 0.5), (0.4, 0.62), (1, 1)],
+                    color=FROSTMIST, light_emission=0.2, rotation=(0, 360), zoffset=-1)]
+FIELD_BREAK = [dict(L, emit=[(0, max(1, L["emit"][0][1] // 2))],
+                    shape={"type": "Box", "size": tuple(v * 0.6 for v in L["shape"]["size"])} if L.get("shape") else None)
+               if L.get("shape") else dict(L) for L in CROWN_BREAK]
+ICE_PART = {"color": CRYSTAL_RGB, "material": "Ice", "transparency": 0.22}
+ECLIPSE_FIELD = {
+    "seed": 23,
+    "groups": [
+        # la corona: picos de hielo gigantes en el borde, inclinados hacia afuera
+        {"name": "IceCrown", "count": 40, "ring": True, "r": (0.96, 1.04), "lean": "radial",
+         "wid": (3.5, 6.0), "thick": (18.0, 34.0), "len": (3.5, 6.0), "tilt": (22, 42), "yaw": 25, "pitch": 8,
+         "show": 0.85, "rise": 0.16, "t": TE_I + 0.02, "sweep": 0.2, "delay": (0.0, 0.06),
+         "end_at": (TE_D, TE_D + 0.05), "big": {"frac": 0.2, "k": 1.35}, "end": "shatter", "shatter": CROWN_BREAK,
+         "ice": ICE_PART, "tip": 0.8},
+        # el campo de cristales: brotan con la onda que sale del centro
+        {"name": "IceCrystals", "count": 60, "r": (0.12, 0.9), "lean": "radial",
+         "wid": (2.5, 4.5), "thick": (8.0, 18.0), "len": (2.5, 4.5), "tilt": (10, 40), "yaw": 30, "pitch": 12,
+         "show": 0.75, "rise": 0.12, "t": TE_I, "sweep": 0.22, "delay": (0.0, 0.05),
+         "end_at": (TE_D - 0.02, TE_D + 0.08), "big": {"frac": 0.15, "k": 1.5}, "end": "shatter",
+         "shatter": FIELD_BREAK, "ice": ICE_PART, "tip": 0.8},
+        # losas del suelo que saltan inclinadas hacia afuera (color y material del suelo) y se hunden al final
+        {"name": "ZoneSlabs", "count": 70, "r": (0.1, 1.0), "lean": "radial",
+         "wid": (4.0, 8.0), "thick": (1.0, 2.0), "len": (4.0, 8.0), "tilt": (15, 45), "yaw": 14, "pitch": 10,
+         "show": 0.6, "rise": 0.08, "t": TE_I, "sweep": 0.25, "delay": (0.0, 0.05), "sink": 0.5,
+         "end_at": (TE_D + 0.3, TE_D + 0.8), "ground": True, "preview_color": SLAB_RGB},
+    ],
+}
 
 ECLIPSE_CUBES = {
     "gravity": 160, "bounce": 0.32, "friction": 0.55, "spin": (240, 820),
@@ -1077,39 +1255,61 @@ ECLIPSE_CUBES = {
     "neon_colors": [(150, 205, 255), (90, 150, 255), (220, 238, 255), (120, 175, 255)],
     "preview_color": (112, 110, 118),
     "fx": dict(name="CubeDissolve", texture="fx_spark002", direction="Top", spread=(180, 180), speed=(4, 12),
-               lifetime=(0.25, 0.4), size=[(0, 0), (0.2, 1.8), (1, 0)], color=GLINT, light_emission=1.0,
+               lifetime=(0.25, 0.4), size=[(0, 0), (0.2, 2.2), (1, 0)], color=GLINT, light_emission=1.0,
                brightness=1.7, rotation=(0, 45), emit_n=2),
     "groups": [
-        {"name": "Lift", "mode": "lift", "count": 30, "t": (0.1, 0.6), "r": (0.12, 0.9), "size": (0.25, 1.1),
-         "skew": 1.8, "lift": (1.0, 6.0), "release": (TE_C + 0.15, TE_C + 0.18), "out": (18, 48), "up": (45, 90),
-         "dissolve": 0.35, "neon": 0.5},
-        {"name": "Blast", "mode": "blast", "count": 120, "t": (TE_C + 0.15, TE_C + 0.2), "r": (0.25, 1.05),
-         "size": (0.12, 1.2), "skew": 2.8, "out": (18, 60), "up": (26, 80), "dissolve": 0.4, "neon": 0.35},
+        {"name": "Lift", "mode": "lift", "count": 90, "t": (0.15, 1.0), "r": (0.1, 0.95), "size": (0.5, 3.0),
+         "skew": 2.2, "lift": (3.0, 14.0), "release": (TE_I, TE_I + 0.05), "out": (25, 70), "up": (50, 110),
+         "dissolve": 0.35, "neon": 0.4},
+        {"name": "Blast", "mode": "blast", "count": 260, "t": (TE_I, TE_I + 0.08), "r": (0.15, 1.05),
+         "size": (0.4, 3.2), "skew": 2.6, "out": (25, 90), "up": (35, 110), "dissolve": 0.35, "neon": 0.3},
+        {"name": "DetBlast", "mode": "blast", "count": 140, "t": (TE_D, TE_D + 0.05), "r": (0.05, 0.9),
+         "size": (0.4, 2.6), "skew": 2.4, "out": (40, 120), "up": (40, 120), "dissolve": 0.5, "neon": 0.5},
     ],
 }
 
 ECLIPSE = {
     "name": "Eclipse",
-    "doc": ("MOONFANG SKILL 4 (Eclipse): una luna llena aparece sobre la zona y se va eclipsando mientras la zona se "
-            "agrieta en escarcha y los pedazos del suelo levitan; al quedar cubierta (1 s) cae una columna de luz de "
-            "luna que hace volar la tierra y el cristal; a los 2.6 s se apaga y queda un anillo de cristal roto. "
-            "cf = centro de la zona en el suelo. El golpe es a los 1.15 s."),
-    "duration": 3.6,
+    "doc": ("MOONFANG SKILL 4 (Eclipse, la ULTIMATE): una luna gigante aparece sobre la zona y se eclipsa mientras en "
+            "el suelo se dibuja el círculo lunar y el hielo flota hacia ella; al quedar tapada cae una columna de luz "
+            "de luna del ancho de toda la zona que congela el suelo (corona de picos de hielo en el borde, campo de "
+            "cristales, escombros); al final la columna colapsa y todo el hielo revienta en una detonación. "
+            "cf = centro de la zona en el suelo. Golpes: la columna a los "
+            f"{TE_I:g} s y la detonación a los {TE_D:g} s (ver EclipseTimes)."),
+    "duration": TE_D + 1.4,
     "zone": {"radius": ER, "height": EH, "charge": TE_C, "collapse": TE_E},
-    "shake_ramp": (0.0, TE_E, 0.1, 1.2, 1.6),
+    "times": {"Eclipse": TE_C, "Impact": TE_I, "Collapse": TE_E, "Detonation": TE_D},
+    "shake_ramp": (0.0, TE_E, 0.15, 1.3, 1.8),
+    "shakes": [(TE_I, 2.2, 0.8), (TE_D, 2.6, 1.0)],
     "lights": [
-        {"t": 0.0, "h": 0.9, "hu": "H", "color": (190, 215, 255), "brightness": 3, "range": 80, "rise": 0.4,
-         "hold": TE_C - 0.5, "fall": 0.2},
-        {"t": TE_C + 0.15, "h": 6, "color": (190, 225, 255), "brightness": 9, "range": 70, "rise": 0.03, "hold": 0.05,
+        {"t": 0.3, "h": 10, "color": (150, 190, 255), "brightness": 1.5, "range": 60, "rise": 0.8, "hold": 0.2,
+         "fall": 0.3, "ring": (6, 0.6)},
+        {"t": TE_I, "h": 8, "color": (190, 225, 255), "brightness": 10, "range": 60, "rise": 0.03, "hold": 0.08,
          "fall": 0.6},
-        {"t": TE_C + 0.15, "h": 0.3, "hu": "H", "color": (150, 200, 255), "brightness": 5, "range": 70, "rise": 0.1,
-         "hold": TE_E - TE_C - 0.4, "fall": 0.4},
-        {"t": TE_E, "h": 4, "color": (190, 225, 255), "brightness": 5, "range": 50, "rise": 0.02, "hold": 0.03,
-         "fall": 0.5},
+        {"t": TE_I, "h": 8, "color": (190, 225, 255), "brightness": 10, "range": 60, "rise": 0.03, "hold": 0.08,
+         "fall": 0.6, "ring": (6, 0.62)},
+        {"t": TE_I + 0.1, "h": 14, "color": (150, 200, 255), "brightness": 4, "range": 60, "rise": 0.1,
+         "hold": TE_E - TE_I - 0.3, "fall": 0.3, "ring": (6, 0.55)},
+        {"t": TE_D, "h": 10, "color": (200, 230, 255), "brightness": 12, "range": 60, "rise": 0.02, "hold": 0.05,
+         "fall": 0.8},
+        {"t": TE_D, "h": 10, "color": (200, 230, 255), "brightness": 12, "range": 60, "rise": 0.02, "hold": 0.05,
+         "fall": 0.8, "ring": (8, 0.6)},
     ],
+    # el mundo se oscurece mientras la luna se eclipsa y la pantalla destella con el golpe y la detonación
+    "screen": {
+        "range": 3.0,
+        "cc": [(0.0, 0, 0, 0, 255, 255, 255), (TE_C - 0.9, -0.04, 0.04, -0.08, 228, 236, 255),
+               (TE_C, -0.16, 0.14, -0.22, 188, 204, 255), (TE_E, -0.16, 0.14, -0.22, 188, 204, 255),
+               (TE_D, 0.06, 0.1, -0.1, 232, 242, 255), (TE_D + 1.3, 0, 0, 0, 255, 255, 255)],
+        "flash": [(TE_I, 0.45, 0.03, 0.35), (TE_D, 0.6, 0.03, 0.55)],
+        "flash_color": (226, 238, 255),
+    },
     "cubes": ECLIPSE_CUBES,
+    "zbeams": ECLIPSE_ZBEAMS,
+    "zfield": ECLIPSE_FIELD,
     "layers": eclipse_layers(random.Random(41)),
 }
+
 
 SPECS = {
     "MoonBite": MOON_BITE, "MoonBiteFinisher": MOON_BITE_FINISHER, "MoonFang": MOON_FANG,

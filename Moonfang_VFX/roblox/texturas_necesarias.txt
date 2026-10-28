@@ -1,9 +1,7 @@
 fx_aura_tongue_2x2.png
-fx_beam.png
 fx_fog2001.png
 fx_glow.png
 fx_halo.png
-fx_laser_thin.png
 fx_particle02.png
 fx_smoke_2x2.png
 fx_spark002.png
@@ -26,9 +24,12 @@ mf_blade_line.png
 mf_blade_solid.png
 mf_chomp_4x4.png
 mf_crescent.png
+mf_eclipse_sigil.png
 mf_frost_cracks.png
 mf_frost_patch.png
 mf_moon.png
+mf_moon_eclipse_4x4.png
+mf_moonbeam.png
 mf_moonlight_2x2.png
 mf_shard_2x2.png
 mf_spike.png

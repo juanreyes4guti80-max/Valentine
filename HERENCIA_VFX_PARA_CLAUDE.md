@@ -142,6 +142,7 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 | Clave | Para qué | Ejemplo |
 |---|---|---|
 | `zone`, `cubes`, `shake_ramp` | efecto en una zona circular con destrucción de cubos | `vfx_omnivora.py` (`COSMIC_PILLAR`) |
+| `zone` + `zbeams`, `zfield`, `screen`, `times` | ULTIMATE gigante en una zona. `zbeams`: columnas de Beams que bajan de arriba, en un anillo de cortinas que gira o con `rim` (dos líneas en el contorno de la columna visto desde la cámara). `zfield`: cristales y losas sólidos que brotan con una onda desde el centro, con `tip` (punta de cristal) y `end_at` (todos revientan a la vez). `screen`: `ColorCorrectionEffect` y destello de pantalla solo en el cliente cerca de la zona. `times`: momentos exportados como `<Efecto>Times`. Las capas `bill` son BillboardGuis | `vfx_moonfang.py` (`ECLIPSE`) |
 | `orb` | proyectil que nace, vuela creciendo y detona sobre enemigos | `vfx_blackhole.py` |
 | `beam`, `beams`, `hit` | rayo apuntable (Beams + Raycast cada cuadro) | `vfx_beam.py`, `vfx_cosmicbeam.py` |
 | `rocks` | efecto que sale de las rocas que le pasas | `vfx_pillars.py` (H3) |
@@ -175,6 +176,12 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 Otras claves frecuentes:
 
 - `"decal": True` hace una marca plana del suelo con Decal (sin límite de tamaño).
+- `"bill": True` (en zonas) hace cada partícula con una **BillboardGui + ImageLabel**: sin el tope de 100 studs (la luna del Eclipse, los destellos gigantes).
+  - No tiene `LightEmission` (mezcla alfa); `brightness` la hace brillar.
+  - `zoffset` es el `StudsOffset` hacia la cámara de verdad, así que se ve un poco más grande.
+  - `slide` = [(t, x, y)] corre la imagen en pantalla (studs).
+  - `flip_t` = [(t, cuadro)] elige el cuadro del flipbook según la vida (la textura debe medir 1024; o pon `tex_px`).
+  - Solo con `ring_emit`.
 - `"type": "meteor"` hace rocas de verdad (Parts) con estela y salpicadura al caer: `sprite`, `trails`, `land`.
   - En `sprite`, `aspect` estira la pieza, `upright` la deja derecha y `stick` la deja clavada esos segundos antes de romperse con las capas de `shatter`.
   - `ground` le da el color y el material del suelo (Raycast), y `color_var` la aclara u oscurece un poco.
@@ -196,7 +203,7 @@ Si dudas de una clave, búscala en `gen_luau.py` (`L.<clave>`) y en los specs ex
 - Tamaños y velocidades en studs a escala 1.
 - Las secuencias de tamaño y transparencia empiezan en t=0 y terminan en t=1.
 - La transparencia termina en 1.
-- Ninguna partícula pasa de 100 studs (es el tope de Roblox; el motor y el simulador lo recortan).
+- Ninguna partícula pasa de 100 studs (es el tope de Roblox; el motor y el simulador lo recortan). Las capas `decal` y `bill` no tienen ese tope (el simulador antes recortaba también los decals a 100: ya no).
 
 ### Registrar un efecto nuevo
 
@@ -231,6 +238,7 @@ Y regenera (ver §8).
    - `KaijuFireVFX.Quality` (0.6 en celulares) baja tasas y cantidades.
 9. **Limpieza:** cada efecto vive en un `Holder` (una Part invisible); `cleanup` se calcula del spec y destruye todo cuando muere la última partícula. Nada queda vivo. Las pruebas lo comprueban.
 10. **Glass** solo refracta con gráficos altos, y a través del vidrio no se ven partículas. **Highlight**: máximo 31 a la vez.
+12. **Lo que mide más de 100 studs y mira a la cámara: BillboardGui.** Una BillboardGui con `Size = UDim2.fromScale(studs, studs)`, `LightInfluence = 0`, `Brightness` > 1 y `AlwaysOnTop = false` (el mundo la tapa). El flipbook se hace con `ImageRectOffset` e `ImageRectSize`. Su orden de dibujo contra los Beams no es confiable: diseña para que no se pisen (por ejemplo, la columna del Eclipse es transparente en su parte de arriba y sale de debajo de la luna).
 11. **El suelo corta las partículas.** Una partícula es un cartel que mira a la cámara: si es grande y su centro está pegado al piso, el suelo la corta en línea recta (se ve como humo rebanado). Para humo o niebla baja, el centro debe ir a una altura de al menos un tercio de su tamaño; es mejor muchas partículas medianas a unas pocas gigantes. El simulador también lo muestra.
 
 ---
@@ -384,10 +392,19 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
 
    **La skill 2 ahora es la Ola de hielo (`IceWave`).** Lo pidió así: "una ola de hielo que crece en formato triangular y va dejando a su paso destrucción, bloques de hielo y humo". Usa el modo `cone` con `front` y `field`. En la 2.ª vuelta pidió más: "que se sienta como una ola densa de humo de hielo de verdad que avanza y va dejando destrozos". Por eso el humo lo sueltan emisores que viajan con el frente (y se frenan detrás: la estela), y el frente se frena al final. En la 3.ª ("aún puede mejorar") le di volumen: humo realista (`fx_smoke_2x2`, no nubes de caricatura), una base más oscura y azulada, un borde que se revuelve (humo más rápido que el frente), grietas oscuras de suelo roto y pedazos grandes.
 
-   **Tarea para ti con Blender:** hay tres piezas que serían mejores como modelo:
+   **La skill 4 (Eclipse, la ULTIMATE) se rehízo en grande.** Dijo que el radio era "chiquito" y que las ultis del juego son de magnitud fuerte (Omnívora: un agujero negro que se come la tierra; Kaiju Zero: un rayo intensísimo y una bomba nuclear; Bublisk: un tsunami; Venomer: sale del suelo con una explosión de veneno). Pidió conservar la idea (una luna arriba que lanza un rayo hacia abajo) pero "súper clean, súper cool" y mucho más grande. Ahora:
+   - la zona es de 120 studs de radio y la luna está a 340, con un disco de unos 250;
+   - la luna es un flipbook del eclipse (`mf_moon_eclipse_4x4`) en una BillboardGui, sin un disco negro suelto que se vea fuera de la luna;
+   - en el suelo hay un círculo lunar (`mf_eclipse_sigil`);
+   - la columna son cortinas de Beams con un contorno según la cámara;
+   - brota una corona de picos de hielo y un campo de cristales, y al final una detonación;
+   - el mundo se oscurece (`screen`).
+
+   **Tarea para ti con Blender:** hay cinco piezas que serían mejores como modelo:
    - los pedazos de hielo del final de la Medialuna (`IceChunks`), que no le convencieron;
    - las placas de hielo del corte (`IceSlab`);
-   - los bloques de hielo de la Ola (`IceBlocks`), que serían mejores como cristales.
+   - los bloques de hielo de la Ola (`IceBlocks`), que serían mejores como cristales;
+   - los picos de hielo del borde del Eclipse (`IceCrown`) y sus cristales (`IceCrystals`): hoy son un bloque con una punta de cubo; un cristal de verdad, alto y facetado, se vería mucho mejor.
 
    Haz las MeshParts y conéctalas con `MoonfangVFX.Meshes` (ver arriba).
 6. Mantener este documento al día con lo que aprendas en Studio. Sobre todo las diferencias entre el simulador y Roblox, para que el siguiente no tropiece.

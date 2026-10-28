@@ -10,6 +10,11 @@ la capa (Color), así una misma textura sirve en plata, hielo o azul cristal.
   mf_aura_wisp_2x2   lenguas del aura en plata y hielo (sale de om_aura_wisp_2x2, ya coloreada)
   mf_blade_solid / mf_blade_line / mf_blade_glow   los Beams de la media luna (cuerpo nítido, filo y estelas, halo)
   mf_frost_patch     escarcha que se forma en el suelo alrededor del corte de la medialuna (Decal)
+  mf_moonbeam        Beam de la columna del Eclipse: luz de luna que cae en vetas, se repite a lo largo (Wrap)
+  mf_eclipse_sigil   el círculo lunar del suelo del Eclipse (las 8 fases de la luna, octagrama y media luna)
+  mf_moon_eclipse_4x4  la luna llena que se va eclipsando (16 cuadros: la sombra entra hasta taparla)
+  mf_frost_flame_4x4 la llama fría del aura de hielo (16 cuadros, ya coloreada: borde nítido y corazón blanco)
+  mf_ice_spikes_2x2  cristales de hielo que salen del contorno del aura (4 variantes)
 uso: python gen_moonfang_textures.py <carpeta textures de Moonfang> <carpeta textures de Omnívora>"""
 import math
 import os
@@ -217,6 +222,25 @@ def moon(n):
     return np.clip(v + glow * 0.9, 0, 1), np.clip(disk + glow, 0, 1)
 
 
+def moon_eclipse(n, i, nf=16):
+    """Cuadro i de la luna que se eclipsa (mf_moon_eclipse_4x4): la sombra, un disco apenas mayor, entra desde arriba
+    a la izquierda (cuadro 0: la toca por fuera) hasta taparla entera en el último. Lo tapado queda casi negro (apenas
+    se ven los cráteres) y opaco; el resplandor de alrededor se apaga donde llega la sombra."""
+    v, a = moon(n)
+    x, y = grid(n)
+    p = i / (nf - 1)
+    st = np.array([-1.0, -0.62])
+    st = st / np.linalg.norm(st) * 1.66
+    ds = np.hypot(x - st[0] * (1 - p), y - st[1] * (1 - p))
+    cov = smooth(0.835, 0.825, ds)
+    cov_g = smooth(1.05, 0.83, ds)
+    disk = smooth(1.0, 0.985, np.hypot(x, y) / 0.82)
+    dark = 0.05 + 0.08 * v
+    v2 = np.where(disk > 0.5, v * (1 - cov) + dark * cov, v * (1 - cov_g))
+    a2 = disk + (a - disk) * (1 - cov_g)
+    return np.clip(v2, 0, 1), np.clip(a2, 0, 1)
+
+
 def frost_cracks(n):
     rng = np.random.default_rng(11)
     S = n
@@ -302,6 +326,157 @@ def blade(w, h, kind):
     return Image.fromarray(np.dstack([np.clip(rgb * 255, 0, 255), a[..., None] * 255]).astype(np.uint8), "RGBA")
 
 
+def moonbeam(w, h, seed=5):
+    """Beam de la columna del Eclipse (u = a lo largo, se repite: TextureMode Wrap; v = a lo ancho): luz de luna que
+    cae en vetas finas con pulsos (al correr la textura bajan) y chispas; bordes suaves para que las cortinas de
+    la columna se fundan entre sí."""
+    rng = np.random.default_rng(seed)
+    fy = np.fft.fftfreq(h)[:, None] * h               # ciclos a lo ancho
+    fx = np.fft.fftfreq(w)[None, :] * w               # ciclos a lo largo (entero: se repite sin costura)
+
+    def field(kx, ky):
+        F = rng.normal(size=(h, w)) + 1j * rng.normal(size=(h, w))
+        f = np.real(np.fft.ifft2(F * np.exp(-(fx / kx) ** 2 - (fy / ky) ** 2)))
+        return (f - f.min()) / max(np.ptp(f), 1e-6)
+    streak = 0.6 * field(2.5, 16) + 0.4 * field(5, 42)    # vetas largas a lo largo, finas a lo ancho
+    v = (np.arange(h, dtype=np.float32) + 0.5) / h * 2 - 1
+    u = (np.arange(w, dtype=np.float32) + 0.5) / w
+    V_, U_ = np.meshgrid(v, u, indexing="ij")
+    prof = smooth(1.0, 0.5, np.abs(V_))
+    a = (0.22 + 0.78 * np.clip(streak, 0, 1) ** 1.6) * prof * 0.9
+    val = np.clip(0.8 + 0.2 * streak, 0, 1)
+    for _ in range(26):                                # chispas (con su estela hacia arriba: u menor)
+        cu, cv = rng.uniform(0, 1), rng.uniform(-0.6, 0.6)
+        du = (U_ - cu + 0.5) % 1.0 - 0.5
+        dv = V_ - cv
+        sp = np.exp(-(du * w / 2.2) ** 2 - (dv * h / 2.6) ** 2)
+        sp += 0.45 * np.exp(-(np.clip(du, None, 0) * w / 14) ** 2 - (dv * h / 1.6) ** 2) * (du < 0)
+        a = np.maximum(a, np.clip(sp, 0, 1) * prof)
+        val = np.maximum(val, np.clip(sp, 0, 1))
+    rgb = np.stack([val] * 3, -1)
+    return Image.fromarray(np.dstack([np.clip(rgb * 255, 0, 255), np.clip(a, 0, 1)[..., None] * 255])
+                           .astype(np.uint8), "RGBA")
+
+
+def eclipse_sigil(n):
+    """El círculo lunar que se dibuja en el suelo del Eclipse (Decal): anillo doble en el borde, las 8 fases de la
+    luna alrededor, anillo con marcas, un octagrama y una media luna al centro. Líneas finas con un halo suave."""
+    from PIL import ImageDraw
+    img = Image.new("L", (n, n), 0)
+    d = ImageDraw.Draw(img)
+    c = n / 2
+
+    def ring(r, w):
+        d.ellipse([c - r * c, c - r * c, c + r * c, c + r * c], outline=255, width=max(1, int(w * c)))
+
+    def pol(r, a):
+        return c + r * c * math.cos(a), c + r * c * math.sin(a)
+    ring(0.955, 0.026)
+    ring(0.912, 0.011)
+    ring(0.682, 0.017)
+    ring(0.43, 0.013)
+    for i in range(48):                                   # marcas del anillo de adentro (más largas cada 6)
+        a = 2 * math.pi * i / 48
+        r1 = 0.735 if i % 6 == 0 else 0.708
+        d.line([pol(0.682, a), pol(r1, a)], fill=255, width=max(1, int((0.017 if i % 6 == 0 else 0.009) * c)))
+    for k in range(2):                                    # octagrama: dos cuadrados girados
+        pts = [pol(0.682, math.pi / 4 * k + math.pi / 2 * i + math.pi / 8) for i in range(4)]
+        d.line(pts + [pts[0]], fill=255, width=max(1, int(0.011 * c)), joint="curve")
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+    X, Y = (x + 0.5) / c - 1, (y + 0.5) / c - 1
+    a = np.asarray(img, np.float32) / 255
+    rho = 0.062
+    for k in range(8):                                    # las 8 fases (nueva, creciente, ..., llena, ..., menguante)
+        ang = 2 * math.pi * k / 8 - math.pi / 2
+        cx, cy = 0.80 * math.cos(ang), 0.80 * math.sin(ang)
+        tx, ty = -math.sin(ang), math.cos(ang)            # eje x del icono: tangente al anillo
+        lx = (X - cx) * tx + (Y - cy) * ty
+        ly = (X - cx) * math.cos(ang) + (Y - cy) * math.sin(ang)
+        rr = np.hypot(lx, ly)
+        inside = smooth(rho + 0.004, rho - 0.002, rr)
+        th = math.pi * k / 4
+        term = rho * math.cos(th) * np.sqrt(np.clip(1 - (ly / rho) ** 2, 0, 1))
+        lit = (lx > term) if k <= 4 else (lx < -term)
+        if k == 0:
+            lit = np.zeros_like(lx, bool)
+        edge = smooth(0.012, 0.004, np.abs(rr - rho))     # contorno (la parte oscura se ve)
+        a = np.maximum(a, np.maximum(inside * lit, edge * 0.85))
+    # la media luna del centro y una estrella en su hueco
+    disc = smooth(0.30, 0.296, np.hypot(X, Y))
+    cut = smooth(0.262, 0.266, np.hypot(X - 0.11, Y + 0.03))
+    a = np.maximum(a, disc * cut)
+    st = np.hypot(X - 0.1, Y + 0.02)
+    ang = np.arctan2(Y + 0.02, X - 0.1)
+    star = smooth(0.11 * (0.35 + 0.65 * np.abs(np.cos(2 * ang)) ** 6), 0.0, st)
+    a = np.maximum(a, np.clip(star * 1.6, 0, 1))
+    glow = np.asarray(Image.fromarray((a * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(n / 160)),
+                      np.float32) / 255
+    a = np.clip(np.maximum(a, glow * 0.7), 0, 1)
+    return np.ones_like(a), a
+
+
+def frost_flame(n, i, nf=16, seed=3):
+    """Cuadro i de la llama fría del aura (mf_frost_flame_4x4, ya coloreada; hacia arriba): una lengua de luz helada con
+    el borde nítido y brillante, el interior translúcido y la base blanca. Crece, ondea, se suelta de la base y se
+    apaga arriba."""
+    x, y = grid(n)
+    yy = -y
+    p = i / (nf - 1)
+    ph = np.random.default_rng(seed).uniform(0, 6.28)
+    top = -0.3 + 1.2 * smooth(0.0, 0.42, p) + 0.12 * smooth(0.5, 1.0, p)
+    base = -0.88 + 1.0 * smooth(0.45, 1.0, p) ** 1.3
+    W = 0.42 * (1 - 0.5 * smooth(0.55, 1.0, p))
+    s = (yy - base) / max(top - base, 1e-3)
+    sw = W * np.clip(1 - s, 0, 1) ** 1.05 * (1 - (1 - np.clip(s / 0.22, 0, 1)) ** 2)
+    x0 = 0.16 * np.clip(s, 0, 1) ** 1.4 * np.sin(2 * math.pi * (1.1 * s - 1.4 * p) + ph)
+    d = np.abs(x - x0)
+    inside = smooth(sw + 1e-4, sw - 0.022, d) * (s >= 0) * (s <= 1)
+    edge = inside * smooth(sw - 0.085, sw - 0.035, d)                       # el borde, nítido
+    core = inside * smooth(0.5 * sw + 1e-4, 0.15 * sw, d) * smooth(0.75, 0.1, s)   # corazón blanco abajo
+    a = np.clip(0.42 * inside + 0.58 * edge + 0.4 * core, 0, 1) * (1 - smooth(0.72, 1.0, p))
+    inner, rim, white = np.array([0.36, 0.62, 1.0]), np.array([0.78, 0.92, 1.0]), np.array([0.97, 0.99, 1.0])
+    rgb = inner * (1 - edge[..., None]) + rim * edge[..., None]
+    rgb = rgb * (1 - core[..., None]) + white * core[..., None]
+    return rgb, a
+
+
+def ice_spike(n, k):
+    """Cristales de hielo que apuntan hacia arriba (mf_ice_spikes_2x2; con VelocityParallel salen hacia afuera del
+    contorno): uno alto, dos en V, un racimo de tres y uno con un brote al lado. Caras facetadas y filo claro."""
+    from PIL import ImageDraw
+    img = Image.new("L", (n, n), 0)
+    val = Image.new("L", (n, n), 0)
+    da, dv = ImageDraw.Draw(img), ImageDraw.Draw(val)
+    c = n / 2
+
+    def crystal(cx, by, h, w, ang):
+        ca, sa = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+
+        def P(px, py):                                    # px a lo ancho, py hacia arriba desde la base
+            return c + (cx + px * ca + py * sa) * c, c - (by + py * ca - px * sa) * c
+        tip, sh = P(0, h), h * 0.72
+        L0, R0, L1, R1, M0, M1 = P(-w, 0), P(w, 0), P(-w, sh), P(w, sh), P(0, 0), P(0, sh)
+        da.polygon([L0, L1, tip, R1, R0], fill=255)
+        dv.polygon([L0, L1, tip, M1, M0], fill=235)      # cara izquierda clara
+        dv.polygon([M0, M1, tip, R1, R0], fill=150)      # cara derecha más oscura
+        dv.line([M0, M1, tip], fill=255, width=max(1, n // 120))
+    if k == 0:
+        crystal(0.0, -0.9, 1.75, 0.16, 0)
+    elif k == 1:
+        crystal(-0.08, -0.9, 1.6, 0.13, -14)
+        crystal(0.08, -0.9, 1.2, 0.11, 18)
+    elif k == 2:
+        crystal(0.0, -0.9, 1.7, 0.13, 0)
+        crystal(-0.12, -0.9, 1.05, 0.1, -24)
+        crystal(0.13, -0.9, 0.95, 0.1, 26)
+    else:
+        crystal(0.0, -0.9, 1.6, 0.15, 6)
+        crystal(-0.1, -0.6, 0.6, 0.07, -38)
+    a = np.asarray(img.filter(ImageFilter.GaussianBlur(n / 400)), np.float32) / 255
+    v = np.asarray(val.filter(ImageFilter.GaussianBlur(n / 500)), np.float32) / 255
+    return np.clip(v, 0, 1), a
+
+
 def frost_patch(n):
     """Escarcha que se forma en el suelo alrededor del corte: agujas finas de hielo que salen hacia afuera, con
     ramitas como copos, sobre un velo suave. Igual en todas las direcciones (sirve girada o estirada)."""
@@ -385,6 +560,29 @@ def main(out, omni_tex):
         blade(256, 128, kind).save(os.path.join(out, f"mf_blade_{kind}.png"))
     v, a = frost_patch(N)
     save(v, a, os.path.join(out, "mf_frost_patch.png"), 256)
+    moonbeam(512, 256).save(os.path.join(out, "mf_moonbeam.png"))
+    v, a = eclipse_sigil(2048)
+    save(v, a, os.path.join(out, "mf_eclipse_sigil.png"), 1024)
+    n = 256 * SS
+    ev = np.zeros((4 * n, 4 * n), np.float32)
+    ea = np.zeros_like(ev)
+    for i in range(16):
+        v, a = moon_eclipse(n, i)
+        r, c = divmod(i, 4)
+        ev[r * n:(r + 1) * n, c * n:(c + 1) * n] = v
+        ea[r * n:(r + 1) * n, c * n:(c + 1) * n] = a
+    save(ev, ea, os.path.join(out, "mf_moon_eclipse_4x4.png"), 1024)
+    # el aura de hielo del aullido: llama fría (ya coloreada) y cristales que salen del contorno
+    n = 256 * SS
+    fl = np.zeros((4 * n, 4 * n, 4), np.float32)
+    for i in range(16):
+        rgb, a = frost_flame(n, i)
+        r, c = divmod(i, 4)
+        fl[r * n:(r + 1) * n, c * n:(c + 1) * n] = np.dstack([rgb, a[..., None]])
+    Image.fromarray(np.clip(fl * 255, 0, 255).astype(np.uint8), "RGBA").resize((1024, 1024), Image.LANCZOS) \
+        .save(os.path.join(out, "mf_frost_flame_4x4.png"))
+    v, a = atlas([ice_spike(n, k) for k in range(4)], n)
+    save(v, a, os.path.join(out, "mf_ice_spikes_2x2.png"), 512)
     print("OK texturas de Moonfang ->", out)
 
 
