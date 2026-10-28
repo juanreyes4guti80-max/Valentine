@@ -13,8 +13,7 @@ la capa (Color), así una misma textura sirve en plata, hielo o azul cristal.
   mf_moonbeam        Beam de la columna del Eclipse: luz de luna que cae en vetas, se repite a lo largo (Wrap)
   mf_eclipse_sigil   el círculo lunar del suelo del Eclipse (las 8 fases de la luna, octagrama y media luna)
   mf_moon_eclipse_4x4  la luna llena que se va eclipsando (16 cuadros: la sombra entra hasta taparla)
-  mf_frost_flame_4x4 la llama fría del aura de hielo (16 cuadros, ya coloreada: borde nítido y corazón blanco)
-  mf_ice_spikes_2x2  cristales de hielo que salen del contorno del aura (4 variantes)
+  mf_ice_spikes_2x2  púas de cristal de hielo (4 variantes): brotan alrededor del rugido
 uso: python gen_moonfang_textures.py <carpeta textures de Moonfang> <carpeta textures de Omnívora>"""
 import math
 import os
@@ -415,34 +414,9 @@ def eclipse_sigil(n):
     return np.ones_like(a), a
 
 
-def frost_flame(n, i, nf=16, seed=3):
-    """Cuadro i de la llama fría del aura (mf_frost_flame_4x4, ya coloreada; hacia arriba): una lengua de luz helada con
-    el borde nítido y brillante, el interior translúcido y la base blanca. Crece, ondea, se suelta de la base y se
-    apaga arriba."""
-    x, y = grid(n)
-    yy = -y
-    p = i / (nf - 1)
-    ph = np.random.default_rng(seed).uniform(0, 6.28)
-    top = -0.3 + 1.2 * smooth(0.0, 0.42, p) + 0.12 * smooth(0.5, 1.0, p)
-    base = -0.88 + 1.0 * smooth(0.45, 1.0, p) ** 1.3
-    W = 0.42 * (1 - 0.5 * smooth(0.55, 1.0, p))
-    s = (yy - base) / max(top - base, 1e-3)
-    sw = W * np.clip(1 - s, 0, 1) ** 1.05 * (1 - (1 - np.clip(s / 0.22, 0, 1)) ** 2)
-    x0 = 0.16 * np.clip(s, 0, 1) ** 1.4 * np.sin(2 * math.pi * (1.1 * s - 1.4 * p) + ph)
-    d = np.abs(x - x0)
-    inside = smooth(sw + 1e-4, sw - 0.022, d) * (s >= 0) * (s <= 1)
-    edge = inside * smooth(sw - 0.085, sw - 0.035, d)                       # el borde, nítido
-    core = inside * smooth(0.5 * sw + 1e-4, 0.15 * sw, d) * smooth(0.75, 0.1, s)   # corazón blanco abajo
-    a = np.clip(0.42 * inside + 0.58 * edge + 0.4 * core, 0, 1) * (1 - smooth(0.72, 1.0, p))
-    inner, rim, white = np.array([0.36, 0.62, 1.0]), np.array([0.78, 0.92, 1.0]), np.array([0.97, 0.99, 1.0])
-    rgb = inner * (1 - edge[..., None]) + rim * edge[..., None]
-    rgb = rgb * (1 - core[..., None]) + white * core[..., None]
-    return rgb, a
-
-
 def ice_spike(n, k):
-    """Cristales de hielo que apuntan hacia arriba (mf_ice_spikes_2x2; con VelocityParallel salen hacia afuera del
-    contorno): uno alto, dos en V, un racimo de tres y uno con un brote al lado. Caras facetadas y filo claro."""
+    """Cristales de hielo que apuntan hacia arriba (mf_ice_spikes_2x2; con VelocityParallel salen en la dirección en
+    que vuelan): uno alto, dos en V, un racimo de tres y uno con un brote al lado. Caras facetadas y filo claro."""
     from PIL import ImageDraw
     img = Image.new("L", (n, n), 0)
     val = Image.new("L", (n, n), 0)
@@ -572,15 +546,8 @@ def main(out, omni_tex):
         ev[r * n:(r + 1) * n, c * n:(c + 1) * n] = v
         ea[r * n:(r + 1) * n, c * n:(c + 1) * n] = a
     save(ev, ea, os.path.join(out, "mf_moon_eclipse_4x4.png"), 1024)
-    # el aura de hielo del aullido: llama fría (ya coloreada) y cristales que salen del contorno
+    # las púas de hielo que brotan alrededor del rugido
     n = 256 * SS
-    fl = np.zeros((4 * n, 4 * n, 4), np.float32)
-    for i in range(16):
-        rgb, a = frost_flame(n, i)
-        r, c = divmod(i, 4)
-        fl[r * n:(r + 1) * n, c * n:(c + 1) * n] = np.dstack([rgb, a[..., None]])
-    Image.fromarray(np.clip(fl * 255, 0, 255).astype(np.uint8), "RGBA").resize((1024, 1024), Image.LANCZOS) \
-        .save(os.path.join(out, "mf_frost_flame_4x4.png"))
     v, a = atlas([ice_spike(n, k) for k in range(4)], n)
     save(v, a, os.path.join(out, "mf_ice_spikes_2x2.png"), 512)
     print("OK texturas de Moonfang ->", out)

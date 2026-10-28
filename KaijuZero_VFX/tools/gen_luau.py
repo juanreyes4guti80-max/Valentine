@@ -3440,283 +3440,6 @@ local function playAura(spec: Layer, model: Instance, scale: number?, duration: 
 	return ctl
 end
 
--- ---------------------------------------------------------------- aura de contorno (el delineado ES el aura)
--- Cada cliente busca el contorno del modelo visto desde SU cámara: lanza rayos (Raycast solo contra el modelo) en una
--- rejilla que cubre el modelo en pantalla; los nodos que tocan el modelo y tienen al lado (arriba, abajo, izquierda o
--- derecha) uno que no lo toca son el contorno. De ahí salen las capas sil = "edge" (hacia afuera en el plano de la
--- pantalla, mezclado con hacia arriba por up y separado del borde por push; side = "up" solo arriba y a los lados,
--- "down" solo abajo); sil = "body" sale de los puntos de adentro (el hielo que se desprende) y sil = "feet" alrededor
--- de los pies. Lo que queda detrás del cuerpo no se ve, así que el aura sale del borde; si la cámara cambia de lado,
--- el aura cambia de lugar: unas manos delante del pecho no tienen aura y las mismas manos vistas de lado sí.
--- Los puntos se guardan respecto a la parte que tocaron, así que siguen al modelo aunque se mueva entre una búsqueda y
--- otra. rate = partículas por segundo en total; burst = al encender; end_burst = al apagar.
-type SilPoint = { part: BasePart, lp: Vector3, out: Vector3 }
-type SilItem = { L: Layer, e: ParticleEmitter, a: Attachment, acc: number }
-
-local function silhouette(parts: { BasePart }, cam: Camera, S: Layer, params: RaycastParams, q: number):
-	({ SilPoint }, { SilPoint })
-	-- el recuadro en pantalla de las partes visibles (las esquinas de cada una)
-	local vp = cam.ViewportSize
-	local x0, y0, x1, y1 = math.huge, math.huge, -math.huge, -math.huge
-	local center, span = Vector3.zero, 0
-	for _, p in parts do
-		local cf, half = p.CFrame, p.Size / 2
-		center += cf.Position
-		span = math.max(span, p.Size.Magnitude)
-		for i = 0, 7 do
-			local c = cf:PointToWorldSpace(Vector3.new(if i % 2 == 0 then -half.X else half.X,
-				if math.floor(i / 2) % 2 == 0 then -half.Y else half.Y, if i >= 4 then half.Z else -half.Z))
-			local sp = cam:WorldToViewportPoint(c)
-			if sp.Z <= 0 then
-				return {}, {} -- la cámara está dentro o detrás: no hay contorno
-			end
-			x0, y0, x1, y1 = math.min(x0, sp.X), math.min(y0, sp.Y), math.max(x1, sp.X), math.max(y1, sp.Y)
-		end
-	end
-	if #parts == 0 then
-		return {}, {}
-	end
-	center /= #parts
-	local g = math.max(S.cell * vp.Y, math.sqrt(math.max((x1 - x0) * (y1 - y0), 1) / (S.max_rays * q)))
-	x0, y0 = math.max(x0 - g, 0), math.max(y0 - g, 0)
-	x1, y1 = math.min(x1 + g, vp.X - 1), math.min(y1 + g, vp.Y - 1)
-	if x1 <= x0 or y1 <= y0 then
-		return {}, {}
-	end
-	local nx, ny = math.floor((x1 - x0) / g) + 1, math.floor((y1 - y0) / g) + 1
-	local far = (cam.CFrame.Position - center).Magnitude + span * 4
-	local hits: { [number]: RaycastResult } = {}
-	for j = 0, ny - 1 do
-		for i = 0, nx - 1 do
-			local ray = cam:ViewportPointToRay(x0 + i * g, y0 + j * g)
-			local h = workspace:Raycast(ray.Origin, ray.Direction * far, params)
-			if h then
-				hits[j * nx + i + 1] = h
-			end
-		end
-	end
-	local function miss(i: number, j: number): boolean
-		return i < 0 or j < 0 or i >= nx or j >= ny or hits[j * nx + i + 1] == nil
-	end
-	local right, up = cam.CFrame.RightVector, cam.CFrame.UpVector
-	local edges: { SilPoint }, body: { SilPoint } = {}, {}
-	for j = 0, ny - 1 do
-		for i = 0, nx - 1 do
-			local h = hits[j * nx + i + 1]
-			if h then
-				local part = h.Instance :: BasePart
-				local pt: SilPoint = { part = part, lp = part.CFrame:PointToObjectSpace(h.Position), out = Vector3.yAxis }
-				local l, r, u, d = miss(i - 1, j), miss(i + 1, j), miss(i, j - 1), miss(i, j + 1)
-				if l or r or u or d then
-					local o = right * ((if r then 1 else 0) - (if l then 1 else 0)) - up * ((if d then 1 else 0) - (if u then 1 else 0))
-					pt.out = if o.Magnitude > 1e-3 then o.Unit else Vector3.yAxis
-					table.insert(edges, pt)
-				else
-					table.insert(body, pt)
-				end
-			end
-		end
-	end
-	return edges, body
-end
-
-local function playSilhouette(spec: Layer, model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
-	local S = spec.silhouette
-	local cf0, size0 = auraBox(model)
-	local k = (scale or 1) * math.clamp(size0.Y / S.ref, 0.25, 8)
-	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf0, KaijuFireVFX.Parent)
-	-- los rayos solo tocan las partes visibles (no la raíz ni las cajas de golpes invisibles)
-	local parts = auraParts(model, 400)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Include
-	params.FilterDescendantsInstances = (parts :: any) :: { Instance }
-	local nextParts = 2
-	local items: { SilItem } = {}
-	for _, L in spec.layers do
-		local a = Instance.new("Attachment")
-		a.Name = L.name
-		a.Parent = holder
-		local e = configureEmitter(L, k)
-		e.Name = L.name
-		e.Parent = a
-		table.insert(items, { L = L, e = e, a = a, acc = 0 })
-	end
-	local light: PointLight? = nil
-	if KaijuFireVFX.UseLight and S.light then
-		local li = Instance.new("PointLight")
-		li.Color = Color3.fromRGB(S.light.color[1], S.light.color[2], S.light.color[3])
-		li.Range = math.min(S.light.range * k, 60)
-		li.Brightness = 0
-		li.Shadows = false
-		li.Parent = holder
-		light = li
-	end
-
-	local t0 = time()
-	local stopAt: number? = duration
-	local fadeOut = S.fade_out
-	local edges: { SilPoint }, body: { SilPoint } = {}, {}
-	local upIdx: { number }, downIdx: { number } = {}, {}
-	local nextScan = 0
-	local burstDone, endDone = false, false
-	local ctl: AuraControl
-	ctl = {
-		Holder = holder,
-		Model = model,
-		Active = true,
-		Intensity = intensity or 1,
-		SetIntensity = function(self, v: number)
-			self.Intensity = math.max(v, 0)
-		end,
-		Stop = function(_, fade: number?)
-			local t = time() - t0
-			if not stopAt or (stopAt :: number) > t then
-				stopAt = t
-				fadeOut = fade or S.fade_out
-			end
-		end,
-	}
-
-	-- n partículas de la capa desde el contorno, el cuerpo o los pies
-	local function emit(it: SilItem, n: number)
-		local L = it.L
-		for _ = 1, n do
-			if L.sil == "edge" then
-				local idx: number
-				if L.side == "up" then
-					if #upIdx == 0 then
-						return
-					end
-					idx = upIdx[rng:NextInteger(1, #upIdx)]
-				elseif L.side == "down" then
-					if #downIdx == 0 then
-						return
-					end
-					idx = downIdx[rng:NextInteger(1, #downIdx)]
-				else
-					if #edges == 0 then
-						return
-					end
-					idx = rng:NextInteger(1, #edges)
-				end
-				local pt = edges[idx]
-				if not pt.part.Parent then
-					continue
-				end
-				local up = L.up or 0
-				local pos = pt.part.CFrame:PointToWorldSpace(pt.lp) + pt.out * (L.push or 0) * k
-				local look = pt.out * (1 - up) + Vector3.yAxis * up
-				look = if look.Magnitude > 1e-3 then look.Unit else Vector3.yAxis
-				it.a.WorldCFrame = CFrame.lookAt(pos, pos + look)
-			elseif L.sil == "body" then
-				if #body == 0 then
-					return
-				end
-				local pt = body[rng:NextInteger(1, #body)]
-				if not pt.part.Parent then
-					continue
-				end
-				it.a.WorldCFrame = CFrame.new(pt.part.CFrame:PointToWorldSpace(pt.lp))
-			else
-				local cf, size = auraBox(model)
-				local r = math.max(size.X, size.Z) * (L.radius_k or 0.6) / 2 * math.sqrt(rng:NextNumber())
-				local ang = rng:NextNumber(0, 2 * math.pi)
-				it.a.WorldCFrame = CFrame.new(cf.Position.X + r * math.cos(ang),
-					cf.Position.Y - size.Y / 2 + (L.h or 0) * k, cf.Position.Z + r * math.sin(ang))
-			end
-			it.e:Emit(1)
-		end
-	end
-
-	local function destroyAll()
-		if holder.Parent then
-			holder:Destroy()
-		end
-		ctl.Active = false
-	end
-
-	local conn: RBXScriptConnection
-	conn = RunService.Heartbeat:Connect(function(dt)
-		local t = time() - t0
-		if not model.Parent or not holder.Parent then
-			conn:Disconnect()
-			destroyAll()
-			return
-		end
-		if t >= nextParts then -- por si el modelo cambia de partes
-			nextParts = t + 2
-			parts = auraParts(model, 400)
-			params.FilterDescendantsInstances = (parts :: any) :: { Instance }
-		end
-		local cam = workspace.CurrentCamera
-		if cam and t >= nextScan then
-			-- lejos de la cámara (o con calidad baja) busca el contorno menos seguido y con menos rayos
-			local d = (cam.CFrame.Position - holder.Position).Magnitude
-			local near = math.clamp(80 * k / math.max(d, 1), 0.35, 1)
-			nextScan = t + 1 / (S.hz * near)
-			edges, body = silhouette(parts, cam, S, params, math.max(KaijuFireVFX.Quality, 0.4))
-			upIdx, downIdx = {}, {}
-			for i, pt in edges do
-				if pt.out.Y > -0.35 then
-					table.insert(upIdx, i)
-				else
-					table.insert(downIdx, i)
-				end
-			end
-		end
-		local on = math.clamp(t / math.max(S.fade_in, 1e-3), 0, 1)
-		if stopAt then
-			local u = (t - (stopAt :: number)) / math.max(fadeOut, 1e-3)
-			on = math.min(on, math.clamp(1 - u, 0, 1))
-			if not endDone and t >= (stopAt :: number) then
-				endDone = true
-				for _, it in items do
-					if it.L.end_burst then
-						emit(it, quality(it.L.end_burst))
-					end
-				end
-			end
-			if u >= 1 then
-				if light then
-					light.Brightness = 0
-				end
-				ctl.Active = false
-				if t > (stopAt :: number) + fadeOut + S.life_max then
-					conn:Disconnect()
-					destroyAll()
-				end
-				return
-			end
-		end
-		if not burstDone and #edges > 0 then
-			burstDone = true
-			for _, it in items do
-				if it.L.burst then
-					emit(it, quality(it.L.burst))
-				end
-			end
-		end
-		local breath = 1 + (S.breath or 0) * math.sin(2 * math.pi * (S.breath_hz or 1) * t)
-		local k2 = on * ctl.Intensity * breath * KaijuFireVFX.Quality
-		for _, it in items do
-			local rate = it.L.rate or 0
-			if rate > 0 then
-				it.acc += rate * k2 * math.min(dt, 0.1)
-				local n = math.floor(it.acc)
-				if n > 0 then
-					it.acc -= n
-					emit(it, n)
-				end
-			end
-		end
-		holder.CFrame = auraBox(model)
-		if light then
-			light.Brightness = S.light.brightness * on * ctl.Intensity
-		end
-	end)
-	return ctl
-end
-
 -- ---------------------------------------------------------------- la hoja que vuela (Moonfang: Medialuna)
 -- Una media luna de energía hecha de trazos finos (cadenas de Beams que miran a la cámara). Va vertical y DE CANTO:
 -- de lado se ve la media luna (la punta adelante y los cuernos atrás) y desde atrás, una hoja fina que apunta hacia
@@ -5681,10 +5404,6 @@ def build(specs, name, doc):
                 data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         if spec.get("cubes"):
             data["cubes"] = norm_cubes(spec["cubes"])
-        if spec.get("silhouette"):
-            sc = dict(spec["silhouette"])
-            sc["life_max"] = max(L["lifetime"][1] for L in spec["layers"])
-            data["silhouette"] = plain(sc)
         if spec.get("aura"):
             a = dict(spec["aura"])
             a["life_max"] = max(L["lifetime"][1] for L in spec["layers"])
@@ -5774,17 +5493,6 @@ def build(specs, name, doc):
                 f"\treturn planCataclysm(SPEC_{key}, epicenter, victims, options)\nend\n" \
                 "-- segundos (desde la llamada) en que empieza cada momento\n" + \
                 f"KaijuFireVFX.{key}Times = " + lua(times) + "\n\n"
-        elif spec.get("silhouette"):
-            sc = spec["silhouette"]
-            out += head + \
-                "-- model = el modelo (Model o Part). El aura sale del CONTORNO del modelo visto desde la cámara de cada\n" \
-                f"-- jugador y lo sigue si se mueve ({sc['ref']:g} studs de alto = tamaño 1; scale lo multiplica).\n" \
-                "-- duration = segundos que dura (nil = hasta que la apagues); intensity = 1 normal. Devuelve un control:\n" \
-                "--   aura:Stop(fade)          la apaga (se desvanece en fade s; nil = el de siempre)\n" \
-                "--   aura:SetIntensity(k)     más fuerte o más suave mientras dura\n" \
-                "--   aura.Active = true mientras se ve; aura.Holder = la Part que la contiene\n" + \
-                f"function KaijuFireVFX.{key}(model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl\n" \
-                f"\treturn playSilhouette(SPEC_{key}, model, scale, duration, intensity)\nend\n\n"
         elif spec.get("aura"):
             a = spec["aura"]
             out += head + \
@@ -5853,7 +5561,14 @@ def build(specs, name, doc):
         else:
             out += head + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, scale: number?, shake: number?): Part\n" \
-                f"\treturn play(SPEC_{key}, cf, scale, nil, shake)\nend\n\n"
+                f"\treturn play(SPEC_{key}, cf, scale, nil, shake)\nend\n"
+            if spec.get("impact") is not None:
+                out += "-- segundo (desde la llamada) en que pega: para sincronizar el daño o el empujón\n" \
+                    f"KaijuFireVFX.{key}Impact = {spec['impact']:g}\n"
+            if spec.get("radius") is not None:
+                out += "-- hasta dónde llega (studs a escala 1; multiplícalo por la escala): el radio del empujón\n" \
+                    f"KaijuFireVFX.{key}Radius = {spec['radius']:g}\n"
+            out += "\n"
     out += "return KaijuFireVFX\n"
     if any(spec.get("cubes") for spec in specs.values()):
         out = out.replace("KaijuFireVFX.UseLight = true\n", "KaijuFireVFX.UseLight = true\n"

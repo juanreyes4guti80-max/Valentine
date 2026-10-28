@@ -501,6 +501,7 @@ assert(R.stats.maxRate > 10, "IceWave: el frente no soltó su humo")
 assert(R.liveNamed("Slab") == 0, "IceWave: quedaron bloques en el suelo")
 print(("%-17s   ola: bloques y losas=%d rocas=%d raycasts=%d"):format("", R.stats.slabs, R.stats.rocks, R.stats.raycasts))
 run("FrostRoar", function() return MOON.FrostRoar(R.CFrame.new(0, 14, 0), 1, 1) end, 5)
+assert(MOON.FrostRoarImpact == 0.28 and MOON.FrostRoarRadius == 30, "FrostRoar: falta el momento o el radio del empujón")
 do -- las capas del suelo van al piso bajo él (la cabeza está a 14 studs); la niebla y las púas, en anillo
 	local mist, spikes = 0, 0
 	for i, p in R.stats.emitPos do
@@ -530,82 +531,6 @@ print(("%-17s   tiempos: %s"):format("", (function()
 	table.sort(o)
 	return table.concat(o, " ")
 end)()))
-runAura("MoonGuard", MOON, "MoonGuard")
--- AURA DE CONTORNO: sale del contorno del modelo visto desde la cámara. Una mano delante del pecho no tiene aura vista
--- de frente (queda dentro del cuerpo) y sí vista de lado (sobresale); las partes invisibles no cuentan; sigue al modelo
--- y se apaga y se limpia
-do
-	local function silModel()
-		local m = R.Instance.new("Model")
-		m.Name = "Kaiju"
-		m.Parent = R.workspace
-		local list = {}
-		local function part(name, sx, sy, sz, x, y, z, tr)
-			local p = R.Instance.new("Part")
-			p.Name = name
-			p.Size = R.Vector3.new(sx, sy, sz)
-			p.CFrame = R.CFrame.new(x, y, z)
-			p.Transparency = tr or 0
-			p.Parent = m
-			table.insert(list, p)
-			return p
-		end
-		part("Torso", 6, 9, 5, 0, 8, 0)
-		part("Head", 4, 3, 3, 2, 19, 0)
-		part("LegL", 3, 6, 2.5, -1, 3, 2)
-		part("LegR", 3, 6, 2.5, -1, 3, -2)
-		part("Tail", 8, 2.5, 2.5, -7, 2, 0)
-		part("Hand", 2, 2, 2, 4.5, 9, 0)
-		part("HumanoidRootPart", 2, 2, 1, 0, 8, 0, 1)
-		part("Hitbox", 30, 30, 30, 0, 11, 0, 1)
-		m.GetBoundingBox = function() return R.CFrame.new(0, 11, 0), R.Vector3.new(16.5, 22, 6) end
-		m.GetDescendants = function() return list end
-		return m
-	end
-	local EDGE = { RimGlow = true, RimHalo = true, FrostFlames = true, IceSpikes = true, ColdPour = true, ColdVapor = true,
-		RimGlints = true, IgniteSpikes = true, IgniteFlames = true, EndGlitter = true }
-	local function count()
-		local edge, hand, far = 0, 0, 0
-		for i, p in R.stats.emitPos do
-			if EDGE[R.stats.emitNames[i]] then
-				edge += 1
-				if p.X > 3.6 and p.Y > 7.4 and p.Y < 10.6 and math.abs(p.Z) < 1.6 then hand += 1 end
-				if math.abs(p.X - 0) > 13 or p.Y > 23 or p.Y < -1 or math.abs(p.Z) > 5 then far += 1 end
-			end
-		end
-		return edge, hand, far
-	end
-	R.reset()
-	local m = silModel()
-	R.setCamera(R.Vector3.new(40, 9, 0), R.Vector3.new(0, 9, 0))   -- de frente (la mano queda delante del pecho)
-	local aura = MOON.FrostAura(m, 1, nil, 1)
-	stepFor(0.8)
-	local e1, h1, f1 = count()
-	R.stats.emitPos, R.stats.emitNames = {}, {}
-	R.setCamera(R.Vector3.new(0, 9, 40), R.Vector3.new(0, 9, 0))   -- de lado (la mano sobresale)
-	stepFor(0.8)
-	local e2, h2, f2 = count()
-	print(("%-17s   contorno: de frente %d emisiones (en la mano %d) | de lado %d (en la mano %d) | fuera del cuerpo %d | rayos %d"):format(
-		"FrostAura", e1, h1, e2, h2, f1 + f2, R.stats.raycasts))
-	assert(e1 > 100 and e2 > 100, "FrostAura: no salió del contorno")
-	assert(h1 <= 1, "FrostAura: de frente, la mano delante del pecho no debe tener aura")
-	assert(h2 >= 8, "FrostAura: de lado, la mano sí debe tener aura")
-	assert(f1 + f2 == 0, "FrostAura: salió de una parte invisible o lejos del cuerpo")
-	aura:SetIntensity(1.5)
-	assert(aura.Active and aura.Intensity == 1.5, "FrostAura: intensidad")
-	aura:Stop()
-	stepFor(0.8)
-	assert(not aura.Active, "FrostAura: no se apagó")
-	stepFor(2.0)
-	assert(R.isDestroyed(aura.Holder) and select(3, R.pending()) == 0, "FrostAura: no se limpió al apagarla")
-	R.reset()
-	local m2 = silModel()
-	R.setCamera(R.Vector3.new(30, 12, 30), R.Vector3.new(0, 9, 0))
-	local a2 = MOON.FrostAura(m2, 1, 1.5)
-	stepFor(4.0)
-	assert(R.isDestroyed(a2.Holder) and select(3, R.pending()) == 0, "FrostAura: con duración no se limpió sola")
-	R.setCamera(R.Vector3.new(0, 10, 30))
-end
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"

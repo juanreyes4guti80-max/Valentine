@@ -4,11 +4,11 @@ Identidad: luz de luna FRÍA (plata y blanco), hielo y azul cristal, esquirlas a
 estrella. Formas cortantes y brillantes (Omnívora, en cambio, es nebulosa suave, púrpura y agujeros negros).
 
   M1        MoonBite (mordiscos 1-3) y MoonBiteFinisher (mordisco 4): mordiscos de energía sobre el rival
-  BLOQUEO   MoonGuard (aura mientras bloquea) y MoonGuardHit (cada golpe bloqueado)
+  BLOQUEO   MoonGuardHit (cada golpe bloqueado)
   PESADO    MoonFang: mordida lunar; brotan cristales de la herida y estallan
   SKILL 1   CrescentWave "Medialuna": una media luna de energía vuela de canto, corta el suelo y detona en hielo
   SKILL 2   IceWave "Ola de hielo": una ola de hielo se abre en triángulo y deja bloques de hielo, destrucción y humo
-  SKILL 3   FrostRoar "Rugido helado" (el rugido) + FrostAura (la mejora: aura de hielo de contorno)
+  SKILL 3   FrostRoar "Rugido helado": el grito helado que empuja hacia atrás (escape de combos y mejora)
   SKILL 4   Eclipse: una luna se eclipsa sobre la zona y cae una columna de luz de luna
 Los golpes sobre el rival usan el marco de playHit (X = derecha de la pantalla, Y = arriba, +Z hacia la cámara;
 tamaño 1 = rival de 22 studs). Las demás se escalan con `scale`.
@@ -16,7 +16,6 @@ tamaño 1 = rival de 22 studs). Las demás se escalan con `scale`.
 import math
 import random
 
-import vfx_aura as AU
 from vfx_omnivora import scatter, center, ring
 
 STATIC2x2 = ("Grid2x2", "Random", 0, True)
@@ -270,35 +269,6 @@ MOON_GUARD_HIT = {
     + shards(T_GUARD, 10, (6, 20, 1), speed=(30, 60), size=1.2, direction="Right", spread=(60, 40), name="ShardsR")
     + shards(T_GUARD, 10, (6, 20, 1), speed=(30, 60), size=1.2, direction="Left", spread=(60, 40), name="ShardsL")
     + glints(T_GUARD + 0.02, 6, (16, 24, 2)),
-}
-
-# ----------------------------------------------------------------------------- BLOQUEO (aura)
-GUARD = {"wisp": "mf_aura_wisp_2x2", "wisp_le": 0.55, "tongue": ICE, "tongue2": CRYST, "star": GLINT,
-         "star_up": 3, "mote": [(0, (255, 255, 255)), (1, (170, 210, 255))], "bolt": ICE, "halo": DEEP,
-         "streak": ICE, "ring": CRYST}
-
-
-def guard_layers():
-    L = AU.layers(GUARD)
-    for x in L:                     # la guardia es más quieta: menos partículas y sin estelas disparadas
-        if x["name"] in ("AuraStreaks", "AuraBolts"):
-            x["rate"] = round(x.get("rate", 0) * 0.3, 2)
-    L.append(dict(name="GuardShards", aura="body", box=(1.1, 0.9, 1.1), texture="mf_shard_2x2", flipbook=STATIC2x2,
-                  direction="Top", spread=(180, 180), speed=(1, 3), drag=1, lifetime=(0.9, 1.4),
-                  size=[(0, 0), (0.2, 1.1, 0.3), (0.8, 1.0, 0.3), (1, 0)], color=SHARD, light_emission=0.6,
-                  brightness=1.5, rotation=(0, 360), rot_speed=(-90, 90), rate=14, surge=6))
-    return L
-
-
-MOON_GUARD = {
-    "name": "MoonGuard",
-    "doc": ("MOONFANG BLOQUEO (mientras mantiene el bloqueo): aura de escarcha que delinea todo su cuerpo en hielo y "
-            "plata, con esquirlas de cristal que flotan a su alrededor. Enciéndela al bloquear y apágala con :Stop() "
-            "al soltar."),
-    "duration": 0,
-    "aura": dict(AU.aura_cfg([(150, 205, 255), (240, 248, 255)], (30, 60, 150), (150, 200, 255)),
-                 fade_in=0.15, fade_out=0.25, surge=1.6),
-    "layers": guard_layers(),
 }
 
 # ----------------------------------------------------------------------------- SKILL 1: Medialuna
@@ -870,22 +840,24 @@ ICE_WAVE = {
 }
 ICE_WAVE["layers"] = wave_layers(random.Random(52))
 
-# ----------------------------------------------------------------------------- SKILL 3: Rugido helado + aura de hielo
+# ----------------------------------------------------------------------------- SKILL 3: Rugido helado
 # El rugido sale de la cabeza: el frío se junta en el hocico y ruge (ondas de sonido heladas hacia adelante, líneas de
-# grito, un chorro de vaho con esquirlas) y en el suelo, bajo él, una onda de escarcha con púas de hielo alrededor.
-# La mejora es FrostAura: un aura de CONTORNO (el delineado es el aura): cada cliente busca el contorno del modelo visto
-# desde su cámara y de ahí salen llamas frías, cristales que brotan hacia afuera y brillos; del cuerpo se desprende
-# escarcha que cae. Si miras desde otro lado, el aura cambia de lugar con el contorno.
+# grito, un chorro de vaho con esquirlas) y en el suelo, bajo él, una onda de escarcha con púas de hielo alrededor. En
+# el juego es un escape de combos: se puede usar aunque le estén pegando y empuja hacia atrás a los que están cerca
+# (eso lo hace el servidor a los FrostRoarImpact s, hasta FrostRoarRadius studs × escala: la onda del suelo).
 T_ROAR = 0.28
 ROAR_BODY = (0, 0, 9)      # el centro del cuerpo respecto a la cabeza (+Z = detrás), en el suelo
+ROAR_RADIUS = 30.0         # hasta dónde llega la onda del suelo (escala 1): el radio del empujón
 ICE_RIM = [(0, (235, 248, 255)), (0.5, (170, 215, 255)), (1, (110, 165, 255))]
 FROST_ROAR = {
     "name": "FrostRoar",
     "doc": ("MOONFANG SKILL 3 (Rugido helado): el frío se junta en el hocico y ruge: ondas de sonido heladas, líneas de "
             "grito y un chorro de vaho con esquirlas hacia adelante; en el suelo, una onda de escarcha y púas de hielo "
-            "alrededor. Junto con él enciende FrostAura sobre su modelo (la mejora). cf = la cabeza, mirando hacia "
-            f"adelante (-Z). Ruge a los {T_ROAR:g} s."),
+            "alrededor. cf = la cabeza, mirando hacia adelante (-Z). Ruge a los FrostRoarImpact s; la onda del suelo "
+            "llega a FrostRoarRadius studs × escala (el empujón)."),
     "duration": 1.7,
+    "impact": T_ROAR,
+    "radius": ROAR_RADIUS,
     "light": {"color": (190, 225, 255), "brightness": 5, "range": 40, "time": 0.9, "delay": T_ROAR},
     "shakes": [(T_ROAR, 0.8, 0.7)],
     "layers": [
@@ -950,90 +922,6 @@ FROST_ROAR = {
              speed=(10, 16), drag=10, lifetime=(0.8, 1.0), size=[(0, 0.5), (0.15, 6.5, 1), (0.8, 7, 1), (1, 0)],
              transparency=[(0, 0.05), (0.8, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.5,
              emit=[(T_ROAR + 0.08, 1)]),
-    ],
-}
-
-# el aura de contorno: sil = "edge" (sale del contorno hacia afuera; up mezcla hacia arriba y push la separa del borde),
-# "body" (de los puntos de adentro: el hielo que se desprende) o "feet" (alrededor de los pies). rate = partículas por
-# segundo en total (no dependen de lo cerca que esté la cámara); burst = al encender; end_burst = al apagar.
-FROST_AURA = {
-    "name": "FrostAura",
-    "doc": ("MOONFANG SKILL 3 (la mejora del Rugido helado): aura de hielo de CONTORNO. Cada cliente busca el contorno "
-            "del modelo visto desde su cámara (Raycasts solo contra el modelo) y de ahí salen llamas frías, cristales "
-            "que brotan hacia afuera, brillos y vaho; del cuerpo se desprende escarcha que cae. Si cambias de ángulo, el "
-            "aura cambia de lugar con el contorno. Al encender brota el hielo de todo el contorno; al apagar se cae."),
-    "duration": 0,
-    "silhouette": {"ref": 22.0, "cell": 0.014, "max_rays": 640, "hz": 20, "fade_in": 0.3, "fade_out": 0.5,
-                   "breath": 0.15, "breath_hz": 0.9, "light": {"color": (150, 200, 255), "brightness": 1.2, "range": 18}},
-    "layers": [
-        # el borde que brilla: chispas cortas pegadas al contorno
-        dict(name="RimGlow", sil="edge", texture="fx_glow", rate=520, push=0.08, up=0.2, direction="Front",
-             speed=(0.5, 1.5), lifetime=(0.12, 0.18), size=[(0, 2.2), (0.4, 3.0), (1, 1.8)],
-             transparency=[(0, 0.2), (1, 1)], color=ICE_RIM, light_emission=1.0, brightness=1.5),
-        # el halo suave del contorno (le da cuerpo al aura)
-        dict(name="RimHalo", sil="edge", texture="fx_glow", rate=90, push=0.5, up=0.35, direction="Front",
-             speed=(1, 3), lifetime=(0.25, 0.4), size=[(0, 5), (0.4, 8), (1, 7)],
-             transparency=[(0, 0.75), (0.5, 0.8), (1, 1)], color=CRYST, light_emission=1.0, brightness=1.0,
-             zoffset=-1),
-        # las llamas frías que suben del contorno
-        dict(name="FrostFlames", sil="edge", side="up", texture="mf_frost_flame_4x4",
-             flipbook=("Grid4x4", "OneShot", 0, False), orientation=UP, rate=170, push=0.35, up=0.7, direction="Front", spread=(15, 15), speed=(5, 10), drag=1.0,
-             accel=(0, 6, 0), lifetime=(0.45, 0.65), size=[(0, 4.5, 0.8), (1, 6.8, 1.0)],
-             transparency=[(0, 0.15), (0.7, 0.25), (1, 1)], light_emission=0.75, brightness=1.4, zoffset=1),
-        # cristales que brotan hacia afuera del contorno y se rompen
-        dict(name="IceSpikes", sil="edge", texture="mf_ice_spikes_2x2", flipbook=STATIC2x2,
-             orientation="VelocityParallel", rate=70, push=0.55, up=0.15, direction="Front", spread=(10, 10),
-             speed=(1.5, 3.0), drag=3, lifetime=(0.4, 0.6), size=[(0, 0.4), (0.2, 4.6, 0.8), (0.75, 4.8, 0.8), (1, 0)],
-             transparency=[(0, 0.05), (0.75, 0.1), (1, 1)], color=SHARD, light_emission=0.4, brightness=1.8,
-             zoffset=2),
-        # vaho helado que cae del contorno de abajo (como hielo seco): la panza, las patas, la cola
-        dict(name="ColdPour", sil="edge", side="down", texture="fx_smoke_2x2", flipbook=STATIC2x2, rate=30, push=0.3,
-             up=-0.5, direction="Front", spread=(20, 20), speed=(2, 5), drag=1.5, accel=(0, -5, 0), lifetime=(0.9, 1.3),
-             size=[(0, 2.5, 0.5), (1, 7, 1)], transparency=[(0, 1), (0.2, 0.6), (0.8, 0.75), (1, 1)], color=ICE_FOG,
-             light_emission=0.25, rotation=(0, 360), rot_speed=(-30, 30)),
-        # vaho frío que sube despacio
-        dict(name="ColdVapor", sil="edge", texture="fx_smoke_2x2", flipbook=STATIC2x2, rate=18, push=0.4, up=0.85,
-             direction="Front", spread=(20, 20), speed=(2, 4), drag=0.8, accel=(0, 2, 0), lifetime=(0.9, 1.3),
-             size=[(0, 3, 0.5), (1, 8, 1)], transparency=[(0, 1), (0.3, 0.72), (0.8, 0.8), (1, 1)], color=ICE_FOG,
-             light_emission=0.2, rotation=(0, 360), rot_speed=(-30, 30), zoffset=-1),
-        # brillos de escarcha en el borde
-        dict(name="RimGlints", sil="edge", texture="kk_star_06", rate=26, push=0.3, up=0.6, direction="Front",
-             speed=(2, 5), drag=1, lifetime=(0.35, 0.6), size=twinkle(0.55), color=GLINT, light_emission=1.0,
-             brightness=2.0, rotation=(0, 45), zoffset=2),
-        # el hielo que se desprende del cuerpo y cae
-        dict(name="ShedFrost", sil="body", texture="fx_spark002", rate=30, direction="Bottom", spread=(30, 30),
-             speed=(1, 3), accel=(0, -14, 0), lifetime=(0.6, 1.0), size=twinkle(0.35), color=GLINT,
-             light_emission=1.0, brightness=1.8, rotation=(0, 45)),
-        dict(name="ShedShards", sil="body", texture="mf_shard_2x2", flipbook=STATIC2x2, rate=14, direction="Top",
-             spread=(60, 60), speed=(2, 5), accel=(0, -40, 0), lifetime=(0.6, 0.9),
-             size=[(0, 0.9, 0.2), (1, 0.6, 0.2)], transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD,
-             light_emission=0.4, brightness=1.4, rotation=(0, 360), rot_speed=(-300, 300)),
-        # niebla helada a los pies
-        dict(name="FeetMist", sil="feet", h=4.0, radius_k=0.75, texture="fx_smoke_2x2", flipbook=STATIC2x2, rate=6,
-             direction="Top", spread=(70, 70), speed=(1, 3), drag=1, lifetime=(1.2, 1.6), size=[(0, 6, 1), (1, 12, 2)],
-             transparency=[(0, 1), (0.3, 0.78), (0.8, 0.85), (1, 1)], color=ICE_FOG, light_emission=0.15,
-             rotation=(0, 360), zoffset=-2),
-        # al encender: el hielo brota de todo el contorno de golpe
-        dict(name="IgniteSpikes", sil="edge", burst=70, texture="mf_ice_spikes_2x2", flipbook=STATIC2x2,
-             orientation="VelocityParallel", push=0.5, up=0.1, direction="Front", spread=(12, 12), speed=(5, 9),
-             drag=4, lifetime=(0.45, 0.6), size=[(0, 0.5), (0.2, 4.5, 0.8), (0.7, 4.8, 0.8), (1, 0)],
-             transparency=[(0, 0.05), (0.75, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.7),
-        dict(name="IgniteFlames", sil="edge", burst=60, texture="mf_frost_flame_4x4",
-             flipbook=("Grid4x4", "OneShot", 0, False), orientation=UP, push=0.3, up=0.6, direction="Front",
-             spread=(15, 15), speed=(10, 18), drag=1.5, lifetime=(0.45, 0.6), size=[(0, 4.5, 0.6), (1, 6.5, 1)],
-             transparency=[(0, 0.1), (0.7, 0.2), (1, 1)], light_emission=0.8, brightness=1.5, zoffset=1),
-        dict(name="IgniteShards", sil="body", burst=26, texture="mf_shard_2x2", flipbook=STATIC2x2, direction="Top",
-             spread=(80, 80), speed=(14, 28), drag=0.6, accel=(0, -70, 0), lifetime=(0.6, 0.9),
-             size=[(0, 1.4, 0.3), (1, 1.0, 0.3)], transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD,
-             light_emission=0.45, brightness=1.5, rotation=(0, 360), rot_speed=(-500, 500)),
-        # al apagar: el hielo se cae
-        dict(name="EndShards", sil="body", end_burst=30, texture="mf_shard_2x2", flipbook=STATIC2x2,
-             direction="Top", spread=(70, 70), speed=(4, 10), drag=0.5, accel=(0, -60, 0), lifetime=(0.6, 0.9),
-             size=[(0, 1.1, 0.3), (1, 0.8, 0.3)], transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD,
-             light_emission=0.4, brightness=1.4, rotation=(0, 360), rot_speed=(-400, 400)),
-        dict(name="EndGlitter", sil="edge", end_burst=40, texture="kk_star_06", push=0.3, up=0.3,
-             direction="Front", speed=(3, 7), drag=1, accel=(0, -8, 0), lifetime=(0.5, 0.8), size=twinkle(0.6),
-             color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45)),
     ],
 }
 
@@ -1398,7 +1286,7 @@ ECLIPSE = {
 
 SPECS = {
     "MoonBite": MOON_BITE, "MoonBiteFinisher": MOON_BITE_FINISHER, "MoonFang": MOON_FANG,
-    "MoonGuard": MOON_GUARD, "MoonGuardHit": MOON_GUARD_HIT,
+    "MoonGuardHit": MOON_GUARD_HIT,
     "CrescentWave": CRESCENT_WAVE, "IceWave": ICE_WAVE,
-    "FrostRoar": FROST_ROAR, "FrostAura": FROST_AURA, "Eclipse": ECLIPSE,
+    "FrostRoar": FROST_ROAR, "Eclipse": ECLIPSE,
 }
