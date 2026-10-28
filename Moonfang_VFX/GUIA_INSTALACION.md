@@ -9,7 +9,7 @@ El kit está completo:
 - **Skill 3:** Rugido helado.
 - **Skill 4 (ULTIMATE):** Eclipse.
 
-Todo vive en un solo módulo, `MoonfangVFX`, con **32 texturas**.
+Todo vive en un solo módulo, `MoonfangVFX`, con **31 texturas**.
 
 ## Qué trae la carpeta
 
@@ -17,8 +17,8 @@ Todo vive en un solo módulo, `MoonfangVFX`, con **32 texturas**.
 |---|---|
 | `roblox/MoonfangVFX.rbxmx` | El módulo. Lo insertas en Studio. |
 | `roblox/MoonfangVFX.lua` | El mismo módulo en texto, por si lo quieres pegar a mano. |
-| `roblox/texturas_necesarias.txt` | La lista de las 32 texturas que usa. |
-| `textures/` | Las 32 texturas en PNG y sus licencias. |
+| `roblox/texturas_necesarias.txt` | La lista de las 31 texturas que usa. |
+| `textures/` | Las 31 texturas en PNG y sus licencias. |
 | `SubirTexturasVFX.rbxmx` | El plugin que sube las texturas por ti (en GitHub está en la carpeta `Plugin_Studio`). |
 | `preview/` (en GitHub y en el chat) | Los videos de cada ataque. |
 
@@ -42,7 +42,7 @@ Hay dos caminos y los dos te dan la misma carpeta `Moonfang_VFX`.
 
 1. **Instala el plugin (una sola vez).** En Studio, pestaña *Plugins* > *Plugins Folder*. Copia ahí `SubirTexturasVFX.rbxmx` y reinicia Studio.
 2. **Inserta el módulo.** Clic derecho sobre `ReplicatedStorage` > *Insert from File…* > `roblox/MoonfangVFX.rbxmx`.
-3. **Sube las texturas.** Pestaña *Plugins*, barra **VFX Kaiju** > **Subir texturas**. El plugin sube las 32 y pega sus IDs en el módulo.
+3. **Sube las texturas.** Pestaña *Plugins*, barra **VFX Kaiju** > **Subir texturas**. El plugin sube las 31 y pega sus IDs en el módulo.
 
 **Si el plugin falla**, súbelas a mano:
 
@@ -64,7 +64,7 @@ Hay dos caminos y los dos te dan la misma carpeta `Moonfang_VFX`.
 |---|---|---|---|
 | **M1** mordiscos 1-3 | `MoonBite(rival, escala, sacudida)` | **Solo los colmillos**, sin encía: dos filas de colmillos de cristal se cierran de golpe sobre el rival y quedan trabadas. Salen chispas de hielo hacia los lados y vaho helado. Los colmillos se rompen en esquirlas y queda una herida de escarcha que gotea cristalitos un segundo. | se traban a los **0.1 s** (`MoonBiteImpact`) |
 | **M1** mordisco 4 | `MoonBiteFinisher(rival, escala, sacudida)` | El remate es una **embestida**. Unas líneas de velocidad se cierran sobre el rival y dos filas de colmillos más grandes, con su eco, se traban, se rompen y revientan en una flor de púas de hielo. | se traban a los **0.14 s** (`MoonBiteFinisherImpact`) |
-| **Pesado** | `MoonFang(rival, escala, sacudida)` | Unas mandíbulas de luz plateada se cierran sobre el rival. De la mordida brotan agujas de cristal que crecen y estallan, con dos ondas de media luna. | muerde a los **0.14 s** (`MoonFangImpact`) |
+| **Pesado** | `MoonFang(rival, escala, sacudida)` | Dos filas de **colmillos de cristal grandes**, con su eco, se traban de golpe sobre el rival (solo los dientes, como el M1). De la mordida brotan agujas de cristal que crecen y estallan, con dos ondas de media luna. | se traban a los **0.14 s** (`MoonFangImpact`) |
 | **Bloqueo** (cada golpe bloqueado) | `MoonGuardHit(moonfang, escala, sacudida)` | Una media luna de luz aparece como escudo delante de él, con esquirlas que rebotan a los lados. | **0.02 s** (`MoonGuardHitImpact`) |
 | **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | Lanza una **media luna de energía** que vuela vertical y **de canto**: de lado se ve la media luna; desde atrás, una hoja fina que apunta hacia donde va. Tiene el filo blanco y duro y el cuerpo celeste y azul. Deja una estela de humo frío, brillos y esquirlas. Su cuerno de abajo **corta el suelo**: se abre una grieta con escarcha, saltan losas a los dos lados y caen **rocas cúbicas** que se quedan un rato en el camino. Al final **detona en hielo**, con lanzas de hielo, una nube helada, una corona de púas y un cráter de losas. | detona a los **0.76 s** (`CrescentWaveImpact`) |
 | **Skill 2: Ola de hielo** | `IceWave(cf, largo, apertura, escala, sacudida)` | Golpea el suelo y una **ola densa de humo helado** sale hacia adelante abriéndose en triángulo. Sale con fuerza y se va frenando. Deja una estela espesa que cubre el triángulo. A su paso el suelo se rompe y se escarcha, brotan **bloques de hielo**, saltan losas y salen rocas volando. Los bloques revientan en esquirlas a los dos segundos. | llega al fondo a los **1.12 s** |
@@ -218,7 +218,7 @@ MoonfangVFX.Meshes.IceCrystals = modelos.IceCrystal -- los cristales que brotan 
 - El modelo se clona y se escala al tamaño de cada pieza, y conserva su material, su color y su textura.
 - También sirve para las rocas del corte, con los nombres `RocksOut`, `RocksIn` y `RocksUp`. Con un modelo, la roca ya no toma el color del suelo.
 
-## Las 32 texturas
+## Las 31 texturas
 
 Están en `textures/` (y en el ZIP). El plugin las sube todas.
 
@@ -226,7 +226,7 @@ Están en `textures/` (y en el ZIP). El plugin las sube todas.
 
 | Textura | Qué es | Dónde se usa |
 |---|---|---|
-| `mf_chomp_4x4` | los colmillos de cristal que se cierran y se rompen (16 cuadros) | M1 |
+| `mf_chomp_4x4` | los colmillos de cristal que se cierran y se rompen (16 cuadros) | M1, pesado |
 | `mf_shard_2x2` | cuatro esquirlas de cristal facetadas | casi todo el kit |
 | `mf_spike` | una aguja de cristal | M1, pesado, Medialuna, Ola |
 | `mf_crescent` | media luna con borde brillante | pesado, bloqueo, Medialuna |
@@ -238,7 +238,7 @@ Están en `textures/` (y en el ZIP). El plugin las sube todas.
 | `mf_eclipse_sigil` | el círculo lunar del suelo, con las 8 fases de la luna | Eclipse |
 | `mf_moonbeam` | la luz de luna que cae en vetas (Beams de la columna) | Eclipse |
 
-**Del proyecto (de los otros kits):** `kz_beam_ring` (anillo), `kz_bite_4x4` (las mandíbulas del pesado), `kz_wind_arcs` (arcos de viento) y `om_cubes_2x2` (pedazos de tierra).
+**Del proyecto (de los otros kits):** `kz_beam_ring` (anillo), `kz_wind_arcs` (arcos de viento) y `om_cubes_2x2` (pedazos de tierra).
 
 **Kenney (CC0):** `kk_circle_02` (anillos del suelo y ondas), `kk_smoke_04` y `kk_smoke_07` (humo), `kk_star_06`, `kk_star_08` y `kk_star_09` (destellos), `kk_trace_01` y `kk_trace_03` (rayas y chispas).
 

@@ -14,7 +14,6 @@ kk_star_09.png
 kk_trace_01.png
 kk_trace_03.png
 kz_beam_ring.png
-kz_bite_4x4.png
 kz_wind_arcs.png
 mf_blade_glow.png
 mf_blade_line.png

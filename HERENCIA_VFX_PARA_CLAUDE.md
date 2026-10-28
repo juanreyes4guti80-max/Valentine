@@ -9,6 +9,12 @@ Hola. Este documento lo escribió el Claude que hizo los VFX de este proyecto en
 
 Léelo completo antes de tocar nada. Lo que dice sobre el usuario y sus gustos importa tanto como lo técnico.
 
+**Leyes globales del usuario:** están en `AGENTS.md`, en la raíz del repositorio, y valen para todos los kaijus.
+
+- Los **mordiscos** muestran solo los dientes, como los de Moonfang; nunca la encía ni una mandíbula entera.
+- **Nada de auras** de delineado.
+- Las **ULTIMATES** son de magnitud enorme.
+
 ---
 
 ## 1. El usuario y cómo trabajar con él

@@ -196,18 +196,17 @@ T_SHATTER = 0.62
 BITE_LINE = (18, 2, 1)
 MOON_FANG = {
     "name": "MoonFang",
-    "doc": ("MOONFANG PESADO (Colmillo lunar): unas mandíbulas de luz plateada se cierran de golpe sobre el rival; de "
-            "la mordida brotan cristales que crecen y a los 0.62 s estallan en pedazos, con dos ondas de media luna."),
+    "doc": ("MOONFANG PESADO (Colmillo lunar): dos filas de colmillos de cristal grandes (solo los dientes, sin encía, "
+            "con su eco) se traban de golpe sobre el rival; de la mordida brotan cristales que crecen y a los 0.62 s "
+            "estallan en pedazos, con dos ondas de media luna."),
     "duration": 1.1,
     "hit": {"lift": 3, "ref": 22, "angle": 0, "angled": False, "impact": T_BITE},
     "light": {"color": (170, 210, 255), "brightness": 5, "range": 30, "time": 0.4, "delay": T_BITE},
     "shakes": [(T_BITE, 0.85, 0.3), (T_SHATTER, 0.5, 0.22)],
-    "layers": [
-        dict(name="Jaws", texture="kz_bite_4x4", flipbook=ONESHOT, emit=[(0.0, 1)], lifetime=(0.36, 0.36),
-             size=[(0, 27), (1, 28)], transparency=[(0, 0.5), (0.06, 0), (0.62, 0), (1, 1)], color=SILVER,
-             light_emission=0.3, brightness=1.3, zoffset=5),
-        dict(name="JawGlow", texture="fx_glow", emit=[(0.08, 1)], lifetime=(0.3, 0.3), size=[(0, 18), (1, 30)],
-             transparency=[(0, 0.55), (1, 1)], color=CRYST, light_emission=1.0, brightness=0.9, zoffset=4),
+    # la mordida es como todas las del juego: solo los colmillos (ver AGENTS.md); se traban a los T_BITE s
+    "layers": chomp(T_BITE - 0.44 * 4 / 16, 40, bright=1.6, life=0.44)
+    + chomp(T_BITE - 0.44 * 4 / 16 + 0.015, 48, name="ChompEcho", bright=1.0, tr0=0.72, life=0.44)
+    + [
         # los cristales brotan de la mordida, se quedan y estallan
         dict(name="SpikesUp", texture="mf_spike",
              orientation="VelocityParallel", shape={"type": "Box", "size": BITE_LINE}, emit=[(T_BITE + 0.01, 7)],

@@ -53,7 +53,6 @@ MoonfangVFX.TEXTURES = {
 	kk_trace_01 = "rbxassetid://0",
 	kk_trace_03 = "rbxassetid://0",
 	kz_beam_ring = "rbxassetid://0",
-	kz_bite_4x4 = "rbxassetid://0",
 	kz_wind_arcs = "rbxassetid://0",
 	mf_blade_glow = "rbxassetid://0",
 	mf_blade_line = "rbxassetid://0",
@@ -6671,8 +6670,8 @@ local SPEC_MoonFang = {
 	cleanup = 1.63,
 	layers = {
 		{
-			name = "Jaws",
-			texture = "kz_bite_4x4",
+			name = "Chomp",
+			texture = "mf_chomp_4x4",
 			flipbook = {
 				layout = "Grid4x4",
 				mode = "OneShot",
@@ -6680,35 +6679,38 @@ local SPEC_MoonFang = {
 				startRandom = false,
 			},
 			emit = {
-				{0, 1},
+				{0.03, 1},
 			},
-			lifetime = {0.36, 0.36},
+			lifetime = {0.44, 0.44},
 			size = {
-				{0, 27, 0},
-				{1, 28, 0},
+				{0, 40, 0},
+				{1, 41.6, 0},
 			},
 			transparency = {
-				{0, 0.5, 0},
-				{0.06, 0, 0},
-				{0.62, 0, 0},
+				{0, 0, 0},
+				{0.8, 0, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
+					{215, 235, 255},
+				},
+				{
+					0.3,
 					{255, 255, 255},
 				},
 				{
-					0.5,
-					{220, 232, 255},
+					0.6,
+					{170, 210, 255},
 				},
 				{
 					1,
-					{165, 195, 250},
+					{120, 175, 255},
 				},
 			},
-			light_emission = 0.3,
-			brightness = 1.3,
+			light_emission = 0.8,
+			brightness = 1.6,
 			zoffset = 5,
 			speed = {0, 0},
 			spread = {0, 0},
@@ -6722,18 +6724,19 @@ local SPEC_MoonFang = {
 			line_u = 0,
 		},
 		{
-			name = "JawGlow",
+			name = "ChompGlow",
 			texture = "fx_glow",
 			emit = {
-				{0.08, 1},
+				{0.14, 1},
 			},
-			lifetime = {0.3, 0.3},
+			lifetime = {0.24, 0.24},
 			size = {
-				{0, 18, 0},
-				{1, 30, 0},
+				{0, 16, 0},
+				{0.3, 30, 0},
+				{1, 34, 0},
 			},
 			transparency = {
-				{0, 0.55, 0},
+				{0, 0.7, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -6751,8 +6754,106 @@ local SPEC_MoonFang = {
 				},
 			},
 			light_emission = 1,
-			brightness = 0.9,
-			zoffset = 4,
+			brightness = 0.8,
+			zoffset = -1,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ChompEcho",
+			texture = "mf_chomp_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 30,
+				startRandom = false,
+			},
+			emit = {
+				{0.045, 1},
+			},
+			lifetime = {0.44, 0.44},
+			size = {
+				{0, 48, 0},
+				{1, 49.92, 0},
+			},
+			transparency = {
+				{0, 0.72, 0},
+				{0.8, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 235, 255},
+				},
+				{
+					0.3,
+					{255, 255, 255},
+				},
+				{
+					0.6,
+					{170, 210, 255},
+				},
+				{
+					1,
+					{120, 175, 255},
+				},
+			},
+			light_emission = 0.8,
+			brightness = 1,
+			zoffset = 5,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "ChompEchoGlow",
+			texture = "fx_glow",
+			emit = {
+				{0.155, 1},
+			},
+			lifetime = {0.24, 0.24},
+			size = {
+				{0, 19.2, 0},
+				{0.3, 36, 0},
+				{1, 40.8, 0},
+			},
+			transparency = {
+				{0, 0.7, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 170, 255},
+				},
+				{
+					0.5,
+					{60, 115, 240},
+				},
+				{
+					1,
+					{30, 60, 190},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.8,
+			zoffset = -1,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -7499,7 +7600,7 @@ local SPEC_MoonFang = {
 	},
 }
 
--- MOONFANG PESADO (Colmillo lunar): unas mandíbulas de luz plateada se cierran de golpe sobre el rival; de la mordida brotan cristales que crecen y a los 0.62 s estallan en pedazos, con dos ondas de media luna.
+-- MOONFANG PESADO (Colmillo lunar): dos filas de colmillos de cristal grandes (solo los dientes, sin encía, con su eco) se traban de golpe sobre el rival; de la mordida brotan cristales que crecen y a los 0.62 s estallan en pedazos, con dos ondas de media luna.
 -- target = el rival (Model, Part, Vector3 o CFrame). El golpe sale delante de lo que ve la cámara y mira
 -- hacia ella. Con un Model o una Part se adapta al alto del rival (22 studs = tamaño 1; scale lo multiplica).
 function MoonfangVFX.MoonFang(target: any, scale: number?, shake: number?): Part
