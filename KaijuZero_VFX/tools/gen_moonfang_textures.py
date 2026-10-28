@@ -9,7 +9,8 @@ la capa (Color), así una misma textura sirve en plata, hielo o azul cristal.
   mf_frost_cracks    grietas de cristal que salen del centro (Decal del suelo)
   mf_moonlight_2x2   cuatro variantes de luz de luna que cae (cuerpo de la columna del Eclipse)
   mf_aura_wisp_2x2   lenguas del aura en plata y hielo (sale de om_aura_wisp_2x2, ya coloreada)
-  mf_blade_core / mf_blade_glow / mf_blade_frost   los Beams de la media luna (núcleo, halo y cuerpo de escarcha)
+  mf_blade_solid / mf_blade_line / mf_blade_glow   los Beams de la media luna (cuerpo nítido, filo y estelas, halo)
+  mf_frost_patch     escarcha que se forma en el suelo alrededor del corte de la medialuna (Decal)
 uso: python gen_moonfang_textures.py <carpeta textures de Moonfang> <carpeta textures de Omnívora>"""
 import math
 import os
@@ -201,7 +202,13 @@ def blade(w, h, kind):
     v = (np.arange(h, dtype=np.float32) + 0.5) / h * 2 - 1           # -1..1 a lo ancho
     u = (np.arange(w, dtype=np.float32) + 0.5) / w
     V_, U_ = np.meshgrid(v, u, indexing="ij")
-    if kind == "core":
+    if kind == "solid":                                           # cuerpo nítido: lleno y con borde duro
+        a = smooth(0.9, 0.76, np.abs(V_))
+        val = np.clip(0.8 + 0.2 * np.exp(-(V_ / 0.35) ** 2), 0, 1)
+    elif kind == "line":                                          # línea fina y dura (el filo y las estelas)
+        a = smooth(0.85, 0.5, np.abs(V_))
+        val = np.ones_like(a)
+    elif kind == "core":
         a = np.exp(-(V_ / 0.16) ** 2) * 1.0 + 0.45 * np.exp(-(V_ / 0.45) ** 2)
         val = np.clip(0.8 + 0.2 * np.exp(-(V_ / 0.16) ** 2), 0, 1)
     elif kind == "glow":
@@ -220,6 +227,40 @@ def blade(w, h, kind):
     a = np.clip(a, 0, 1)
     rgb = np.stack([val] * 3, -1)
     return Image.fromarray(np.dstack([np.clip(rgb * 255, 0, 255), a[..., None] * 255]).astype(np.uint8), "RGBA")
+
+
+def frost_patch(n):
+    """Escarcha que se forma en el suelo alrededor del corte: agujas finas de hielo que salen hacia afuera, con
+    ramitas como copos, sobre un velo suave. Igual en todas las direcciones (sirve girada o estirada)."""
+    from PIL import ImageDraw
+    rng = np.random.default_rng(41)
+    img = Image.new("L", (n, n), 0)
+    d = ImageDraw.Draw(img)
+    for _ in range(170):
+        r0 = n * 0.5 * math.sqrt(rng.uniform(0, 0.55))
+        a0 = rng.uniform(0, 2 * math.pi)
+        x0, y0 = n / 2 + math.cos(a0) * r0, n / 2 + math.sin(a0) * r0
+        ang = a0 + rng.uniform(-0.5, 0.5)
+        ln = n * rng.uniform(0.05, 0.16)
+        w = max(1, int(n / rng.uniform(260, 420)))
+        x1, y1 = x0 + math.cos(ang) * ln, y0 + math.sin(ang) * ln
+        d.line([(x0, y0), (x1, y1)], fill=int(rng.uniform(150, 255)), width=w)
+        for k in range(rng.integers(1, 4)):                       # ramitas a ±60°
+            f = rng.uniform(0.3, 0.8)
+            bx, by = x0 + (x1 - x0) * f, y0 + (y1 - y0) * f
+            for sg in (-1, 1):
+                ba = ang + sg * math.pi / 3
+                bl = ln * rng.uniform(0.15, 0.3)
+                d.line([(bx, by), (bx + math.cos(ba) * bl, by + math.sin(ba) * bl)], fill=int(rng.uniform(110, 200)),
+                       width=max(1, w - 1))
+    needles = np.asarray(img, np.float32) / 255
+    glow = np.asarray(img.filter(ImageFilter.GaussianBlur(n / 140)), np.float32) / 255
+    x, y = grid(n)
+    r = np.hypot(x, y)
+    veil = 0.32 * smooth(0.95, 0.15, r)
+    a = np.clip(needles * 0.95 + glow * 0.8 + veil, 0, 1) * smooth(1.0, 0.55, r)
+    v = np.clip(0.72 + 0.28 * needles, 0, 1)
+    return v, a
 
 
 def atlas(tiles, n):
@@ -272,8 +313,10 @@ def main(out, omni_tex):
     rgb = np.where(t < 0.5, deep + (ice - deep) * (t / 0.5), ice + (white - ice) * ((t - 0.5) / 0.5))
     Image.fromarray(np.dstack([np.clip(rgb * 255, 0, 255), w[..., 3:] * 255]).astype(np.uint8), "RGBA") \
         .save(os.path.join(out, "mf_aura_wisp_2x2.png"))
-    for kind in ("core", "glow", "frost"):
+    for kind in ("solid", "line", "glow"):
         blade(256, 128, kind).save(os.path.join(out, f"mf_blade_{kind}.png"))
+    v, a = frost_patch(N)
+    save(v, a, os.path.join(out, "mf_frost_patch.png"), 256)
     print("OK texturas de Moonfang ->", out)
 
 

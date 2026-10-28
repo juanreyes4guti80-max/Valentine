@@ -165,7 +165,7 @@ M.task = {
 -- instancias
 M.stats = { created = 0, destroyed = 0, emits = 0, emitted = 0, maxRate = 0, decals = 0, rocks = 0, landings = 0,
 	emitMinZ = 0, emitMaxZ = 0, partMinZ = 0, partMaxZ = 0, raycasts = 0, cubes = 0, cubeGreen = 0, cubeMaxR = 0, clears = 0,
-	lensMax = 0, beamMaxW = 0, beamsOff = 0, maxPSize = 0, flashMin = 1, cataRocks = 0 }
+	lensMax = 0, beamMaxW = 0, beamsOff = 0, maxPSize = 0, flashMin = 1, cataRocks = 0, slabs = 0, gash = 0 }
 M.orbPath = {}
 M.byClass = {}
 local live = {}
@@ -256,6 +256,8 @@ function Inst.new(class)
 				if pos then table.insert(M.stats.streamPos, pos) end
 			end
 			if k == "Name" and v == "Rock" then M.stats.rocks += 1 end
+			if k == "Name" and v == "Slab" then M.stats.slabs += 1 end
+			if k == "Name" and v == "GashSeam" then M.stats.gash += 1 end
 			if k == "Name" and v == "Cube" then M.stats.cubes += 1 end
 			if props.Name == "Cube" and k == "Color" and v.G > v.R and v.G > v.B then M.stats.cubeGreen += 1 end
 			-- recorrido del agujero negro y tamaño de su lente

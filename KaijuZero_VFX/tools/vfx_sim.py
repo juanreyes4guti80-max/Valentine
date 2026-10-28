@@ -243,7 +243,8 @@ def apply_bloom(buf, threshold=0.92, intensity=0.55, sigmas=(4, 14)):
 
 
 class Meteor:
-    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "size", "frame", "L", "acc", "landed", "dead", "stuck_until")
+    __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "size", "frame", "L", "acc", "landed", "dead", "stuck_until",
+                 "R3", "axis", "spin", "col")
 
 
 def spawn_meteor(L, origin, rng, scale, Rf):
@@ -269,6 +270,13 @@ def spawn_meteor(L, origin, rng, scale, Rf):
     m.rots = rng.uniform(*sp.get("rot_speed", (0, 0)))
     m.frame = sp.get("frame", rng.randrange(4))
     m.stuck_until = None
+    if sp.get("cube"):                           # se dibuja como lo que es en Roblox: un bloque que da vueltas
+        m.R3 = axis_angle((0, 1, 0), rng.uniform(0, 6.28)) if sp.get("upright") else \
+            orthonormal(np.array([[rng.uniform(-1, 1) for _ in range(3)] for _ in range(3)]))
+        m.axis = np.array([rng.uniform(-1, 1) for _ in range(3)])
+        m.spin = math.radians(rng.uniform(*sp.get("rot_speed", (0, 0))))
+        base = np.array(sp.get("preview_color", sp.get("color", (255, 255, 255))), float) / 255
+        m.col = np.clip(base * rng.uniform(*sp.get("color_var", (1.0, 1.0))), 0, 1)
     m.L = L
     m.acc = [0.0] * len(L.get("trails", []))
     m.landed = False
@@ -494,47 +502,193 @@ def draw_beam(buf, tb, cam, Bm, A, Bp, w, fade, t, scale):
 
 
 
-def blade_chains(B, t, o0, Rf, length, scale):
-    """La media luna que vuela (lo mismo que runBlade en el módulo): por capa y por fantasma,
-    (puntos, anchos, transparencia, capa). Adelante = -Z local; la punta va delante y los cuernos atrás."""
-    t0, tw, fd = B["t0"], B["travel"], B["fade"]
-    if t < t0 or t > t0 + tw + fd:
-        return []
-    u = min(max((t - t0) / tw, 0.0), 1.0)
-    gr = min(max((t - t0) / max(B["grow"], 1e-3), 0.0), 1.0)
-    gr = gr * gr * (3 - 2 * gr)
-    k = scale * (B["start_k"] + (1 - B["start_k"]) * gr) * (1 + B["swell"] * u)
-    fz = min(max((t - t0 - tw) / max(fd, 1e-3), 0.0), 1.0)
-    fade = fz * fz * (3 - 2 * fz)
-    R = B["radius"] * k
-    arc, tl = math.radians(B["arc"]), math.radians(B["tilt"])
-    axis = np.array([math.sin(tl), math.cos(tl), 0.0])
-    bow_axis = np.array([math.cos(tl), -math.sin(tl), 0.0])
-    bow = B.get("bow", 0.0)
-    n = B["n"]
-    ymin = 0.0
-    for i in range(n):
-        th = -arc + 2 * arc * i / (n - 1)
-        ymin = min(ymin, math.sin(th) * axis[1] + bow * (1 - math.cos(th)) * bow_axis[1])
-    h = B["lift"] * scale - R * ymin
-    o0 = np.asarray(o0, float)
-    out = []
-    for L in B["layers"]:
-        for lag, xtr in [(0.0, 0.0)] + [tuple(gh) for gh in L.get("ghosts", [])]:
-            d = length * u - (L.get("back", 0.0) + lag) * scale
-            if d < 0:
+def rot_x(a):
+    return np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]])
+
+
+def rot_y(a):
+    return np.array([[math.cos(a), 0, math.sin(a)], [0, 1, 0], [-math.sin(a), 0, math.cos(a)]])
+
+
+def rot_z(a):
+    return np.array([[math.cos(a), -math.sin(a), 0], [math.sin(a), math.cos(a), 0], [0, 0, 1]])
+
+
+def ease_out_back(p, k=1.6):
+    p = min(max(p, 0.0), 1.0) - 1
+    return 1 + p * p * ((k + 1) * p + k)
+
+
+class BladeGeo:
+    """La media luna de energía que vuela (lo mismo que runBlade en el módulo). Va vertical y de canto: de lado se ve
+    la media luna (la punta adelante, los cuernos atrás) y desde atrás, una hoja fina que apunta hacia donde va.
+    Está hecha de trazos finos (strands): j = 0 es el filo de afuera y j = 1 el borde de adentro; cada trazo es un
+    arco de radio (1 - shrink·j)·R que empieza thick·R·j detrás de la punta y abarca arc_k·arc grados hacia cada
+    cuerno. Adelante = -Z local. Su cuerno de abajo roza el suelo: ahí corta (gash), las losas del suelo saltan a los
+    lados (slabs) y al final queda un cráter de losas (crater)."""
+
+    def __init__(self, B, length, scale):
+        self.B, self.len, self.s = B, length, scale
+        self.arc, tl = math.radians(B["arc"]), math.radians(B["tilt"])
+        self.axis = np.array([math.sin(tl), math.cos(tl), 0.0])
+        self.n = B["n"]
+        # lo más bajo de la hoja (por unidad de radio): roza el suelo y ahí corta
+        self.ymin, self.low_x, self.low_z = 0.0, 0.0, 0.0
+        for S_ in B["strands"]:
+            for i in range(self.n):
+                P = self.local(S_, i / (self.n - 1), 0.0, 1.0, 0.0)
+                if P[1] < self.ymin:
+                    self.ymin, self.low_x, self.low_z = P[1], P[0], P[2]
+        self.slabs = self._make_slabs()
+
+    def local(self, S_, sm, d, R, h):
+        """Punto (local) del trazo S_ en sm (0..1, de un cuerno al otro) con la punta a d studs del origen."""
+        a = self.arc * S_.get("arc_k", 1.0)
+        th = -a + 2 * a * sm
+        Rj = R * (1 - self.B["shrink"] * S_["j"])
+        back = self.B["thick"] * R * S_["j"]
+        return np.array([0.0, h, -d + back + Rj * (1 - math.cos(th))]) + self.axis * (Rj * math.sin(th))
+
+    def state(self, t):
+        """(u, k, R, h, fade) en t, o None si la hoja no está."""
+        B = self.B
+        t0, tw, fd = B["t0"], B["travel"], B["fade"]
+        if t < t0 or t > t0 + tw + fd:
+            return None
+        u = min(max((t - t0) / tw, 0.0), 1.0)
+        gr = min(max((t - t0) / max(B["grow"], 1e-3), 0.0), 1.0)
+        gr = gr * gr * (3 - 2 * gr)
+        k = self.s * (B["start_k"] + (1 - B["start_k"]) * gr)
+        fz = min(max((t - t0 - tw) / max(fd, 1e-3), 0.0), 1.0)
+        R = B["radius"] * k
+        return u, k, R, B["lift"] * self.s - R * self.ymin, fz * fz * (3 - 2 * fz)
+
+    def chains(self, t, o0, Rf):
+        """Por trazo: (puntos, anchos, transparencia, trazo)."""
+        st = self.state(t)
+        if st is None:
+            return []
+        u, k, R, h, fade = st
+        d, n, out = self.len * u, self.n, []
+        for S_ in self.B["strands"]:
+            tr = 1 - (1 - S_["transparency"]) * (1 - fade)
+            pts = [o0 + Rf @ self.local(S_, i / (n - 1), d, R, h) for i in range(n)]
+            ws = [S_["width"] * k * max(math.sin(math.pi * i / (n - 1)), 0.0) ** self.B["taper"] for i in range(n)]
+            out.append((pts, ws, tr, S_))
+        return out
+
+    def emit_points(self, t, o0, Rf, E):
+        """Dónde están los emisores de la estela (pegados a la hoja) mientras vuela."""
+        B = self.B
+        if t < B["t0"] or t > B["t0"] + B["travel"]:
+            return []
+        u, k, R, h, fade = self.state(t)
+        S_ = {"j": E.get("j", 0.0), "arc_k": E.get("arc_k", 1.0)}
+        return [o0 + Rf @ self.local(S_, sm, self.len * u, R, h) for sm in E["at"]]
+
+    # ---------------------------------------------------------------- el corte del suelo
+    def R_full(self):
+        return self.B["radius"] * self.s
+
+    def cut_head(self, t):
+        """Hasta dónde va el corte (studs desde el origen) en t."""
+        st = self.state(min(t, self.B["t0"] + self.B["travel"]))
+        if st is None:
+            return -1.0
+        u, k, R, h, fade = st
+        return self.len * u - self.low_z * R
+
+    def cut_time(self, x):
+        """Cuándo el corte llega a x (studs desde el origen)."""
+        B = self.B
+        return B["t0"] + B["travel"] * min(max((x + self.low_z * self.R_full()) / self.len, 0.0), 1.0)
+
+    def gash(self, t):
+        """Los tramos del corte: (desde, hasta, lado, edad); edad = s desde que el corte pasó por el inicio."""
+        G = self.B.get("gash")
+        if not G or t < self.B["t0"]:
+            return []
+        seg = G["seg"] * self.s
+        head = self.cut_head(t)
+        side = self.low_x * self.R_full()
+        out, a = [], G.get("start", 0.0) * self.s
+        while a < self.len - 1e-6:
+            b = min(a + seg, self.len)
+            vis = min(head, b) - a
+            if vis > 0.05:
+                out.append((a, a + vis, side, t - self.cut_time(a)))
+            a = b
+        return out
+
+    # ---------------------------------------------------------------- las losas del suelo
+    def _slab(self, rng, SL, x, z, across_yaw, side, t_s):
+        s = self.s
+        ice = SL.get("ice") and rng.random() < SL["ice"]["frac"]
+        base = SL
+        if ice:                                   # placa de hielo: más delgada y más parada
+            SL = dict(SL, **{k: v for k, v in SL["ice"].items() if k in ("wid", "thick", "len", "tilt")})
+        w = rng.uniform(*SL["wid"]) * s
+        th = rng.uniform(*SL["thick"]) * s
+        ln = rng.uniform(*SL["len"]) * s
+        a = math.radians(rng.uniform(*SL["tilt"]))
+        x += side * w / 2 * math.cos(a) * math.cos(across_yaw)
+        z += side * w / 2 * math.cos(a) * math.sin(across_yaw)
+        R3 = rot_y(-across_yaw + math.radians(rng.uniform(-SL["yaw"], SL["yaw"]))) @ \
+            rot_x(math.radians(rng.uniform(-SL["pitch"], SL["pitch"]))) @ rot_z(-side * a)
+        top = w / 2 * math.sin(a) + th / 2 * math.cos(a)            # del centro a la esquina más alta
+        y0 = top * (2 * SL["show"] - 1)                              # show = qué fracción asoma del suelo
+        return {"t": t_s, "x": x, "z": z, "size": (w, th, ln), "R3": R3, "y0": y0, "drop": y0 + top + 0.3 * s,
+                "hold": rng.uniform(*SL["hold"]), "rise": SL["rise"], "sink": SL["sink"],
+                "ice": base["ice"] if ice else None}
+
+    def _make_slabs(self):
+        B, s, out = self.B, self.s, []
+        SL = B.get("slabs")
+        if SL:          # dos filas de losas a los lados del corte, que saltan cuando pasa
+            rng = random.Random(SL.get("seed", 5))
+            xc = self.low_x * self.R_full()
+            z, zend = SL["start"] * s, self.len - self.low_z * self.R_full()
+            while z < zend:
+                for side in (-1, 1):
+                    zz = z + rng.uniform(-0.3, 0.3) * SL["spacing"] * s
+                    t_s = self.cut_time(zz) + rng.uniform(0, SL["delay"])
+                    out.append(self._slab(rng, SL, xc + side * SL["gap"] * s, -zz, 0.0, side, t_s))
+                z += SL["spacing"] * s
+        CR = B.get("crater")
+        if CR:          # el cráter de la detonación: losas en anillo, inclinadas hacia afuera
+            rng = random.Random(CR.get("seed", 6))
+            for i in range(CR["count"]):
+                phi = 2 * math.pi * (i + rng.uniform(-0.3, 0.3)) / CR["count"]
+                r = CR["radius"] * s * rng.uniform(0.85, 1.15)
+                t_s = B["t0"] + B["travel"] + CR["at"] + rng.uniform(0, CR["delay"])
+                out.append(self._slab(rng, CR, r * math.cos(phi), -self.len + r * math.sin(phi), phi, 1, t_s))
+        return out
+
+    def slab_poses(self, t, o0, Rf, ground_y):
+        """(centro, giro, tamaño, losa) de las losas visibles en t."""
+        out = []
+        for L in self.slabs:
+            age = t - L["t"]
+            if age < 0:
                 continue
-            tr = 1 - (1 - L["transparency"]) * (1 - xtr) * (1 - fade)
-            pts, ws = [], []
-            for i in range(n):
-                sm = i / (n - 1)
-                th = -arc + 2 * arc * sm
-                loc = np.array([0.0, h, -d + R * (1 - math.cos(th))]) + axis * (R * math.sin(th)) \
-                    + bow_axis * (bow * R * (1 - math.cos(th)))
-                pts.append(o0 + Rf @ loc)
-                ws.append(L["width"] * k * max(math.sin(math.pi * sm), 0.0) ** B["taper"])
-            out.append((pts, ws, tr, L))
-    return out
+            if age < L["rise"]:
+                y = L["y0"] - L["drop"] * (1 - ease_out_back(age / L["rise"]))
+            elif age < L["rise"] + L["hold"]:
+                y = L["y0"]
+            elif age < L["rise"] + L["hold"] + L["sink"]:
+                p = (age - L["rise"] - L["hold"]) / L["sink"]
+                y = L["y0"] - L["drop"] * p * p
+            else:
+                continue
+            P = o0 + Rf @ np.array([L["x"], 0.0, L["z"]])
+            P[1] = ground_y + y
+            out.append((P, Rf @ L["R3"], L["size"], L))
+        return out
+
+
+def blade_chains(B, t, o0, Rf, length, scale):
+    """Compatibilidad: las cadenas de la media luna en t."""
+    return BladeGeo(B, length, scale).chains(t, o0, Rf)
 
 
 def draw_box(buf, cam, pr_):
@@ -565,6 +719,156 @@ def draw_box(buf, cam, pr_):
         shade = 0.45 + 0.55 * max(0.0, float(n @ CubeSim.SUN))
         dst = buf[y0:y1, x0:x1]
         dst[:] = dst * (1 - mm) + col * shade * mm
+
+
+def axis_angle(axis, ang):
+    """Matriz de giro de `ang` rad alrededor de `axis` (como CFrame.fromAxisAngle)."""
+    a = np.asarray(axis, float) / max(np.linalg.norm(axis), 1e-9)
+    K = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+    return np.eye(3) + math.sin(ang) * K + (1 - math.cos(ang)) * (K @ K)
+
+
+def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0):
+    """Una Part (bloque) girada: caras sombreadas con el sol, como los cubos de la zona."""
+    from PIL import ImageDraw
+    half = np.asarray(size3, float) * 0.5
+    corners = {}
+    for f in CubeSim.FACES:
+        for q in f:
+            if q not in corners:
+                pr = cam.project(pos + R3 @ (np.array(q, float) * half))
+                if pr is None:
+                    return
+                corners[q] = (pr[0], pr[1])
+    xs = [v[0] for v in corners.values()]
+    ys = [v[1] for v in corners.values()]
+    H, W = buf.shape[:2]
+    x0, y0 = int(math.floor(min(xs))) - 1, int(math.floor(min(ys))) - 1
+    x1, y1 = int(math.ceil(max(xs))) + 1, int(math.ceil(max(ys))) + 1
+    if x1 <= 0 or y1 <= 0 or x0 >= W or y0 >= H or (x1 - x0) * (y1 - y0) > 250000:
+        return
+    ss = 4 if (x1 - x0) < 60 else 2
+    pw, ph = x1 - x0, y1 - y0
+    rgb = np.zeros((ph, pw, 3), np.float32)
+    acc = np.zeros((ph, pw, 1), np.float32)
+    col = np.asarray(col, float)
+    for f, nrm in zip(CubeSim.FACES, CubeSim.NORMALS):
+        n = R3 @ np.array(nrm, float)
+        fc = pos + n * float(np.abs(np.array(nrm, float)) @ half)
+        if n @ (cam.C - fc) <= 0:
+            continue
+        shade = 0.42 + 0.58 * max(0.0, float(n @ CubeSim.SUN))
+        m = Image.new("L", (pw * ss, ph * ss), 0)
+        ImageDraw.Draw(m).polygon([((corners[q][0] - x0) * ss, (corners[q][1] - y0) * ss) for q in f], fill=255)
+        mm = np.asarray(m.resize((pw, ph), Image.BOX), np.float32)[..., None] / 255
+        mm = np.minimum(mm, 1 - acc)
+        rgb += mm * col * shade
+        acc += mm
+    xa, ya, xb, yb = max(0, x0), max(0, y0), min(W, x1), min(H, y1)
+    dst = buf[ya:yb, xa:xb]
+    sa = acc[ya - y0:yb - y0, xa - x0:xb - x0] * alpha
+    dst *= (1 - sa)
+    dst += rgb[ya - y0:yb - y0, xa - x0:xb - x0] * alpha
+
+
+def draw_ground_quad(buf, cam, center, along, half_len, half_w, rgb, alpha, tex=None, light=0.0):
+    """Rectángulo horizontal en el suelo (una Part delgada o un Decal sobre ella) centrado en `center` y con el largo
+    hacia `along`. tex = RGBA 0..1 estirada sobre el rectángulo (u a lo largo, v a lo ancho). light = LightEmission:
+    0 tapa lo de abajo, 1 suma luz."""
+    center = np.asarray(center, float)
+    along = np.asarray(along, float)
+    along = along / np.linalg.norm(along)
+    perp = np.array([-along[2], 0.0, along[0]])
+    prs = [cam.project(center + along * a + perp * b) for a in (-half_len, half_len) for b in (-half_w, half_w)]
+    if any(p is None for p in prs):
+        return
+    H, W = buf.shape[:2]
+    xa, xb = max(0, int(min(p[0] for p in prs)) - 2), min(W, int(max(p[0] for p in prs)) + 3)
+    ya, yb = max(0, int(min(p[1] for p in prs)) - 2), min(H, int(max(p[1] for p in prs)) + 3)
+    if xa >= xb or ya >= yb:
+        return
+    us, vs = np.meshgrid(np.arange(xa, xb) + 0.5, np.arange(ya, yb) + 0.5)
+    r = cam.ray(us.ravel(), vs.ravel())
+    ry = np.where(np.abs(r[1]) < 1e-4, -1e-4, r[1])
+    tt = (center[1] - cam.C[1]) / ry
+    rel = cam.C[:, None] + r * tt - center[:, None]
+    a, b = along @ rel, perp @ rel
+    # lo que mide un píxel en el suelo en cada dirección (se estira en la dirección de la mirada)
+    hv = np.stack([r[0], r[2]])
+    hv = hv / np.maximum(np.linalg.norm(hv, axis=0), 1e-9)
+    stretch = 1 / np.maximum(np.abs(ry), 0.08) ** 2 - 1
+    base = np.abs(tt) / cam.f
+    pa = base * np.sqrt(1 + (along[0] * hv[0] + along[2] * hv[1]) ** 2 * stretch)
+    pb = base * np.sqrt(1 + (perp[0] * hv[0] + perp[2] * hv[1]) ** 2 * stretch)
+    cov = np.clip((half_len - np.abs(a)) / pa + 0.5, 0, 1) * np.clip((half_w - np.abs(b)) / pb + 0.5, 0, 1)
+    cov[tt <= 0] = 0
+    if not cov.any():
+        return
+    rgb = np.asarray(rgb, np.float32)
+    if tex is not None:
+        th, tw = tex.shape[:2]
+        uu = np.clip(((a / (2 * half_len) + 0.5) * tw).astype(int), 0, tw - 1)
+        vv = np.clip(((b / (2 * half_w) + 0.5) * th).astype(int), 0, th - 1)
+        smp = tex[vv, uu]
+        col = smp[:, :3] * rgb
+        al = smp[:, 3] * cov * alpha
+    else:
+        col = np.broadcast_to(rgb, (cov.size, 3))
+        al = cov * alpha
+    al = al.reshape(yb - ya, xb - xa, 1).astype(np.float32)
+    dst = buf[ya:yb, xa:xb]
+    dst *= (1 - al * (1 - light))
+    dst += col.reshape(yb - ya, xb - xa, 3) * al
+
+
+def slab_color(B, SLb):
+    """Color de vista previa de una losa (en Roblox toma el color y el material del suelo)."""
+    if "col" not in SLb:
+        base = np.array(B["slab_color"], float) / 255
+        h = (hash((round(SLb["x"], 2), round(SLb["z"], 2))) % 1000) / 1000
+        SLb["col"] = np.clip(base * (0.82 + 0.25 * h), 0, 1)
+    return SLb["col"]
+
+
+def lerp_rgb(a, b, u):
+    return (np.asarray(a, float) * (1 - u) + np.asarray(b, float) * u) / 255
+
+
+def draw_gash(buf, cam, tb, geo, t, o0, Rf, ground_y):
+    """El corte que deja la hoja en el suelo (lo mismo que en runBlade): por tramo, escarcha (Decal), la grieta
+    oscura y la línea de hielo (Neon) que se enfría; cada tramo vive `life` s y se desvanece en `fade` s."""
+    G = geo.B["gash"]
+    s = geo.s
+    along = Rf @ np.array([0.0, 0.0, -1.0])
+    Fr, Cr, Ln = G["frost"], G["crevice"], G["seam"]
+    ftex = np.asarray(tb.get(Fr["texture"], "None")[0], np.float32) / 255
+    for a, b, side, age in geo.gash(t):
+        if age < 0:
+            continue
+        fz = min(max((age - G["life"]) / G["fade"], 0.0), 1.0)
+        if fz >= 1:
+            continue
+        mid = o0 + Rf @ np.array([side, 0.0, -(a + b) / 2]) + np.array([0.0, ground_y - o0[1], 0.0])
+        hl = (b - a) / 2
+        op = lambda u: min(max(u, 0.0), 1.0)
+        # escarcha: se extiende desde la línea en `spread` s
+        sp = op(age / G["spread"])
+        sp = sp * sp * (3 - 2 * sp)
+        fw = Fr["width"] * s * (0.35 + 0.65 * sp) / 2
+        ftr = 1 - (1 - Fr["transparency"]) * (1 - fz)
+        glow = 1.0 + 1.5 * Fr.get("light_emission", 0.0)
+        draw_ground_quad(buf, cam, mid + np.array([0, 0.08 * s, 0]), along, hl + Fr["overlap"] * s, fw,
+                         np.asarray(Fr["color"], float) / 255 * glow, 1 - ftr, tex=ftex, light=Fr.get("light_emission", 0.0))
+        # la grieta: se abre en `open` s
+        op_ = op(age / G["open"])
+        cw = Cr["width"] * s * (0.3 + 0.7 * op_) / 2
+        draw_ground_quad(buf, cam, mid + np.array([0, Cr["height"] * s, 0]), along, hl, cw,
+                         np.asarray(Cr["color"], float) / 255, 1 - fz)
+        # la veta de hielo (Neon) en el fondo: clara al cortar, se enfría a azul hielo
+        cu = op(age / G["cool"])
+        col = lerp_rgb(Ln["hot"], Ln["cold"], cu * cu * (3 - 2 * cu)) * Ln.get("neon_k", 1.8)
+        draw_ground_quad(buf, cam, mid + np.array([0, Ln["height"] * s, 0]), along, hl, Ln["width"] * s / 2,
+                         col, (1 - Ln.get("transparency", 0.0)) * (1 - fz))
 
 
 def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration=None, seed=7,
@@ -599,6 +903,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         o0 = np.array([c[0], ground_y, c[2]])
         orbst = OrbSim(spec, A, np.array([c[0], ground_y + O["height"] * scale, c[2]]), scale, cam, ground_y)
     meteors = []
+    blade_geo = BladeGeo(spec["blade"], length, scale) if spec.get("blade") else None
+    blade_acc = {}
     streams = []   # (L, origin, t_base)
     for L in spec["layers"]:
         if L.get("orb"):
@@ -669,6 +975,15 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 acc -= 1.0
                 parts.append(spawn(L, o, rng, scale, Rs, length))
             st_[3] = acc
+        # la hoja que vuela suelta su estela (emisores pegados a ella, por tasa)
+        if blade_geo is not None:
+            for ei_, E in enumerate(spec["blade"].get("emitters", [])):
+                for pi_, P in enumerate(blade_geo.emit_points(t, o0, Rf, E)):
+                    key = (ei_, pi_)
+                    blade_acc[key] = blade_acc.get(key, 0.0) + E["rate"] * dt
+                    while blade_acc[key] >= 1.0:
+                        blade_acc[key] -= 1.0
+                        parts.append(spawn(E, P, rng, scale, Rf, length))
         # proyectil que crece: se mueve y emite sus capas
         if orbst is not None:
             parts += orbst.step(t, dt, rng)
@@ -747,6 +1062,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         buf = bg.copy() if draw else None
         if draw and cubes is not None:
             cubes.draw_shadows(buf, cam)
+        if draw and blade_geo is not None and spec["blade"].get("gash"):
+            draw_gash(buf, cam, tb, blade_geo, t, o0, Rf, ground_y)
         # ordenar atrás -> adelante (partículas y cubos)
         items = []
         for p in (parts if draw else []):
@@ -779,8 +1096,12 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 if w > 0.02 and bfade < 0.999 and kg > 0:
                     dz = cam.to_cam((bA + bB) * 0.5)[2] - Bm.get("zoffset", 0.0) * scale
                     items.append((dz, 4, (Bm, bA, bB, w, bfade), None, None))
-        if draw and spec.get("blade"):           # la media luna que vuela (cadenas de Beams que miran a la cámara)
-            for pts, ws, tr, BL in blade_chains(spec["blade"], t, o0, Rf, length, scale):
+        if draw and blade_geo is not None:       # la media luna que vuela (cadenas de Beams que miran a la cámara)
+            for P, R3, size3, SLb in blade_geo.slab_poses(t, o0, Rf, ground_y):
+                d = cam.to_cam(P)
+                if d[2] > 0.5:
+                    items.append((d[2], 6, (P, R3, size3, SLb), d, None))
+            for pts, ws, tr, BL in blade_geo.chains(t, o0, Rf):
                 if tr >= 0.995:
                     continue
                 nb = len(pts)
@@ -793,6 +1114,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                     dz = cam.to_cam((pts[i] + pts[i + 1]) * 0.5)[2] - BL.get("zoffset", 0.0) * scale
                     if dz > 0.6:
                         items.append((dz, 4, (Bm, pts[i], pts[i + 1], 1.0, 0.0), None, None))
+        for m in (meteors if draw else []):
+            if not m.dead and m.L["sprite"].get("cube"):
+                d = cam.to_cam(m.pos)
+                if d[2] > 0.5:
+                    items.append((d[2], 5, m, d, None))
         items.sort(key=lambda x: -x[0])
         for _, kind, obj, d, wp in items:
             if kind == 1:
@@ -807,6 +1133,18 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             if kind == 4:
                 draw_beam(buf, tb, cam, *obj, t, scale)
                 continue
+            if kind == 5:
+                asp = obj.L["sprite"].get("aspect", (1, 0.8, 0.9))
+                draw_solid_box(buf, cam, obj.pos, obj.R3, np.asarray(asp, float) * obj.size, obj.col)
+                continue
+            if kind == 6:
+                P, R3, size3, SLb = obj
+                if SLb["ice"]:
+                    draw_solid_box(buf, cam, P, R3, size3, np.array(SLb["ice"]["color"], float) / 255 * 1.15,
+                                   1 - SLb["ice"]["transparency"])
+                else:
+                    draw_solid_box(buf, cam, P, R3, size3, slab_color(spec["blade"], SLb))
+                continue
             am = fade.get(id(obj.L), 1.0)
             if obj.spin:
                 pos0 = obj.pos
@@ -816,7 +1154,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             else:
                 draw_particle(buf, tb, cam, obj, d, scale, ground_y, am)
         for m in (meteors if draw else []):
-            if m.dead:
+            if m.dead or m.L["sprite"].get("cube"):
                 continue
             pr = cam.project(m.pos)
             if pr is None:
@@ -849,6 +1187,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             m.vel = m.vel * (2.0 ** (-m.L.get("drag", 0.0) * dt)) + acc * dt
             m.pos = m.pos + m.vel * dt
             m.rot += m.rots * dt
+            if m.L["sprite"].get("cube"):
+                m.R3 = axis_angle(m.axis, m.spin * dt) @ m.R3
             m.age += dt
         for p in parts:
             L = p.L

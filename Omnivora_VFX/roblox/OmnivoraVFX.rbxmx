@@ -88,6 +88,9 @@ OmnivoraVFX.Lens = true
 -- Color y material de los cubos de destrucción (nil = los del suelo donde sale el efecto)
 OmnivoraVFX.CubeColor = nil :: Color3?
 OmnivoraVFX.CubeMaterial = nil :: Enum.Material?
+-- Modelos (MeshPart) para las piezas sólidas, por nombre de capa: si pones uno, el módulo lo clona en vez de
+-- un bloque. Por ejemplo: MoonfangVFX.Meshes.IceChunks = ReplicatedStorage.MoonfangMeshes.IceChunk
+OmnivoraVFX.Meshes = {} :: { [string]: Instance }
 
 type Layer = { [string]: any }
 
@@ -397,6 +400,40 @@ local function landAt(L: Layer, holder: BasePart, s: number, worldPos: Vector3, 
 	end
 end
 
+local GROUND_FALLBACK = Color3.fromRGB(112, 106, 112)
+
+-- color, material y altura del suelo bajo pos (los cubos de destrucción salen de ahí); exclude = lo que se ignora
+local function groundLook(pos: Vector3, exclude: { Instance }, depth: number?): (Color3, Enum.Material, number?)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore: { Instance } = table.clone(exclude)
+	for _ = 1, 4 do
+		params.FilterDescendantsInstances = ignore
+		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -(depth or 40), 0), params)
+		if not hit then
+			break
+		end
+		local inst = hit.Instance
+		local model = inst:FindFirstAncestorOfClass("Model")
+		if model and model:FindFirstChildOfClass("Humanoid") then
+			table.insert(ignore, model) -- un personaje encima: se ignora y se busca el suelo debajo
+			continue
+		end
+		local mat = hit.Material
+		if mat == Enum.Material.Water or mat == Enum.Material.Air then
+			mat = Enum.Material.Slate
+		end
+		if inst:IsA("Terrain") then
+			local ok, c = pcall(function()
+				return (inst :: Terrain):GetMaterialColor(hit.Material)
+			end)
+			return if ok then c else GROUND_FALLBACK, mat, hit.Position.Y
+		end
+		return inst.Color, mat, hit.Position.Y
+	end
+	return GROUND_FALLBACK, Enum.Material.Slate, nil
+end
+
 -- lanza n rocas desde pos; groundY = altura del suelo donde caen
 local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, pos: Vector3, groundY: number, frame: CFrame?)
 	local accel = Vector3.new(L.accel[1], L.accel[2], L.accel[3]) * s
@@ -404,6 +441,12 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 		Top = Vector3.yAxis, Bottom = -Vector3.yAxis, Front = -Vector3.zAxis, Back = Vector3.zAxis,
 		Right = Vector3.xAxis, Left = -Vector3.xAxis,
 	} :: any)[L.direction]
+	-- las rocas del suelo toman su color y su material (una vez por tanda)
+	local groundColor: Color3?, groundMat: Enum.Material? = nil, nil
+	if L.rock.ground then
+		groundColor, groundMat = groundLook(pos, { holder })
+	end
+	local template = OmnivoraVFX.Meshes[L.name]
 	local list = {}
 	for i = 1, n do
 		local spread = if L.direction == "Front" or L.direction == "Back"
@@ -419,17 +462,30 @@ local function launchMeteors(L: Layer, holder: BasePart, s: number, n: number, p
 			start = pos + (frame or holder.CFrame):VectorToWorldSpace(Vector3.new(rng:NextNumber(-0.5, 0.5) * b[1],
 				rng:NextNumber(-0.5, 0.5) * b[2], rng:NextNumber(-0.5, 0.5) * b[3]) * s)
 		end
-		local rock = Instance.new("Part")
+		local asp = L.rock.aspect or { 1, 0.8, 0.9 }
+		local rock: BasePart
+		if template and template:IsA("BasePart") then
+			-- un modelo hecho en Blender (MeshPart): conserva su aspecto y se escala al tamaño de la pieza
+			rock = (template :: BasePart):Clone()
+			local big = math.max(rock.Size.X, rock.Size.Y, rock.Size.Z)
+			rock.Size = rock.Size * (sz * math.max(asp[1], asp[2], asp[3]) / math.max(big, 1e-3))
+		else
+			rock = Instance.new("Part")
+			rock.Material = groundMat or (Enum.Material :: any)[L.rock.material or "Slate"]
+			local c = groundColor or Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
+			if L.rock.color_var then
+				local v = rng:NextNumber(L.rock.color_var[1], L.rock.color_var[2])
+				c = Color3.new(math.min(c.R * v, 1), math.min(c.G * v, 1), math.min(c.B * v, 1))
+			end
+			rock.Color = c
+			rock.Size = Vector3.new(sz * asp[1], sz * asp[2], sz * asp[3])
+		end
 		rock.Name = "Rock"
 		rock.Anchored = true
 		rock.CanCollide = false
 		rock.CanQuery = false
 		rock.CanTouch = false
 		rock.CastShadow = false
-		rock.Material = (Enum.Material :: any)[L.rock.material or "Slate"]
-		rock.Color = Color3.fromRGB(L.rock.color[1], L.rock.color[2], L.rock.color[3])
-		local asp = L.rock.aspect or { 1, 0.8, 0.9 }
-		rock.Size = Vector3.new(sz * asp[1], sz * asp[2], sz * asp[3])
 		rock.CFrame = CFrame.new(start)
 		rock.Parent = holder
 		local att = Instance.new("Attachment")
@@ -957,46 +1013,11 @@ local function _playRocks(spec: Layer, rocks: { any }, scale: number?, shake: nu
 	return holder
 end
 
-
 -- ---------------------------------------------------------------- efectos en una zona circular (pilar)
 type Zone = {
 	holder: BasePart, R: number, H: number, s: number, kR: number, kH: number,
 	groundY: number, groundColor: Color3, groundMaterial: Enum.Material,
 }
-
-local GROUND_FALLBACK = Color3.fromRGB(112, 106, 112)
-
--- color, material y altura del suelo bajo pos (los cubos de destrucción salen de ahí); exclude = lo que se ignora
-local function groundLook(pos: Vector3, exclude: { Instance }, depth: number?): (Color3, Enum.Material, number?)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	local ignore: { Instance } = table.clone(exclude)
-	for _ = 1, 4 do
-		params.FilterDescendantsInstances = ignore
-		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -(depth or 40), 0), params)
-		if not hit then
-			break
-		end
-		local inst = hit.Instance
-		local model = inst:FindFirstAncestorOfClass("Model")
-		if model and model:FindFirstChildOfClass("Humanoid") then
-			table.insert(ignore, model) -- un personaje encima: se ignora y se busca el suelo debajo
-			continue
-		end
-		local mat = hit.Material
-		if mat == Enum.Material.Water or mat == Enum.Material.Air then
-			mat = Enum.Material.Slate
-		end
-		if inst:IsA("Terrain") then
-			local ok, c = pcall(function()
-				return (inst :: Terrain):GetMaterialColor(hit.Material)
-			end)
-			return if ok then c else GROUND_FALLBACK, mat, hit.Position.Y
-		end
-		return inst.Color, mat, hit.Position.Y
-	end
-	return GROUND_FALLBACK, Enum.Material.Slate, nil
-end
 
 -- ---------------------------------------------------------------- rayo (beam) que se puede apuntar
 -- El rayo sale de la boca a los `start` s y su punta avanza hasta el largo máximo en `grow` s. Cada cuadro mira
@@ -2427,57 +2448,123 @@ local function playAura(spec: Layer, model: Instance, scale: number?, duration: 
 end
 
 -- ---------------------------------------------------------------- la hoja que vuela (Moonfang: Medialuna)
--- Una media luna hecha con cadenas de Beams que miran a la cámara, a lo largo de un arco en 3D: la punta va
--- adelante y los cuernos atrás, así se lee bien desde cualquier cámara. Se mueve por la línea a velocidad
--- constante (llega al final a los t0 + travel s), crece al salir y se desvanece al final. Cada capa tiene su
--- textura, ancho y color, y puede llevar "fantasmas" que la siguen un poco atrás (la estela).
-type BladeChain = { atts: { Attachment }, beams: { Beam }, L: any, lag: number, xtr: number, tr: number }
+-- Una media luna de energía hecha de trazos finos (cadenas de Beams que miran a la cámara). Va vertical y DE CANTO:
+-- de lado se ve la media luna (la punta adelante y los cuernos atrás) y desde atrás, una hoja fina que apunta hacia
+-- donde va. Trazo j = 0 es el filo de afuera y j = 1 el borde de adentro: cada uno es un arco de radio
+-- (1 - shrink·j)·R que empieza thick·R·j detrás de la punta y abarca arc_k·arc grados hacia cada cuerno.
+-- Los trazos, los emisores de su estela y su luz cuelgan de un portador que avanza por la línea (llega al final a
+-- los t0 + travel s); solo se mueve el portador. Su cuerno de abajo roza el suelo y lo corta: la grieta (gash), las
+-- losas que saltan a los lados (slabs) y, al final, el cráter (crater). Las losas toman el color y el material del
+-- suelo; las de hielo se pueden cambiar por un modelo en OmnivoraVFX.Meshes.IceSlab.
+type BladeStrand = { atts: { Attachment }, beams: { Beam }, S: any, tr: number }
+type BladeEmitter = { att: Attachment, pe: ParticleEmitter, E: any, S: any, sm: number }
+type GashSeg = { a: number, b: number, tc: number, parts: { BasePart }?, decal: Decal?, gy: number, done: boolean }
+type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
+	rise: number, sink: number, ice: any, part: BasePart?, base: CFrame?, gy: number, gone: boolean }
+
+local function bladeLocal(B: any, S: any, sm: number, R: number, h: number, axis: Vector3): Vector3
+	local a = math.rad(B.arc) * (S.arc_k or 1)
+	local th = -a + 2 * a * sm
+	local Rj = R * (1 - B.shrink * S.j)
+	-- relativo a la punta (z positivo = detrás de la punta)
+	return Vector3.new(0, h, B.thick * R * S.j + Rj * (1 - math.cos(th))) + axis * (Rj * math.sin(th))
+end
+
+local function easeOutBack(p: number): number
+	local q = math.clamp(p, 0, 1) - 1
+	return 1 + q * q * (2.6 * q + 1.6)
+end
+
+local function bladePart(name: string, holder: BasePart): Part
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Parent = holder
+	return p
+end
+
 local function runBlade(B: any, holder: BasePart, s: number, len: number)
 	local n = B.n
-	local chains: { BladeChain } = {}
-	for _, L in B.layers do
-		local ghosts = { { 0, 0 } }
-		for _, gh in L.ghosts or {} do
-			table.insert(ghosts, gh)
+	local tl = math.rad(B.tilt)
+	local axis = Vector3.new(math.sin(tl), math.cos(tl), 0)
+	-- lo más bajo de la hoja (por unidad de radio): roza el suelo y ahí corta
+	local ymin, lowX, lowZ = 0, 0, 0
+	for _, S in B.strands do
+		for i = 1, n do
+			local p = bladeLocal(B, S, (i - 1) / (n - 1), 1, 0, axis)
+			if p.Y < ymin then
+				ymin, lowX, lowZ = p.Y, p.X, p.Z
+			end
 		end
-		for gi, gh in ghosts do
-			if gi > 1 and OmnivoraVFX.Quality < 0.7 then
-				break
-			end
-			local atts: { Attachment } = {}
-			for i = 1, n do
-				local a = Instance.new("Attachment")
-				a.Parent = holder
-				atts[i] = a
-			end
-			local beams: { Beam } = {}
-			for i = 1, n - 1 do
-				local b = Instance.new("Beam")
-				b.Attachment0 = atts[i]
-				b.Attachment1 = atts[i + 1]
-				b.FaceCamera = true
-				b.Segments = 1
-				b.Texture = OmnivoraVFX.TEXTURES[L.texture] or ""
-				b.TextureMode = Enum.TextureMode.Stretch
-				b.TextureLength = 1
-				b.LightEmission = L.light_emission
-				b.LightInfluence = 0
-				b.Brightness = L.brightness
-				b.ZOffset = (L.zoffset or 0) * s
-				b.Color = ColorSequence.new(evalColor(L.color, (i - 0.5) / (n - 1)))
-				b.Transparency = NumberSequence.new(1)
-				b.Enabled = false
-				b.Parent = holder
-				beams[i] = b
-			end
-			table.insert(chains, { atts = atts, beams = beams, L = L, lag = gh[1], xtr = gh[2], tr = -1 })
+	end
+	local Rfull = B.radius * s
+	local cutX = lowX * Rfull
+	local tEnd = B.t0 + B.travel
+	local function cutTime(x: number): number -- cuándo el corte llega a x studs del origen
+		return B.t0 + B.travel * math.clamp((x + lowZ * Rfull) / len, 0, 1)
+	end
+	local exclude = { holder :: Instance }
+
+	-- el portador con los trazos, los emisores y la luz
+	local carrier = invisiblePart("BladeCarrier", Vector3.new(0.2, 0.2, 0.2), holder.CFrame, holder)
+	local strands: { BladeStrand } = {}
+	for si, S in B.strands do
+		if OmnivoraVFX.Quality < 0.7 and si > 3 and si % 2 == 1 then
+			continue
 		end
+		local atts: { Attachment } = {}
+		for i = 1, n do
+			local a = Instance.new("Attachment")
+			a.Parent = carrier
+			atts[i] = a
+		end
+		local beams: { Beam } = {}
+		for i = 1, n - 1 do
+			local b = Instance.new("Beam")
+			b.Attachment0 = atts[i]
+			b.Attachment1 = atts[i + 1]
+			b.FaceCamera = true
+			b.Segments = 1
+			b.Texture = OmnivoraVFX.TEXTURES[S.texture] or ""
+			b.TextureMode = Enum.TextureMode.Stretch
+			b.TextureLength = 1
+			b.LightEmission = S.light_emission
+			b.LightInfluence = 0
+			b.Brightness = S.brightness
+			b.ZOffset = (S.zoffset or 0) * s
+			b.Color = ColorSequence.new(evalColor(S.color, (i - 0.5) / (n - 1)))
+			b.Transparency = NumberSequence.new(1)
+			b.Enabled = false
+			b.Parent = carrier
+			beams[i] = b
+		end
+		table.insert(strands, { atts = atts, beams = beams, S = S, tr = -1 })
+	end
+	local emitters: { BladeEmitter } = {}
+	local trailEnd = tEnd
+	for _, E in B.emitters or {} do
+		local S = { j = E.j or 0, arc_k = E.arc_k or 1 }
+		for _, sm in E.at do
+			local att = Instance.new("Attachment")
+			att.Parent = carrier
+			local pe = configureEmitter(E, s)
+			pe.Parent = att
+			table.insert(emitters, { att = att, pe = pe, E = E, S = S, sm = sm })
+		end
+		trailEnd = math.max(trailEnd, tEnd + E.lifetime[2])
 	end
 	local light: PointLight? = nil
 	local lightAtt: Attachment? = nil
+	local lightEnd = tEnd
 	if B.light and OmnivoraVFX.UseLight then
 		local la = Instance.new("Attachment")
-		la.Parent = holder
+		la.Parent = carrier
 		local pl = Instance.new("PointLight")
 		pl.Color = Color3.fromRGB(B.light.color[1], B.light.color[2], B.light.color[3])
 		pl.Range = math.min(B.light.range * s, 60)
@@ -2485,38 +2572,220 @@ local function runBlade(B: any, holder: BasePart, s: number, len: number)
 		pl.Shadows = false
 		pl.Parent = la
 		light, lightAtt = pl, la
+		lightEnd = tEnd + (B.light.flash_time or 0)
 	end
-	local arc, tl = math.rad(B.arc), math.rad(B.tilt)
-	local axis = Vector3.new(math.sin(tl), math.cos(tl), 0) -- el eje de la hoja: arriba, inclinado hacia un lado
-	local bowAxis = Vector3.new(math.cos(tl), -math.sin(tl), 0) -- los cuernos se curvan hacia aquí (se lee desde atrás)
-	local bow = B.bow or 0
-	-- lo más bajo del arco (a escala 1): ahí roza el suelo
-	local ymin = 0
-	for i = 1, n do
-		local th = -arc + 2 * arc * (i - 1) / (n - 1)
-		ymin = math.min(ymin, math.sin(th) * axis.Y + bow * (1 - math.cos(th)) * bowAxis.Y)
+
+	-- el corte: tramos de `seg` studs que aparecen cuando el corte pasa
+	local G = B.gash
+	local segs: { GashSeg } = {}
+	if G then
+		local a = (G.start or 0) * s
+		while a < len - 1e-6 do
+			local b = math.min(a + G.seg * s, len)
+			table.insert(segs, { a = a, b = b, tc = cutTime(a), parts = nil, decal = nil, gy = 0, done = false })
+			a = b
+		end
 	end
+
+	-- las losas: dos filas a los lados del corte y el cráter de la detonación
+	local slabs: { Slab } = {}
+	local function addSlab(SL: any, x: number, z: number, yaw: number, side: number, tS: number)
+		local ice = SL.ice ~= nil and rng:NextNumber() < SL.ice.frac
+		local P = if ice then SL.ice else SL
+		local w = rng:NextNumber(P.wid[1], P.wid[2]) * s
+		local th = rng:NextNumber(P.thick[1], P.thick[2]) * s
+		local ln = rng:NextNumber(P.len[1], P.len[2]) * s
+		local a = math.rad(rng:NextNumber(P.tilt[1], P.tilt[2]))
+		x += side * w / 2 * math.cos(a) * math.cos(yaw)
+		z += side * w / 2 * math.cos(a) * math.sin(yaw)
+		-- inclinada hacia afuera: el borde que da al corte asoma y el de afuera queda enterrado
+		local rot = CFrame.Angles(0, -yaw + math.rad(rng:NextNumber(-SL.yaw, SL.yaw)), 0)
+			* CFrame.Angles(math.rad(rng:NextNumber(-SL.pitch, SL.pitch)), 0, 0) * CFrame.Angles(0, 0, -side * a)
+		local top = w / 2 * math.sin(a) + th / 2 * math.cos(a)
+		local y0 = top * (2 * SL.show - 1)
+		table.insert(slabs, {
+			t = tS, x = x, z = z, size = Vector3.new(w, th, ln), rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
+			hold = rng:NextNumber(SL.hold[1], SL.hold[2]), rise = SL.rise, sink = SL.sink,
+			ice = if ice then SL.ice else nil, part = nil, base = nil, gy = 0, gone = false,
+		})
+	end
+	local slabEnd = 0
+	if B.slabs then
+		local SL = B.slabs
+		local z, zEnd = SL.start * s, len - lowZ * Rfull
+		while z < zEnd do
+			for _, side in { -1, 1 } do
+				local zz = z + rng:NextNumber(-0.3, 0.3) * SL.spacing * s
+				if rng:NextNumber() <= OmnivoraVFX.Quality then
+					addSlab(SL, cutX + side * SL.gap * s, -zz, 0, side, cutTime(zz) + rng:NextNumber(0, SL.delay))
+				end
+			end
+			z += SL.spacing * s
+		end
+	end
+	if B.crater then
+		local CR = B.crater
+		for i = 1, CR.count do
+			local phi = 2 * math.pi * (i - 1 + rng:NextNumber(-0.3, 0.3)) / CR.count
+			local r = CR.radius * s * rng:NextNumber(0.85, 1.15)
+			addSlab(CR, r * math.cos(phi), -len + r * math.sin(phi), phi, 1, tEnd + CR.at + rng:NextNumber(0, CR.delay))
+		end
+	end
+	for _, L in slabs do
+		slabEnd = math.max(slabEnd, L.t + L.rise + L.hold + L.sink)
+	end
+
 	local widths = table.create(n, 0)
-	local t0 = time()
-	local conn: RBXScriptConnection
-	local function stop()
-		conn:Disconnect()
-		for _, c in chains do
-			for _, b in c.beams do
-				b:Destroy()
+	local grown = false
+	local function setShape(k: number, R: number, h: number)
+		for _, c in strands do
+			for i = 1, n do
+				local sm = (i - 1) / (n - 1)
+				c.atts[i].Position = bladeLocal(B, c.S, sm, R, h, axis)
+				widths[i] = c.S.width * k * math.max(math.sin(math.pi * sm), 0) ^ B.taper
 			end
-			for _, a in c.atts do
-				a:Destroy()
+			for i, b in c.beams do
+				b.Width0 = widths[i]
+				b.Width1 = widths[i + 1]
 			end
+		end
+		for _, em in emitters do
+			em.att.Position = bladeLocal(B, em.S, em.sm, R, h, axis)
 		end
 		if lightAtt then
-			lightAtt:Destroy()
+			lightAtt.Position = Vector3.new(0, h * 0.6, R * 0.3)
 		end
 	end
+
+	local function stepGash(t: number, head: number)
+		for _, sg in segs do
+			if sg.done then
+				continue
+			end
+			local age = t - sg.tc
+			if age < 0 then
+				continue
+			end
+			local vis = math.clamp(head - sg.a, 0, sg.b - sg.a)
+			if vis < 0.05 then
+				continue
+			end
+			if not sg.parts then
+				local mid = holder.CFrame:PointToWorldSpace(Vector3.new(cutX, 0, -(sg.a + sg.b) / 2))
+				local _, _, gy = groundLook(mid, exclude)
+				sg.gy = gy or holder.Position.Y
+				local frost = invisiblePart("GashFrost", Vector3.new(1, 0.1, 1), holder.CFrame, holder)
+				local d = Instance.new("Decal")
+				d.Face = Enum.NormalId.Top
+				d.Texture = OmnivoraVFX.TEXTURES[G.frost.texture] or ""
+				local fg = 1 + 1.5 * (G.frost.light_emission or 0) -- los Decals se iluminan: un Color3 > 1 los hace brillar
+				d.Color3 = Color3.new(G.frost.color[1] / 255 * fg, G.frost.color[2] / 255 * fg, G.frost.color[3] / 255 * fg)
+				d.Transparency = 1
+				d.Parent = frost
+				local crev = bladePart("GashCrevice", holder)
+				crev.Material = Enum.Material.SmoothPlastic
+				crev.Color = Color3.fromRGB(G.crevice.color[1], G.crevice.color[2], G.crevice.color[3])
+				local seam = bladePart("GashSeam", holder)
+				seam.Material = Enum.Material.Neon
+				sg.parts = { frost :: BasePart, crev, seam }
+				sg.decal = d
+			end
+			local parts = sg.parts :: { BasePart }
+			local fz = math.clamp((age - G.life) / G.fade, 0, 1)
+			if fz >= 1 then
+				for _, p in parts do
+					p:Destroy()
+				end
+				sg.done = true
+				continue
+			end
+			local base = holder.CFrame * CFrame.new(cutX, 0, -(sg.a + vis / 2))
+			local function at(y: number): CFrame
+				return CFrame.new(base.Position.X, sg.gy + y, base.Position.Z) * base.Rotation
+			end
+			local sp = math.clamp(age / G.spread, 0, 1)
+			sp = sp * sp * (3 - 2 * sp)
+			local op = math.clamp(age / G.open, 0, 1)
+			parts[1].Size = Vector3.new(G.frost.width * s * (0.35 + 0.65 * sp), 0.1, vis + 2 * G.frost.overlap * s)
+			parts[1].CFrame = at(0.03 * s)
+			parts[2].Size = Vector3.new(G.crevice.width * s * (0.3 + 0.7 * op), 2 * G.crevice.height * s, vis)
+			parts[2].CFrame = at(0)
+			parts[3].Size = Vector3.new(G.seam.width * s, 2 * G.seam.height * s, vis)
+			parts[3].CFrame = at(0)
+			local cu = math.clamp(age / G.cool, 0, 1)
+			cu = cu * cu * (3 - 2 * cu)
+			local hot = Color3.fromRGB(G.seam.hot[1], G.seam.hot[2], G.seam.hot[3])
+			parts[3].Color = hot:Lerp(Color3.fromRGB(G.seam.cold[1], G.seam.cold[2], G.seam.cold[3]), cu)
+			parts[3].Transparency = 1 - (1 - (G.seam.transparency or 0)) * (1 - fz)
+			parts[2].Transparency = fz
+			if sg.decal then
+				sg.decal.Transparency = 1 - (1 - G.frost.transparency) * (1 - fz)
+			end
+		end
+	end
+
+	local function stepSlabs(t: number)
+		for _, L in slabs do
+			if L.gone then
+				continue
+			end
+			local age = t - L.t
+			if age < 0 then
+				continue
+			end
+			if not L.part then
+				local wp = holder.CFrame:PointToWorldSpace(Vector3.new(L.x, 0, L.z))
+				local col, mat, gy = groundLook(wp, exclude)
+				L.gy = gy or holder.Position.Y
+				L.base = CFrame.new(wp.X, 0, wp.Z) * holder.CFrame.Rotation * L.rot
+				local template = if L.ice then OmnivoraVFX.Meshes.IceSlab else nil
+				local p: BasePart
+				if template and template:IsA("BasePart") then
+					p = (template :: BasePart):Clone()
+					p.Name = "Slab"
+					p.Anchored = true
+					p.CanCollide = false
+					p.CanQuery = false
+					p.CanTouch = false
+					p.Parent = holder
+				else
+					p = bladePart("Slab", holder)
+					if L.ice then
+						p.Material = (Enum.Material :: any)[L.ice.material]
+						p.Color = Color3.fromRGB(L.ice.color[1], L.ice.color[2], L.ice.color[3])
+						p.Transparency = L.ice.transparency
+					else
+						p.Material = mat
+						p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
+					end
+				end
+				p.Size = L.size
+				L.part = p
+			end
+			local y
+			if age < L.rise then
+				y = L.y0 - L.drop * (1 - easeOutBack(age / L.rise))
+			elseif age < L.rise + L.hold then
+				y = L.y0
+			elseif age < L.rise + L.hold + L.sink then
+				local p = (age - L.rise - L.hold) / L.sink
+				y = L.y0 - L.drop * p * p
+			else
+				(L.part :: BasePart):Destroy()
+				L.gone = true
+				continue
+			end
+			(L.part :: BasePart).CFrame = (L.base :: CFrame) + Vector3.new(0, L.gy + y, 0)
+		end
+	end
+
+	local t0 = time()
+	local doneAt = math.max(B.t0 + B.travel + B.fade, trailEnd, lightEnd, slabEnd)
+	local conn: RBXScriptConnection
 	conn = RunService.Heartbeat:Connect(function()
 		local t = time() - t0
-		if not holder.Parent or t > B.t0 + B.travel + B.fade then
-			stop()
+		if not holder.Parent then
+			conn:Disconnect()
 			return
 		end
 		if t < B.t0 then
@@ -2525,43 +2794,55 @@ local function runBlade(B: any, holder: BasePart, s: number, len: number)
 		local u = math.clamp((t - B.t0) / B.travel, 0, 1)
 		local gr = math.clamp((t - B.t0) / math.max(B.grow, 1e-3), 0, 1)
 		gr = gr * gr * (3 - 2 * gr)
-		local k = s * (B.start_k + (1 - B.start_k) * gr) * (1 + B.swell * u)
-		local fz = math.clamp((t - B.t0 - B.travel) / math.max(B.fade, 1e-3), 0, 1)
+		local k = s * (B.start_k + (1 - B.start_k) * gr)
+		local fz = math.clamp((t - tEnd) / math.max(B.fade, 1e-3), 0, 1)
 		local fade = fz * fz * (3 - 2 * fz)
 		local R = B.radius * k
 		local h = B.lift * s - R * ymin
-		for _, c in chains do
-			local L = c.L
-			local d = len * u - ((L.back or 0) + c.lag) * s
-			local tr = 1 - (1 - L.transparency) * (1 - c.xtr) * (1 - fade)
-			if d < 0 then
-				tr = 1
-				d = 0
-			end
-			for i = 1, n do
-				local sm = (i - 1) / (n - 1)
-				local th = -arc + 2 * arc * sm
-				-- adelante = -Z local: la punta (th = 0) va delante y los cuernos se quedan atrás
-				c.atts[i].Position = Vector3.new(0, h, -d + R * (1 - math.cos(th))) + axis * (R * math.sin(th))
-					+ bowAxis * (bow * R * (1 - math.cos(th)))
-				widths[i] = L.width * k * math.max(math.sin(math.pi * sm), 0) ^ B.taper
-			end
-			local changed = math.abs(tr - c.tr) > 0.01
-			for i, b in c.beams do
-				b.Width0 = widths[i]
-				b.Width1 = widths[i + 1]
-				if changed then
+		carrier.CFrame = holder.CFrame * CFrame.new(0, 0, -len * u)
+		-- crece al salir (después la forma queda fija: solo se mueve el portador)
+		if not grown then
+			setShape(k, R, h)
+			grown = gr >= 1
+		end
+		for _, c in strands do
+			local tr = 1 - (1 - c.S.transparency) * (1 - fade)
+			if math.abs(tr - c.tr) > 0.01 then
+				c.tr = tr
+				for _, b in c.beams do
 					b.Transparency = NumberSequence.new(tr)
 					b.Enabled = tr < 0.995
 				end
 			end
-			if changed then
-				c.tr = tr
+		end
+		local flying = t <= tEnd
+		for _, em in emitters do
+			if flying ~= em.pe.Enabled then
+				em.pe.Rate = em.E.rate * OmnivoraVFX.Quality
+				em.pe.Enabled = flying
 			end
 		end
-		if light and lightAtt then
-			lightAtt.Position = Vector3.new(0, h * 0.6, -len * u)
-			light.Brightness = B.light.brightness * (1 - fade)
+		if light then
+			local flash = if t >= tEnd then B.light.flash * math.exp(-(t - tEnd) * 3 / math.max(B.light.flash_time, 1e-3)) else 0
+			light.Brightness = math.max(B.light.brightness * (1 - fade), flash)
+		end
+		stepGash(t, len * math.min(u, 1) - lowZ * R)
+		stepSlabs(t)
+		local gashDone = true
+		for _, sg in segs do
+			if not sg.done then
+				gashDone = false
+				break
+			end
+		end
+		if t > doneAt and gashDone then
+			conn:Disconnect()
+			carrier:Destroy()
+			for _, L in slabs do
+				if L.part and not L.gone then
+					(L.part :: BasePart):Destroy()
+				end
+			end
 		end
 	end)
 end

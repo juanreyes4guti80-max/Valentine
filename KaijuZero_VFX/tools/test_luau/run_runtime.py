@@ -483,7 +483,15 @@ run("CrescentWave", function()
 	return MOON.CrescentWave(R.CFrame.lookAt(R.Vector3.new(0, 0, 0), R.Vector3.new(0, 0, -1)), nil, 1, 1)
 end, 6, 130)
 assert(R.stats.rocks >= 20, "CrescentWave: casi no salieron rocas del corte")
-assert(R.stats.beamMaxW > 8, "CrescentWave: no se armó la hoja (Beams)")
+assert(R.stats.beamMaxW > 4, "CrescentWave: no se armó la hoja (Beams)")
+assert(R.stats.slabs >= 60, "CrescentWave: casi no saltaron losas del suelo")
+assert(R.stats.gash >= 8, "CrescentWave: no se abrió el corte en el suelo")
+assert(R.stats.maxRate > 0, "CrescentWave: la hoja no soltó su estela")
+for _, nm in { "Slab", "GashSeam", "GashFrost", "BladeCarrier" } do
+	assert(R.liveNamed(nm) == 0, "CrescentWave: quedaron piezas " .. nm)
+end
+print(("%-17s   hoja: losas=%d tramos del corte=%d rocas=%d raycasts=%d"):format("", R.stats.slabs, R.stats.gash,
+	R.stats.rocks, R.stats.raycasts))
 run("FangRain", function() return MOON.FangRain(R.CFrame.new(0, 0, 0), 1, 1) end, 6)
 assert(R.stats.rocks >= 20, "FangRain: casi no cayeron colmillos")
 run("LunarHowl", function() return MOON.LunarHowl(R.CFrame.new(0, 14, 0), 1, 1) end, 5)

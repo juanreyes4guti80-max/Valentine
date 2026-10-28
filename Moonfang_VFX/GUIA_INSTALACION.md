@@ -19,7 +19,7 @@ Hay dos caminos y los dos te dan la misma carpeta `Moonfang_VFX`.
 En Studio vas a usar:
 
 - `roblox/MoonfangVFX.rbxmx`, el módulo;
-- el plugin `SubirTexturasVFX.rbxmx`, que sube las 26 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
+- el plugin `SubirTexturasVFX.rbxmx`, que sube las 35 texturas por ti. Está en la carpeta `Plugin_Studio` de GitHub y también te lo mando en el chat.
 
 ## Instalación (unos 2 minutos, con el plugin)
 
@@ -46,7 +46,7 @@ En Studio vas a usar:
 | **Pesado** | `MoonFang(rival, escala, sacudida)` | Unas mandíbulas de luz plateada se cierran de golpe sobre el rival. De la mordida brotan agujas de cristal que crecen y **estallan**, con dos ondas de media luna. | muerde a los **0.14 s**; los cristales estallan a los **0.62 s** |
 | **Bloqueo** (mientras bloquea) | `MoonGuard(moonfang, escala, duración, intensidad)` | Aura de escarcha que delinea todo su cuerpo en hielo y plata, con esquirlas de cristal flotando. | se enciende en 0.15 s |
 | **Bloqueo** (cada golpe bloqueado) | `MoonGuardHit(moonfang, escala, sacudida)` | Una media luna de luz aparece como escudo delante de él, con esquirlas que rebotan a los lados. | 0.02 s |
-| **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | De un zarpazo lanza una **media luna de luz que vuela con la punta hacia adelante** y los cuernos atrás. Está hecha de geometría (no de partículas), así que se lee bien desde cualquier cámara. Su cuerno de abajo **corta el suelo**: deja una zanja con grietas de escarcha y cristales, sale una lluvia de chispas hacia atrás y **arranca rocas** que salen volando a los lados. Al llegar al final **detona en hielo**: destello, ondas, una nube de aire helado, ráfagas de viento frío que giran y corren por el suelo, una corona de púas, pedazos de hielo que se quedan clavados y escarcha que flota. | llega al final y detona a los **0.76 s** (`MoonfangVFX.CrescentWaveImpact`) |
+| **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | De un zarpazo lanza una **media luna de energía** que vuela **vertical y de canto**. De lado se ve la media luna, con la punta hacia adelante. Desde atrás (la cámara del jugador) se ve una hoja fina que apunta hacia donde va. Tiene el filo blanco y duro, y el cuerpo celeste y azul hecho de trazos finos. Mientras vuela deja una **estela de humo frío**, brillos y esquirlas. Su cuerno de abajo **corta el suelo**: se abre una grieta con escarcha y **las losas del suelo saltan inclinadas a los dos lados** (algunas son placas de hielo). También salen **rocas cúbicas** que caen y se quedan un rato en el camino antes de desmoronarse. Las losas y las rocas toman **el color y el material de tu suelo**. Al llegar al final **detona en hielo**: un destello, una cúpula de ondas, lanzas de hielo, una nube helada, viento frío por el suelo, una corona de púas, pedazos de hielo y un **cráter de losas**. | detona a los **0.76 s** (`MoonfangVFX.CrescentWaveImpact`) |
 | **Skill 2: Lluvia de colmillos** | `FangRain(cf, escala, sacudida)` | Se marca un círculo de escarcha y del cielo caen 20 colmillos de cristal gigantes que se clavan, brillan y estallan en esquirlas. | caen entre los **0.85 y 1.7 s**; estallan 0.85 s después de clavarse |
 | **Skill 3: Aullido lunar** | `LunarHowl(cabeza, escala, sacudida)` + `LunarAura(moonfang, …)` | La luz se junta en su hocico, aúlla con ondas de sonido y una luna llena enorme aparece detrás de él y lo baña de luz. Después, el aura de luz de luna mientras dure la mejora. | aúlla a los **0.3 s** |
 | **Skill 4: Eclipse** | `Eclipse(cf, radio, altura, escala, sacudida)` | Una luna llena aparece sobre la zona y se va eclipsando. La zona se agrieta en escarcha y los pedazos del suelo levitan. Al quedar cubierta cae una columna de luz de luna que hace volar tierra y cristal. Al final queda un anillo de cristal roto. | el golpe es a los **1.15 s**; la columna dura hasta los 2.6 s |
@@ -118,7 +118,8 @@ end)
 - El video es de mi simulador, de noche y con Bloom. El lobo y el rival son cajas de prueba: el lobo azul oscuro con su cresta de cristal y el rival gris.
 - Los golpes salen delante de lo que ve la cámara y miran hacia ella, como los golpes de Kaiju Zero.
 - La luna del aullido aparece **detrás y arriba** de la cabeza. Si en tu juego queda tapada o muy alta, cambia `MOON_OFF` en `vfx_moonfang.py`.
-- La media luna de la skill 1 son cadenas de **Beams** que miran a la cámara a lo largo de un arco en 3D, más una luz que la sigue por el suelo. Vista justo desde atrás se ve como un trazo curvo (es una hoja plana que va hacia adelante).
+- La media luna de la skill 1 son trazos de **Beams** que miran a la cámara, como pinceladas, más una luz que la sigue. Va de canto **a propósito**: desde atrás se ve fina, como una hoja que apunta hacia donde va.
+- Las losas y las rocas de la skill 1 miran con un Raycast **el color y el material del suelo** donde salen. En el video son grises porque el suelo de prueba es oscuro; en tu mapa salen del color de tu pasto, arena o piedra.
 - La columna del Eclipse es luz que **cae** y es transparente (al revés que el pilar de Omnívora, que sube y es denso).
 - La luna del Eclipse está a 150 studs × escala sobre la zona. Si tu cámara no la ve, baja la altura (el 3.er parámetro).
 
@@ -128,11 +129,26 @@ En el pico:
 
 | Efecto | Partículas | Otras piezas |
 |---|---|---|
+| Medialuna | unas 1100 | unas 118 losas, 62 rocas y 240 Beams |
 | Lluvia de colmillos | unas 600 | 20 colmillos |
 | Eclipse | unas 600 | unos 150 pedazos |
 | Golpes | de 60 a 140 | — |
 
-`MoonfangVFX.Quality = 0.6` baja las partículas y los pedazos (por ejemplo, en celulares).
+`MoonfangVFX.Quality = 0.6` baja las partículas, los pedazos, las losas y los trazos de la hoja (por ejemplo, en celulares).
+
+## Modelos de Blender (opcional)
+
+Las piezas sólidas se pueden cambiar por modelos hechos en Blender (una **MeshPart** cada una). Ponlos en `MoonfangVFX.Meshes` con el nombre de la pieza y el módulo los usa en vez de los bloques:
+
+```lua
+local MoonfangVFX = require(ReplicatedStorage.MoonfangVFX)
+local modelos = ReplicatedStorage.MoonfangMeshes -- una carpeta con tus MeshParts
+MoonfangVFX.Meshes.IceChunks = modelos.IceChunk -- los pedazos de hielo de la detonación de la Medialuna
+MoonfangVFX.Meshes.IceSlab = modelos.IceSlab    -- las placas de hielo que saltan en el corte
+```
+
+- El modelo se clona y se escala al tamaño de cada pieza, y conserva su material, su color y su textura.
+- También sirve para las rocas del corte, con los nombres `RocksOut`, `RocksIn` y `RocksUp`. Con un modelo, la roca ya no toma el color del suelo.
 
 ## Licencias de las texturas
 

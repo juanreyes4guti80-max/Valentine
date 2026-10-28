@@ -145,7 +145,7 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 | `orb` | proyectil que nace, vuela creciendo y detona sobre enemigos | `vfx_blackhole.py` |
 | `beam`, `beams`, `hit` | rayo apuntable (Beams + Raycast cada cuadro) | `vfx_beam.py`, `vfx_cosmicbeam.py` |
 | `rocks` | efecto que sale de las rocas que le pasas | `vfx_pillars.py` (H3) |
-| `line` + `blade` | una hoja (media luna) hecha con cadenas de Beams en un arco 3D que vuela por la línea; lo demás se sincroniza con eventos a lo largo del camino | `vfx_moonfang.py` (`CRESCENT_WAVE`) |
+| `line` + `blade` | una media luna de energía hecha de trazos finos de Beams que vuela de canto por la línea, con su estela (`emitters`), el corte del suelo (`gash`), las losas que saltan a los lados (`slabs`) y el cráter del final (`crater`); lo demás se sincroniza con eventos a lo largo del camino | `vfx_moonfang.py` (`CRESCENT_WAVE`) |
 | `cone` | onda en forma de triángulo hacia adelante | `vfx_astral.py` |
 | `aura` | aura que se adapta a cualquier modelo (Highlight + emisores por parte) | `vfx_aura.py` |
 | `cataclysm` | la ULTIMATE de Omnívora (campo gravitacional, geometría, plan para el servidor) | `vfx_cataclysm.py` |
@@ -175,7 +175,15 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 Otras claves frecuentes:
 
 - `"decal": True` hace una marca plana del suelo con Decal (sin límite de tamaño).
-- `"type": "meteor"` hace rocas de verdad (Parts) con estela y salpicadura al caer: `sprite`, `trails`, `land`. En `sprite`, `aspect` estira la pieza, `upright` la deja derecha y `stick` la deja clavada esos segundos antes de romperse con las capas de `shatter`. `shape` de caja reparte de dónde sale cada pieza.
+- `"type": "meteor"` hace rocas de verdad (Parts) con estela y salpicadura al caer: `sprite`, `trails`, `land`.
+  - En `sprite`, `aspect` estira la pieza, `upright` la deja derecha y `stick` la deja clavada esos segundos antes de romperse con las capas de `shatter`.
+  - `ground` le da el color y el material del suelo (Raycast), y `color_var` la aclara u oscurece un poco.
+  - `cube` solo afecta al simulador: la dibuja como el bloque que es en Roblox (sin eso la dibuja como sprite).
+  - `shape` de caja reparte de dónde sale cada pieza.
+- **Modelos de Blender (`<Módulo>.Meshes`).** Las piezas sólidas se pueden cambiar por una MeshPart: `MoonfangVFX.Meshes.IceChunks = carpeta.IceChunk`.
+  - La clave es el nombre de la capa meteor (o `IceSlab` para las placas de hielo del corte de la Medialuna).
+  - El módulo clona el modelo, lo escala al tamaño de la pieza y le deja su material y su textura.
+  - Así se mezclan bloques hechos en Blender con el VFX: **lo sólido en Blender, las partículas y el movimiento aquí** (lo pidió el usuario).
 - `"lit": True` hace que la capa reciba luz de la escena (humo y polvo).
 - `"spin": True` usa `LockedToPart`: la capa gira con su pieza y sube en espiral.
 - `"ground_mix"` mezcla el color del suelo en la capa (esquirlas).
@@ -362,10 +370,18 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
 4. Animaciones del kit de Kaiju Zero (A1–A4, ver `KaijuZero_Habilidades/REFERENCIA_VIDEO.md`): necesitan el `.blend` con el rig.
 5. **Moonfang, opinión del usuario: 3/10 al primer kit.** Solo le convenció la ulti (Eclipse). Pidió:
    - M1 como **mordiscos** al estilo de Devil Dinosaur (Marvel Rivals), NO como mandíbulas con dientes ("eso es Pokémon");
-   - la skill 1 rehecha: ya está (media luna que vuela con la punta adelante, corta el suelo y arranca rocas, detonación de hielo);
    - el resto del kit, uno por uno cuando él diga.
 
    Las auras tampoco le convencieron en el juego.
+
+   **La skill 1 (Medialuna) va por la 3.ª versión.** Lo que pidió en cada vuelta, para que no se repita:
+   - la media luna se ve **de lado**; desde la cámara del jugador (atrás) debe verse **de canto**, como una hoja que apunta hacia donde va (curvarla para que se lea como media luna desde atrás "se ve horrible");
+   - estilo **energía anime**: filo blanco muy marcado y cuerpo celeste y azul, nada de una figura blanca lisa ni de vetas borrosas;
+   - con detalle: estela de humo frío, brillos y esquirlas;
+   - el corte del suelo debe verse como hielo cortando la tierra, con **rocas cuadradas** (es Roblox) y **pequeñas** que quedan en el camino;
+   - la explosión final, intensa.
+
+   **Tarea para ti con Blender:** los pedazos de hielo del final (`IceChunks`) no le convencieron, y las placas de hielo del corte (`IceSlab`) también serían mejores como modelo. Haz las MeshParts y conéctalas con `MoonfangVFX.Meshes` (ver arriba).
 6. Mantener este documento al día con lo que aprendas en Studio. Sobre todo las diferencias entre el simulador y Roblox, para que el siguiente no tropiece.
 
 Suerte. El usuario es exigente pero agradecido, y le encanta ver el resultado: muéstraselo seguido.

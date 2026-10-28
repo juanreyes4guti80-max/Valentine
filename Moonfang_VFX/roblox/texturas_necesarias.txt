@@ -1,5 +1,6 @@
 fx_aura_tongue_2x2.png
 fx_beam.png
+fx_fog2001.png
 fx_glow.png
 fx_halo.png
 fx_laser_thin.png
@@ -17,15 +18,18 @@ kk_trace_01.png
 kk_trace_03.png
 kz_beam_ring.png
 kz_bite_4x4.png
-kz_debris_2x2.png
-kz_scorch.png
 kz_wind_arcs.png
 mf_aura_wisp_2x2.png
+mf_blade_glow.png
+mf_blade_line.png
+mf_blade_solid.png
 mf_claw_4x4.png
 mf_claw_glow.png
 mf_crescent.png
 mf_frost_cracks.png
+mf_frost_patch.png
 mf_moon.png
 mf_moonlight_2x2.png
 mf_shard_2x2.png
 mf_spike.png
+om_cubes_2x2.png
