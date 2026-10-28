@@ -65,11 +65,11 @@ MoonfangVFX.TEXTURES = {
 	mf_crescent = "rbxassetid://0",
 	mf_eclipse_sigil = "rbxassetid://0",
 	mf_frost_cracks = "rbxassetid://0",
+	mf_frost_flame_4x4 = "rbxassetid://0",
 	mf_frost_patch = "rbxassetid://0",
-	mf_moon = "rbxassetid://0",
+	mf_ice_spikes_2x2 = "rbxassetid://0",
 	mf_moon_eclipse_4x4 = "rbxassetid://0",
 	mf_moonbeam = "rbxassetid://0",
-	mf_moonlight_2x2 = "rbxassetid://0",
 	mf_shard_2x2 = "rbxassetid://0",
 	mf_spike = "rbxassetid://0",
 	om_cubes_2x2 = "rbxassetid://0",
@@ -1101,9 +1101,59 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 	local len = length or 0
 	local tanH = math.tan(math.rad(math.clamp(angle or 60, 5, 170) / 2))
 	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf, MoonfangVFX.Parent)
+	local floorY: number? = nil
 	for _, L in spec.layers do
 		if L.at_ground then
 			continue -- en el suelo bajo el impacto del rayo (las pone el rayo al pegar)
+		elseif L.floor then
+			-- en el suelo bajo el efecto: offset horizontal y su Y es la altura sobre el suelo. ring = {n, radio}: n
+			-- puntos alrededor, cada uno mirando hacia afuera (inclinado pitch grados hacia arriba)
+			local base = holder.CFrame:PointToWorldSpace(Vector3.new(L.offset[1], 0, L.offset[3]) * s)
+			if floorY == nil then
+				local _, _, gy = groundLook(base, { holder }, 80 * s)
+				floorY = gy or (base.Y - 12 * s)
+			end
+			local center = Vector3.new(base.X, (floorY :: number) + L.offset[2] * s, base.Z)
+			if L.decal then
+				for _, ev in L.emit do
+					task.delay(ev[1], function()
+						if holder.Parent then
+							playDecalAt(L, holder, s, ev[2], CFrame.new(center))
+						end
+					end)
+				end
+				continue
+			end
+			local e, carrier = buildEmitter(L, holder, s, Vector3.zero, len)
+			levelCarrier(carrier, center)
+			for _, ev in L.emit do
+				local n = quality(ev[2])
+				task.delay(ev[1], function()
+					if not e.Parent then
+						return
+					end
+					if not L.ring then
+						levelCarrier(carrier, center)
+						e:Emit(n)
+						return
+					end
+					for i = 1, L.ring[1] do
+						local ang = 2 * math.pi * (i - 1) / L.ring[1]
+						local out = Vector3.new(math.cos(ang), 0, math.sin(ang))
+						local p = center + out * L.ring[2] * s
+						local cf = CFrame.lookAt(p, p + out) * CFrame.Angles(math.rad(L.pitch or 0), 0, 0)
+						if carrier:IsA("Attachment") then
+							(carrier :: Attachment).WorldCFrame = cf
+						else
+							(carrier :: BasePart).CFrame = cf
+						end
+						e:Emit(n)
+					end
+				end)
+			end
+			if L.stream then
+				runStream(L, e)
+			end
 		elseif L.cone_emit and L.type == "meteor" then
 			for _, ev in L.cone_emit do
 				local pos, dir = conePoint(holder, ev, s, len, tanH, L.pitch)
@@ -3079,6 +3129,283 @@ local function playAura(spec: Layer, model: Instance, scale: number?, duration: 
 		hl.FillTransparency = math.clamp(1 - (1 - ft) * math.min(k2, 1) * (1 + surgeK * 0.6), 0, 1)
 		if light then
 			light.Brightness = Au.light_brightness * k2 * (0.75 + 0.25 * w + surgeK * 0.8)
+		end
+	end)
+	return ctl
+end
+
+-- ---------------------------------------------------------------- aura de contorno (el delineado ES el aura)
+-- Cada cliente busca el contorno del modelo visto desde SU cámara: lanza rayos (Raycast solo contra el modelo) en una
+-- rejilla que cubre el modelo en pantalla; los nodos que tocan el modelo y tienen al lado (arriba, abajo, izquierda o
+-- derecha) uno que no lo toca son el contorno. De ahí salen las capas sil = "edge" (hacia afuera en el plano de la
+-- pantalla, mezclado con hacia arriba por up y separado del borde por push; side = "up" solo arriba y a los lados,
+-- "down" solo abajo); sil = "body" sale de los puntos de adentro (el hielo que se desprende) y sil = "feet" alrededor
+-- de los pies. Lo que queda detrás del cuerpo no se ve, así que el aura sale del borde; si la cámara cambia de lado,
+-- el aura cambia de lugar: unas manos delante del pecho no tienen aura y las mismas manos vistas de lado sí.
+-- Los puntos se guardan respecto a la parte que tocaron, así que siguen al modelo aunque se mueva entre una búsqueda y
+-- otra. rate = partículas por segundo en total; burst = al encender; end_burst = al apagar.
+type SilPoint = { part: BasePart, lp: Vector3, out: Vector3 }
+type SilItem = { L: Layer, e: ParticleEmitter, a: Attachment, acc: number }
+
+local function silhouette(parts: { BasePart }, cam: Camera, S: Layer, params: RaycastParams, q: number):
+	({ SilPoint }, { SilPoint })
+	-- el recuadro en pantalla de las partes visibles (las esquinas de cada una)
+	local vp = cam.ViewportSize
+	local x0, y0, x1, y1 = math.huge, math.huge, -math.huge, -math.huge
+	local center, span = Vector3.zero, 0
+	for _, p in parts do
+		local cf, half = p.CFrame, p.Size / 2
+		center += cf.Position
+		span = math.max(span, p.Size.Magnitude)
+		for i = 0, 7 do
+			local c = cf:PointToWorldSpace(Vector3.new(if i % 2 == 0 then -half.X else half.X,
+				if math.floor(i / 2) % 2 == 0 then -half.Y else half.Y, if i >= 4 then half.Z else -half.Z))
+			local sp = cam:WorldToViewportPoint(c)
+			if sp.Z <= 0 then
+				return {}, {} -- la cámara está dentro o detrás: no hay contorno
+			end
+			x0, y0, x1, y1 = math.min(x0, sp.X), math.min(y0, sp.Y), math.max(x1, sp.X), math.max(y1, sp.Y)
+		end
+	end
+	if #parts == 0 then
+		return {}, {}
+	end
+	center /= #parts
+	local g = math.max(S.cell * vp.Y, math.sqrt(math.max((x1 - x0) * (y1 - y0), 1) / (S.max_rays * q)))
+	x0, y0 = math.max(x0 - g, 0), math.max(y0 - g, 0)
+	x1, y1 = math.min(x1 + g, vp.X - 1), math.min(y1 + g, vp.Y - 1)
+	if x1 <= x0 or y1 <= y0 then
+		return {}, {}
+	end
+	local nx, ny = math.floor((x1 - x0) / g) + 1, math.floor((y1 - y0) / g) + 1
+	local far = (cam.CFrame.Position - center).Magnitude + span * 4
+	local hits: { [number]: RaycastResult } = {}
+	for j = 0, ny - 1 do
+		for i = 0, nx - 1 do
+			local ray = cam:ViewportPointToRay(x0 + i * g, y0 + j * g)
+			local h = workspace:Raycast(ray.Origin, ray.Direction * far, params)
+			if h then
+				hits[j * nx + i + 1] = h
+			end
+		end
+	end
+	local function miss(i: number, j: number): boolean
+		return i < 0 or j < 0 or i >= nx or j >= ny or hits[j * nx + i + 1] == nil
+	end
+	local right, up = cam.CFrame.RightVector, cam.CFrame.UpVector
+	local edges: { SilPoint }, body: { SilPoint } = {}, {}
+	for j = 0, ny - 1 do
+		for i = 0, nx - 1 do
+			local h = hits[j * nx + i + 1]
+			if h then
+				local part = h.Instance :: BasePart
+				local pt: SilPoint = { part = part, lp = part.CFrame:PointToObjectSpace(h.Position), out = Vector3.yAxis }
+				local l, r, u, d = miss(i - 1, j), miss(i + 1, j), miss(i, j - 1), miss(i, j + 1)
+				if l or r or u or d then
+					local o = right * ((if r then 1 else 0) - (if l then 1 else 0)) - up * ((if d then 1 else 0) - (if u then 1 else 0))
+					pt.out = if o.Magnitude > 1e-3 then o.Unit else Vector3.yAxis
+					table.insert(edges, pt)
+				else
+					table.insert(body, pt)
+				end
+			end
+		end
+	end
+	return edges, body
+end
+
+local function playSilhouette(spec: Layer, model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
+	local S = spec.silhouette
+	local cf0, size0 = auraBox(model)
+	local k = (scale or 1) * math.clamp(size0.Y / S.ref, 0.25, 8)
+	local holder = invisiblePart("KZ_" .. spec.name, Vector3.new(0.2, 0.2, 0.2), cf0, MoonfangVFX.Parent)
+	-- los rayos solo tocan las partes visibles (no la raíz ni las cajas de golpes invisibles)
+	local parts = auraParts(model, 400)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = (parts :: any) :: { Instance }
+	local nextParts = 2
+	local items: { SilItem } = {}
+	for _, L in spec.layers do
+		local a = Instance.new("Attachment")
+		a.Name = L.name
+		a.Parent = holder
+		local e = configureEmitter(L, k)
+		e.Name = L.name
+		e.Parent = a
+		table.insert(items, { L = L, e = e, a = a, acc = 0 })
+	end
+	local light: PointLight? = nil
+	if MoonfangVFX.UseLight and S.light then
+		local li = Instance.new("PointLight")
+		li.Color = Color3.fromRGB(S.light.color[1], S.light.color[2], S.light.color[3])
+		li.Range = math.min(S.light.range * k, 60)
+		li.Brightness = 0
+		li.Shadows = false
+		li.Parent = holder
+		light = li
+	end
+
+	local t0 = time()
+	local stopAt: number? = duration
+	local fadeOut = S.fade_out
+	local edges: { SilPoint }, body: { SilPoint } = {}, {}
+	local upIdx: { number }, downIdx: { number } = {}, {}
+	local nextScan = 0
+	local burstDone, endDone = false, false
+	local ctl: AuraControl
+	ctl = {
+		Holder = holder,
+		Model = model,
+		Active = true,
+		Intensity = intensity or 1,
+		SetIntensity = function(self, v: number)
+			self.Intensity = math.max(v, 0)
+		end,
+		Stop = function(_, fade: number?)
+			local t = time() - t0
+			if not stopAt or (stopAt :: number) > t then
+				stopAt = t
+				fadeOut = fade or S.fade_out
+			end
+		end,
+	}
+
+	-- n partículas de la capa desde el contorno, el cuerpo o los pies
+	local function emit(it: SilItem, n: number)
+		local L = it.L
+		for _ = 1, n do
+			if L.sil == "edge" then
+				local idx: number
+				if L.side == "up" then
+					if #upIdx == 0 then
+						return
+					end
+					idx = upIdx[rng:NextInteger(1, #upIdx)]
+				elseif L.side == "down" then
+					if #downIdx == 0 then
+						return
+					end
+					idx = downIdx[rng:NextInteger(1, #downIdx)]
+				else
+					if #edges == 0 then
+						return
+					end
+					idx = rng:NextInteger(1, #edges)
+				end
+				local pt = edges[idx]
+				if not pt.part.Parent then
+					continue
+				end
+				local up = L.up or 0
+				local pos = pt.part.CFrame:PointToWorldSpace(pt.lp) + pt.out * (L.push or 0) * k
+				local look = pt.out * (1 - up) + Vector3.yAxis * up
+				look = if look.Magnitude > 1e-3 then look.Unit else Vector3.yAxis
+				it.a.WorldCFrame = CFrame.lookAt(pos, pos + look)
+			elseif L.sil == "body" then
+				if #body == 0 then
+					return
+				end
+				local pt = body[rng:NextInteger(1, #body)]
+				if not pt.part.Parent then
+					continue
+				end
+				it.a.WorldCFrame = CFrame.new(pt.part.CFrame:PointToWorldSpace(pt.lp))
+			else
+				local cf, size = auraBox(model)
+				local r = math.max(size.X, size.Z) * (L.radius_k or 0.6) / 2 * math.sqrt(rng:NextNumber())
+				local ang = rng:NextNumber(0, 2 * math.pi)
+				it.a.WorldCFrame = CFrame.new(cf.Position.X + r * math.cos(ang),
+					cf.Position.Y - size.Y / 2 + (L.h or 0) * k, cf.Position.Z + r * math.sin(ang))
+			end
+			it.e:Emit(1)
+		end
+	end
+
+	local function destroyAll()
+		if holder.Parent then
+			holder:Destroy()
+		end
+		ctl.Active = false
+	end
+
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function(dt)
+		local t = time() - t0
+		if not model.Parent or not holder.Parent then
+			conn:Disconnect()
+			destroyAll()
+			return
+		end
+		if t >= nextParts then -- por si el modelo cambia de partes
+			nextParts = t + 2
+			parts = auraParts(model, 400)
+			params.FilterDescendantsInstances = (parts :: any) :: { Instance }
+		end
+		local cam = workspace.CurrentCamera
+		if cam and t >= nextScan then
+			-- lejos de la cámara (o con calidad baja) busca el contorno menos seguido y con menos rayos
+			local d = (cam.CFrame.Position - holder.Position).Magnitude
+			local near = math.clamp(80 * k / math.max(d, 1), 0.35, 1)
+			nextScan = t + 1 / (S.hz * near)
+			edges, body = silhouette(parts, cam, S, params, math.max(MoonfangVFX.Quality, 0.4))
+			upIdx, downIdx = {}, {}
+			for i, pt in edges do
+				if pt.out.Y > -0.35 then
+					table.insert(upIdx, i)
+				else
+					table.insert(downIdx, i)
+				end
+			end
+		end
+		local on = math.clamp(t / math.max(S.fade_in, 1e-3), 0, 1)
+		if stopAt then
+			local u = (t - (stopAt :: number)) / math.max(fadeOut, 1e-3)
+			on = math.min(on, math.clamp(1 - u, 0, 1))
+			if not endDone and t >= (stopAt :: number) then
+				endDone = true
+				for _, it in items do
+					if it.L.end_burst then
+						emit(it, quality(it.L.end_burst))
+					end
+				end
+			end
+			if u >= 1 then
+				if light then
+					light.Brightness = 0
+				end
+				ctl.Active = false
+				if t > (stopAt :: number) + fadeOut + S.life_max then
+					conn:Disconnect()
+					destroyAll()
+				end
+				return
+			end
+		end
+		if not burstDone and #edges > 0 then
+			burstDone = true
+			for _, it in items do
+				if it.L.burst then
+					emit(it, quality(it.L.burst))
+				end
+			end
+		end
+		local breath = 1 + (S.breath or 0) * math.sin(2 * math.pi * (S.breath_hz or 1) * t)
+		local k2 = on * ctl.Intensity * breath * MoonfangVFX.Quality
+		for _, it in items do
+			local rate = it.L.rate or 0
+			if rate > 0 then
+				it.acc += rate * k2 * math.min(dt, 0.1)
+				local n = math.floor(it.acc)
+				if n > 0 then
+					it.acc -= n
+					emit(it, n)
+				end
+			end
+		end
+		holder.CFrame = auraBox(model)
+		if light then
+			light.Brightness = S.light.brightness * on * ctl.Intensity
 		end
 	end)
 	return ctl
@@ -14271,26 +14598,26 @@ function MoonfangVFX.IceWave(cf: CFrame, length: number?, angle: number?, scale:
 	return play(SPEC_IceWave, cf, scale, length or 110.0 * (scale or 1), shake, angle or 50.0)
 end
 
-local SPEC_LunarHowl = {
-	name = "LunarHowl",
-	duration = 3.2,
-	cleanup = 4.3,
+local SPEC_FrostRoar = {
+	name = "FrostRoar",
+	duration = 1.7,
+	cleanup = 2.43,
 	layers = {
 		{
 			name = "GatherMotes",
 			texture = "fx_particle02",
 			shape = {
 				type = "Sphere",
-				radius = 14,
+				radius = 12,
 				style = "Surface",
 				inout = "Inward",
 			},
-			speed = {30, 40},
-			lifetime = {0.3, 0.32},
+			speed = {32, 42},
+			lifetime = {0.26, 0.28},
 			size = {
 				{0, 0, 0},
-				{0.3, 1, 0},
-				{1, 0.4, 0},
+				{0.3, 0.9, 0},
+				{1, 0.3, 0},
 			},
 			color = {
 				{
@@ -14309,7 +14636,7 @@ local SPEC_LunarHowl = {
 			light_emission = 1,
 			brightness = 1.8,
 			stream = {
-				{0, 0.28, 120, 60},
+				{0, 0.26, 110, 70},
 			},
 			spread = {0, 0},
 			direction = "Top",
@@ -14328,19 +14655,120 @@ local SPEC_LunarHowl = {
 			emit = {},
 		},
 		{
+			name = "GatherMist",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			shape = {
+				type = "Sphere",
+				radius = 9,
+				style = "Surface",
+				inout = "Inward",
+			},
+			speed = {22, 30},
+			lifetime = {0.3, 0.32},
+			size = {
+				{0, 5, 1},
+				{1, 1.5, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.4, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.3,
+			rotation = {0, 360},
+			stream = {
+				{0, 0.24, 30, 20},
+			},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
 			name = "GatherGlow",
 			texture = "fx_glow",
 			emit = {
 				{0, 1},
 			},
-			lifetime = {0.3, 0.3},
+			lifetime = {0.28, 0.28},
 			size = {
 				{0, 2, 0},
-				{1, 12, 0},
+				{1, 10, 0},
 			},
 			transparency = {
-				{0, 0.8, 0},
-				{1, 0.3, 0},
+				{0, 0.85, 0},
+				{1, 0.35, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.3,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "MouthFlash",
+			texture = "fx_glow",
+			emit = {
+				{0.28, 1},
+			},
+			lifetime = {0.22, 0.22},
+			size = {
+				{0, 6, 0},
+				{0.3, 24, 0},
+				{1, 26, 0},
+			},
+			transparency = {
+				{0, 0.3, 0},
+				{1, 1, 0},
 			},
 			color = {
 				{
@@ -14358,6 +14786,7 @@ local SPEC_LunarHowl = {
 			},
 			light_emission = 1,
 			brightness = 1.2,
+			zoffset = 3,
 			speed = {0, 0},
 			spread = {0, 0},
 			direction = "Top",
@@ -14365,75 +14794,119 @@ local SPEC_LunarHowl = {
 			drag = 0,
 			rotation = {0, 0},
 			rot_speed = {0, 0},
-			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 		},
 		{
-			name = "HowlRings",
-			texture = "kz_beam_ring",
-			direction = "Front",
-			spread = {0, 0},
-			speed = {45, 45},
-			drag = 1.2,
-			lifetime = {0.6, 0.6},
+			name = "MouthStar",
+			texture = "kk_star_09",
+			emit = {
+				{0.28, 1},
+			},
+			lifetime = {0.22, 0.22},
+			rotation = {0, 90},
 			size = {
-				{0, 10, 0},
-				{1, 60, 0},
+				{0, 6, 0},
+				{0.2, 30, 0},
+				{1, 8, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.6,
+			zoffset = 4,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+		},
+		{
+			name = "RoarRings",
+			texture = "kk_circle_02",
+			orientation = "VelocityPerpendicular",
+			direction = "Front",
+			speed = {58, 58},
+			drag = 1.6,
+			lifetime = {0.55, 0.55},
+			size = {
+				{0, 8, 0},
+				{1, 62, 0},
 			},
 			transparency = {
-				{0, 0.15, 0},
-				{0.6, 0.5, 0},
+				{0, 0.05, 0},
+				{0.5, 0.4, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{230, 245, 255},
+					{235, 248, 255},
 				},
 				{
 					0.5,
-					{155, 210, 255},
+					{170, 215, 255},
 				},
 				{
 					1,
-					{85, 145, 245},
+					{110, 165, 255},
 				},
 			},
-			light_emission = 1,
-			brightness = 1.4,
+			light_emission = 0.9,
+			brightness = 1.5,
 			emit = {
-				{0.3, 1},
-				{0.4, 1},
-				{0.5, 1},
-				{0.6, 1},
-				{0.7, 1},
-				{0.8, 1},
+				{0.28, 1},
+				{0.365, 1},
+				{0.45, 1},
+				{0.535, 1},
+				{0.62, 1},
+				{0.705, 1},
+				{0.79, 1},
 			},
+			spread = {0, 0},
 			accel = {0, 0, 0},
 			rotation = {0, 0},
 			rot_speed = {0, 0},
 			zoffset = 0,
-			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 		},
 		{
-			name = "HowlRingsUp",
-			texture = "kk_circle_02",
+			name = "RoarRingsSharp",
+			texture = "kz_beam_ring",
 			orientation = "VelocityPerpendicular",
-			direction = "Top",
-			speed = {30, 30},
+			direction = "Front",
+			speed = {85, 85},
 			drag = 1.2,
-			lifetime = {0.65, 0.65},
+			lifetime = {0.4, 0.4},
 			size = {
-				{0, 12, 0},
-				{1, 72, 0},
+				{0, 6, 0},
+				{1, 46, 0},
 			},
 			transparency = {
-				{0, 0.3, 0},
-				{0.6, 0.6, 0},
+				{0, 0.2, 0},
+				{0.6, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -14451,12 +14924,12 @@ local SPEC_LunarHowl = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.1,
+			brightness = 1.4,
 			emit = {
-				{0.3, 1},
-				{0.45, 1},
-				{0.6, 1},
-				{0.75, 1},
+				{0.31, 1},
+				{0.48, 1},
+				{0.65, 1},
+				{0.82, 1},
 			},
 			spread = {0, 0},
 			accel = {0, 0, 0},
@@ -14467,60 +14940,16 @@ local SPEC_LunarHowl = {
 			line_u = 0,
 		},
 		{
-			name = "HowlBlast",
-			texture = "fx_glow",
-			emit = {
-				{0.3, 1},
-			},
-			lifetime = {0.25, 0.25},
-			size = {
-				{0, 8, 0},
-				{0.3, 30, 0},
-				{1, 34, 0},
-			},
-			transparency = {
-				{0, 0.35, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.1,
-			zoffset = 3,
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-		},
-		{
-			name = "HowlStreaks",
+			name = "ScreamLines",
 			texture = "kk_trace_01",
 			orientation = "VelocityParallel",
 			direction = "Front",
-			spread = {30, 30},
-			speed = {80, 130},
-			drag = 4,
-			lifetime = {0.2, 0.35},
+			spread = {38, 26},
+			speed = {95, 155},
+			drag = 3,
+			lifetime = {0.18, 0.3},
 			size = {
-				{0, 8, 2},
+				{0, 10, 2},
 				{1, 3, 0},
 			},
 			color = {
@@ -14538,10 +14967,11 @@ local SPEC_LunarHowl = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.6,
+			brightness = 1.8,
 			emit = {
-				{0.3, 18},
-				{0.5, 10},
+				{0.28, 24},
+				{0.4, 16},
+				{0.54, 12},
 			},
 			accel = {0, 0, 0},
 			transparency = {
@@ -14555,156 +14985,123 @@ local SPEC_LunarHowl = {
 			line_u = 0,
 		},
 		{
-			name = "Moon",
-			texture = "mf_moon",
-			offset = {0, 58, 48},
-			emit = {
-				{0.35, 1},
+			name = "FrostBreath",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
 			},
-			lifetime = {2.6, 2.6},
+			direction = "Front",
+			spread = {16, 12},
+			speed = {55, 100},
+			drag = 2.2,
+			accel = {0, 3, 0},
+			lifetime = {0.9, 1.3},
 			size = {
-				{0, 30, 0},
-				{0.12, 58, 0},
-				{0.85, 60, 0},
-				{1, 62, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.1, 0.05, 0},
-				{0.8, 0.1, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					1,
-					{235, 242, 255},
-				},
-			},
-			light_emission = 0.12,
-			brightness = 1,
-			zoffset = -6,
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "MoonHalo",
-			texture = "fx_glow",
-			offset = {0, 58, 48},
-			emit = {
-				{0.35, 1},
-			},
-			lifetime = {2.6, 2.6},
-			size = {
-				{0, 40, 0},
-				{0.12, 95, 0},
-				{1, 100, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.1, 0.45, 0},
-				{0.8, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 0.9,
-			zoffset = -7,
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			line_u = 0,
-		},
-		{
-			name = "MoonRing",
-			texture = "kk_circle_02",
-			offset = {0, 58, 48},
-			emit = {
-				{0.38, 1},
-			},
-			lifetime = {0.6, 0.6},
-			size = {
-				{0, 60, 0},
-				{1, 150, 0},
+				{0, 4, 1},
+				{0.4, 14, 2},
+				{1, 22, 3},
 			},
 			transparency = {
 				{0, 0.3, 0},
-				{0.6, 0.6, 0},
+				{0.3, 0.5, 0},
 				{1, 1, 0},
 			},
 			color = {
 				{
 					0,
-					{255, 255, 255},
+					{238, 246, 255},
 				},
 				{
-					0.5,
-					{220, 232, 255},
+					0.35,
+					{200, 222, 252},
 				},
 				{
 					1,
-					{165, 195, 250},
+					{160, 188, 236},
 				},
 			},
-			light_emission = 1,
+			light_emission = 0.3,
+			rotation = {0, 360},
+			rot_speed = {-40, 40},
+			stream = {
+				{0.28, 0.83, 70, 20},
+			},
 			brightness = 1,
-			zoffset = -5,
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
+			zoffset = 0,
 			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BreathShards",
+			texture = "mf_shard_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Front",
+			spread = {22, 16},
+			speed = {70, 130},
+			drag = 0.6,
+			accel = {0, -60, 0},
+			lifetime = {0.5, 0.8},
+			size = {
+				{0, 1.6, 0.4},
+				{1, 1.1, 0.3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-500, 500},
+			emit = {
+				{0.28, 20},
+				{0.43, 12},
+			},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
 			line_u = 0,
 		},
 		{
-			name = "MoonGlints",
+			name = "BreathGlitter",
 			texture = "kk_star_06",
-			offset = {0, 58, 48},
-			shape = {
-				type = "Sphere",
-				radius = 40,
-				style = "Volume",
-				inout = "Outward",
-			},
-			lifetime = {0.4, 0.7},
+			direction = "Front",
+			spread = {25, 20},
+			speed = {40, 90},
+			drag = 2.5,
+			lifetime = {0.5, 0.9},
 			size = {
 				{0, 0, 0},
-				{0.08, 5.12, 0},
-				{0.22, 2.24, 0},
-				{0.38, 5.44, 0},
-				{0.55, 1.92, 0},
-				{0.72, 4.48, 0},
+				{0.08, 2.56, 0},
+				{0.22, 1.12, 0},
+				{0.38, 2.72, 0},
+				{0.55, 0.96, 0},
+				{0.72, 2.24, 0},
 				{1, 0, 0},
 			},
 			color = {
@@ -14725,13 +15122,9 @@ local SPEC_LunarHowl = {
 			brightness = 2,
 			rotation = {0, 45},
 			stream = {
-				{0.4, 2.6, 18, 6},
+				{0.28, 0.88, 60, 10},
 			},
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
 			accel = {0, 0, 0},
-			drag = 0,
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -14739,36 +15132,613 @@ local SPEC_LunarHowl = {
 			rot_speed = {0, 0},
 			zoffset = 0,
 			orientation = "FacingCamera",
+			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
 		},
 		{
-			name = "Moonbeams",
-			texture = "mf_moonlight_2x2",
+			name = "FloorRing",
+			floor = true,
+			offset = {0, 0, 9},
+			texture = "kk_circle_02",
+			emit = {
+				{0.3, 1},
+			},
+			lifetime = {0.6, 0.6},
+			size = {
+				{0, 8, 0},
+				{1, 95, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{230, 245, 255},
+				},
+				{
+					0.5,
+					{155, 210, 255},
+				},
+				{
+					1,
+					{85, 145, 245},
+				},
+			},
+			light_emission = 0.8,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "FloorFrost",
+			floor = true,
+			offset = {0, 0, 9},
+			texture = "mf_frost_patch",
+			emit = {
+				{0.33, 1},
+			},
+			lifetime = {1.4, 1.4},
+			rotation = {0, 360},
+			size = {
+				{0, 8, 0},
+				{0.15, 40, 0},
+				{1, 42, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.1, 0.3, 0},
+				{0.8, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 185, 255},
+				},
+				{
+					0.15,
+					{225, 242, 255},
+				},
+				{
+					0.35,
+					{130, 190, 255},
+				},
+				{
+					1,
+					{40, 80, 200},
+				},
+			},
+			light_emission = 0.5,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "FloorCracks",
+			floor = true,
+			offset = {0, 0, 9},
+			texture = "mf_frost_cracks",
+			emit = {
+				{0.32, 1},
+			},
+			lifetime = {1.3, 1.3},
+			rotation = {0, 360},
+			size = {
+				{0, 6, 0},
+				{0.12, 34, 0},
+				{1, 36, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.08, 0.25, 0},
+				{0.8, 0.35, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{120, 185, 255},
+				},
+				{
+					0.15,
+					{225, 242, 255},
+				},
+				{
+					0.35,
+					{130, 190, 255},
+				},
+				{
+					1,
+					{40, 80, 200},
+				},
+			},
+			light_emission = 0.85,
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+		{
+			name = "FloorMist",
+			floor = true,
+			offset = {0, 3.5, 9},
+			ring = {18, 7},
+			texture = "fx_smoke_2x2",
 			flipbook = {
 				layout = "Grid2x2",
 				mode = "Loop",
 				fps = 0.001,
 				startRandom = true,
 			},
-			orientation = "FacingCameraWorldUp",
-			offset = {0, 10, 10},
-			shape = {
-				type = "Box",
-				size = {24, 2, 6},
-				style = "Volume",
-				inout = "Outward",
-			},
-			lifetime = {0.7, 0.9},
+			direction = "Front",
+			pitch = 8,
+			spread = {8, 6},
+			speed = {35, 60},
+			drag = 2.5,
+			accel = {0, 2, 0},
+			lifetime = {1, 1.4},
 			size = {
-				{0, 26, 4},
-				{1, 30, 4},
+				{0, 6, 1},
+				{1, 16, 2},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.35, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			emit = {
+				{0.31, 1},
+			},
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			line_u = 0,
+		},
+		{
+			name = "FloorSpikes",
+			floor = true,
+			offset = {0, 0.5, 9},
+			ring = {16, 15},
+			texture = "mf_ice_spikes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			direction = "Front",
+			pitch = 68,
+			spread = {6, 6},
+			speed = {10, 16},
+			drag = 10,
+			lifetime = {0.8, 1},
+			size = {
+				{0, 0.5, 0},
+				{0.15, 6.5, 1},
+				{0.8, 7, 1},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.8, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			emit = {
+				{0.36, 1},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			line_u = 0,
+		},
+	},
+	shakes = {
+		{0.28, 0.8, 0.7},
+	},
+	light = {
+		color = {190, 225, 255},
+		brightness = 5,
+		range = 40,
+		time = 0.9,
+		delay = 0.28,
+	},
+}
+
+-- MOONFANG SKILL 3 (Rugido helado): el frío se junta en el hocico y ruge: ondas de sonido heladas, líneas de grito y un chorro de vaho con esquirlas hacia adelante; en el suelo, una onda de escarcha y púas de hielo alrededor. Junto con él enciende FrostAura sobre su modelo (la mejora). cf = la cabeza, mirando hacia adelante (-Z). Ruge a los 0.28 s.
+function MoonfangVFX.FrostRoar(cf: CFrame, scale: number?, shake: number?): Part
+	return play(SPEC_FrostRoar, cf, scale, nil, shake)
+end
+
+local SPEC_FrostAura = {
+	name = "FrostAura",
+	duration = 0,
+	cleanup = 0.3,
+	layers = {
+		{
+			name = "RimGlow",
+			sil = "edge",
+			texture = "fx_glow",
+			rate = 520,
+			push = 0.08,
+			up = 0.2,
+			direction = "Front",
+			speed = {0.5, 1.5},
+			lifetime = {0.12, 0.18},
+			size = {
+				{0, 2.2, 0},
+				{0.4, 3, 0},
+				{1, 1.8, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{235, 248, 255},
+				},
+				{
+					0.5,
+					{170, 215, 255},
+				},
+				{
+					1,
+					{110, 165, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.5,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RimHalo",
+			sil = "edge",
+			texture = "fx_glow",
+			rate = 90,
+			push = 0.5,
+			up = 0.35,
+			direction = "Front",
+			speed = {1, 3},
+			lifetime = {0.25, 0.4},
+			size = {
+				{0, 5, 0},
+				{0.4, 8, 0},
+				{1, 7, 0},
+			},
+			transparency = {
+				{0, 0.75, 0},
+				{0.5, 0.8, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 170, 255},
+				},
+				{
+					0.5,
+					{60, 115, 240},
+				},
+				{
+					1,
+					{30, 60, 190},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = -1,
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FrostFlames",
+			sil = "edge",
+			side = "up",
+			texture = "mf_frost_flame_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 0,
+				startRandom = false,
+			},
+			orientation = "FacingCameraWorldUp",
+			rate = 170,
+			push = 0.35,
+			up = 0.7,
+			direction = "Front",
+			spread = {15, 15},
+			speed = {5, 10},
+			drag = 1,
+			accel = {0, 6, 0},
+			lifetime = {0.45, 0.65},
+			size = {
+				{0, 4.5, 0.8},
+				{1, 6.8, 1},
+			},
+			transparency = {
+				{0, 0.15, 0},
+				{0.7, 0.25, 0},
+				{1, 1, 0},
+			},
+			light_emission = 0.75,
+			brightness = 1.4,
+			zoffset = 1,
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "IceSpikes",
+			sil = "edge",
+			texture = "mf_ice_spikes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			rate = 70,
+			push = 0.55,
+			up = 0.15,
+			direction = "Front",
+			spread = {10, 10},
+			speed = {1.5, 3},
+			drag = 3,
+			lifetime = {0.4, 0.6},
+			size = {
+				{0, 0.4, 0},
+				{0.2, 4.6, 0.8},
+				{0.75, 4.8, 0.8},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.75, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.4,
+			brightness = 1.8,
+			zoffset = 2,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ColdPour",
+			sil = "edge",
+			side = "down",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rate = 30,
+			push = 0.3,
+			up = -0.5,
+			direction = "Front",
+			spread = {20, 20},
+			speed = {2, 5},
+			drag = 1.5,
+			accel = {0, -5, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 2.5, 0.5},
+				{1, 7, 1},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.3, 0.7, 0},
-				{0.7, 0.75, 0},
+				{0.2, 0.6, 0},
+				{0.8, 0.75, 0},
 				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.25,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ColdVapor",
+			sil = "edge",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rate = 18,
+			push = 0.4,
+			up = 0.85,
+			direction = "Front",
+			spread = {20, 20},
+			speed = {2, 4},
+			drag = 0.8,
+			accel = {0, 2, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 3, 0.5},
+				{1, 8, 1},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.3, 0.72, 0},
+				{0.8, 0.8, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.2,
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			zoffset = -1,
+			brightness = 1,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RimGlints",
+			sil = "edge",
+			texture = "kk_star_06",
+			rate = 26,
+			push = 0.3,
+			up = 0.6,
+			direction = "Front",
+			speed = {2, 5},
+			drag = 1,
+			lifetime = {0.35, 0.6},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.76, 0},
+				{0.22, 0.77, 0},
+				{0.38, 1.87, 0},
+				{0.55, 0.66, 0},
+				{0.72, 1.54, 0},
+				{1, 0, 0},
 			},
 			color = {
 				{
@@ -14777,43 +15747,394 @@ local SPEC_LunarHowl = {
 				},
 				{
 					0.5,
-					{220, 232, 255},
+					{225, 240, 255},
 				},
 				{
 					1,
-					{165, 195, 250},
+					{170, 205, 255},
 				},
 			},
 			light_emission = 1,
-			brightness = 0.8,
-			zoffset = -3,
-			stream = {
-				{0.5, 2.6, 6, 3},
-			},
-			speed = {0, 0},
+			brightness = 2,
+			rotation = {0, 45},
+			zoffset = 2,
 			spread = {0, 0},
-			direction = "Top",
 			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
 			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
 		},
 		{
-			name = "FallingLight",
+			name = "ShedFrost",
+			sil = "body",
 			texture = "fx_spark002",
-			offset = {0, 28, 10},
-			shape = {
-				type = "Box",
-				size = {30, 4, 12},
-				style = "Volume",
-				inout = "Outward",
-			},
+			rate = 30,
 			direction = "Bottom",
-			spread = {5, 5},
+			spread = {30, 30},
+			speed = {1, 3},
+			accel = {0, -14, 0},
+			lifetime = {0.6, 1},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.12, 0},
+				{0.22, 0.49, 0},
+				{0.38, 1.19, 0},
+				{0.55, 0.42, 0},
+				{0.72, 0.98, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{225, 240, 255},
+				},
+				{
+					1,
+					{170, 205, 255},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ShedShards",
+			sil = "body",
+			texture = "mf_shard_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rate = 14,
+			direction = "Top",
+			spread = {60, 60},
+			speed = {2, 5},
+			accel = {0, -40, 0},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 0.9, 0.2},
+				{1, 0.6, 0.2},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.4,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-300, 300},
+			drag = 0,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "FeetMist",
+			sil = "feet",
+			h = 4,
+			radius_k = 0.75,
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			rate = 6,
+			direction = "Top",
+			spread = {70, 70},
+			speed = {1, 3},
+			drag = 1,
+			lifetime = {1.2, 1.6},
+			size = {
+				{0, 6, 1},
+				{1, 12, 2},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.3, 0.78, 0},
+				{0.8, 0.85, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{238, 246, 255},
+				},
+				{
+					0.35,
+					{200, 222, 252},
+				},
+				{
+					1,
+					{160, 188, 236},
+				},
+			},
+			light_emission = 0.15,
+			rotation = {0, 360},
+			zoffset = -2,
+			accel = {0, 0, 0},
+			brightness = 1,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "IgniteSpikes",
+			sil = "edge",
+			burst = 70,
+			texture = "mf_ice_spikes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			push = 0.5,
+			up = 0.1,
+			direction = "Front",
+			spread = {12, 12},
+			speed = {5, 9},
+			drag = 4,
+			lifetime = {0.45, 0.6},
+			size = {
+				{0, 0.5, 0},
+				{0.2, 4.5, 0.8},
+				{0.7, 4.8, 0.8},
+				{1, 0, 0},
+			},
+			transparency = {
+				{0, 0.05, 0},
+				{0.75, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.7,
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "IgniteFlames",
+			sil = "edge",
+			burst = 60,
+			texture = "mf_frost_flame_4x4",
+			flipbook = {
+				layout = "Grid4x4",
+				mode = "OneShot",
+				fps = 0,
+				startRandom = false,
+			},
+			orientation = "FacingCameraWorldUp",
+			push = 0.3,
+			up = 0.6,
+			direction = "Front",
+			spread = {15, 15},
 			speed = {10, 18},
-			lifetime = {1, 1.4},
+			drag = 1.5,
+			lifetime = {0.45, 0.6},
+			size = {
+				{0, 4.5, 0.6},
+				{1, 6.5, 1},
+			},
+			transparency = {
+				{0, 0.1, 0},
+				{0.7, 0.2, 0},
+				{1, 1, 0},
+			},
+			light_emission = 0.8,
+			brightness = 1.5,
+			zoffset = 1,
+			accel = {0, 0, 0},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "IgniteShards",
+			sil = "body",
+			burst = 26,
+			texture = "mf_shard_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {80, 80},
+			speed = {14, 28},
+			drag = 0.6,
+			accel = {0, -70, 0},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 1.4, 0.3},
+				{1, 1, 0.3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.45,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-500, 500},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EndShards",
+			sil = "body",
+			end_burst = 30,
+			texture = "mf_shard_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {70, 70},
+			speed = {4, 10},
+			drag = 0.5,
+			accel = {0, -60, 0},
+			lifetime = {0.6, 0.9},
+			size = {
+				{0, 1.1, 0.3},
+				{1, 0.8, 0.3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0.1, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{200, 230, 255},
+				},
+				{
+					0.4,
+					{120, 180, 255},
+				},
+				{
+					1,
+					{70, 120, 235},
+				},
+			},
+			light_emission = 0.4,
+			brightness = 1.4,
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EndGlitter",
+			sil = "edge",
+			end_burst = 40,
+			texture = "kk_star_06",
+			push = 0.3,
+			up = 0.3,
+			direction = "Front",
+			speed = {3, 7},
+			drag = 1,
+			accel = {0, -8, 0},
+			lifetime = {0.5, 0.8},
 			size = {
 				{0, 0, 0},
 				{0.08, 1.92, 0},
@@ -14838,711 +16159,9 @@ local SPEC_LunarHowl = {
 				},
 			},
 			light_emission = 1,
-			brightness = 1.8,
-			rotation = {0, 45},
-			stream = {
-				{0.5, 2.6, 30, 10},
-			},
-			accel = {0, 0, 0},
-			drag = 0,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-			emit = {},
-		},
-	},
-	shakes = {
-		{0.3, 0.6, 0.6},
-	},
-	light = {
-		color = {200, 225, 255},
-		brightness = 4,
-		range = 60,
-		time = 2.4,
-		delay = 0.3,
-	},
-}
-
--- MOONFANG SKILL 3 (Aullido lunar): la luz se junta en su hocico, aúlla (ondas de sonido que salen hacia adelante y arriba) y una luna llena enorme aparece detrás de él y lo baña de luz. Después enciende LunarAura mientras dure la mejora. cf = la cabeza, mirando hacia adelante (-Z).
-function MoonfangVFX.LunarHowl(cf: CFrame, scale: number?, shake: number?): Part
-	return play(SPEC_LunarHowl, cf, scale, nil, shake)
-end
-
-local SPEC_LunarAura = {
-	name = "LunarAura",
-	duration = 0,
-	cleanup = 0.3,
-	layers = {
-		{
-			name = "AuraWisps",
-			aura = "surface",
-			texture = "mf_aura_wisp_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			orientation = "FacingCameraWorldUp",
-			direction = "Top",
-			spread = {35, 35},
-			speed = {2, 5},
-			drag = 1,
-			accel = {0, 9, 0},
-			lifetime = {0.8, 1.3},
-			size = {
-				{0, 2.5, 0.6},
-				{0.3, 6, 1.2},
-				{1, 8, 1.5},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.2, 0.35, 0},
-				{0.7, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					1,
-					{225, 225, 240},
-				},
-			},
-			light_emission = 0.65,
-			brightness = 1.1,
-			rotation = {-10, 10},
-			rate = 60,
-			surge = 25,
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraWispsOut",
-			aura = "surface",
-			texture = "mf_aura_wisp_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			orientation = "FacingCameraWorldUp",
-			direction = "Top",
-			spread = {20, 20},
-			speed = {2, 5},
-			drag = 1,
-			accel = {0, 9, 0},
-			lifetime = {0.8, 1.3},
-			size = {
-				{0, 4, 1},
-				{0.3, 9, 2},
-				{1, 12, 2},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.25, 0.5, 0},
-				{0.7, 0.62, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					1,
-					{225, 225, 240},
-				},
-			},
-			light_emission = 0.65,
-			brightness = 1.1,
-			rotation = {-10, 10},
-			zoffset = -2,
-			rate = 16,
-			surge = 8,
-			rot_speed = {0, 0},
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraTongues",
-			aura = "surface",
-			texture = "fx_aura_tongue_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			orientation = "FacingCameraWorldUp",
-			direction = "Top",
-			spread = {20, 20},
-			speed = {2, 4},
-			drag = 1,
-			accel = {0, 10, 0},
-			lifetime = {0.45, 0.7},
-			size = {
-				{0, 3, 0.6},
-				{0.4, 6, 1.2},
-				{1, 7, 1.4},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.15, 0.3, 0},
-				{0.7, 0.45, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.3,
-			rotation = {-10, 10},
-			rate = 45,
-			surge = 20,
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraTongues2",
-			aura = "surface",
-			texture = "fx_aura_tongue_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			orientation = "FacingCameraWorldUp",
-			direction = "Top",
-			spread = {20, 20},
-			speed = {2, 4},
-			drag = 1,
-			accel = {0, 10, 0},
-			lifetime = {0.45, 0.7},
-			size = {
-				{0, 2.6, 0.5},
-				{0.4, 5, 1},
-				{1, 6, 1.2},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.15, 0.35, 0},
-				{0.7, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.35,
-			rotation = {-10, 10},
-			rate = 20,
-			surge = 10,
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraStars",
-			aura = "surface",
-			texture = "fx_spark002",
-			direction = "Top",
-			spread = {60, 60},
-			speed = {1, 3},
-			drag = 1,
-			accel = {0, 6, 0},
-			lifetime = {0.8, 1.4},
-			size = {
-				{0, 0, 0},
-				{0.08, 0.96, 0},
-				{0.22, 0.42, 0},
-				{0.38, 1.02, 0},
-				{0.55, 0.36, 0},
-				{0.72, 0.84, 0},
-				{1, 0, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{225, 240, 255},
-				},
-				{
-					1,
-					{170, 205, 255},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.8,
-			rotation = {0, 45},
-			rate = 40,
-			surge = 25,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraMotes",
-			aura = "surface",
-			texture = "fx_particle02",
-			direction = "Top",
-			spread = {60, 60},
-			speed = {1, 4},
-			drag = 1.5,
-			accel = {0, 6, 0},
-			lifetime = {0.5, 0.9},
-			size = {
-				{0, 0, 0},
-				{0.15, 0.32, 0.1},
-				{0.8, 0.24, 0},
-				{1, 0, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					1,
-					{220, 235, 255},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.6,
-			rate = 30,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraBolts",
-			aura = "surface",
-			texture = "kk_spark_05",
-			lifetime = {0.07, 0.1},
-			size = {
-				{0, 2, 0.6},
-				{1, 2.6, 0.6},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.4,
-			rotation = {0, 360},
-			rate = 6,
-			surge = 8,
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraHalo",
-			aura = "body",
-			box = {0.8, 0.8, 0.8},
-			texture = "fx_glow",
-			lifetime = {0.6, 0.9},
-			size = {
-				{0, 15, 2},
-				{1, 18, 2},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.3, 0.8, 0},
-				{0.7, 0.84, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 1,
-			zoffset = -3,
-			rate = 6,
-			speed = {0, 0},
-			spread = {0, 0},
-			direction = "Top",
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "AuraStreaks",
-			aura = "body",
-			box = {1.05, 0.8, 1.05},
-			texture = "kk_trace_03",
-			orientation = "VelocityParallel",
-			direction = "Top",
-			spread = {5, 5},
-			speed = {18, 28},
-			lifetime = {0.25, 0.4},
-			size = {
-				{0, 0.5, 0},
-				{0.3, 3, 0},
-				{1, 0.6, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.2,
-			rate = 14,
-			surge = 16,
-			accel = {0, 0, 0},
-			drag = 0,
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "FeetRings",
-			aura = "feet",
-			radius_k = 0.05,
-			texture = "kk_circle_02",
-			offset = {0, 0.25, 0},
-			lifetime = {1, 1.2},
-			size = {
-				{0, 8, 0},
-				{1, 20, 0},
-			},
-			transparency = {
-				{0, 0.45, 0},
-				{0.6, 0.7, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{230, 245, 255},
-				},
-				{
-					0.5,
-					{155, 210, 255},
-				},
-				{
-					1,
-					{85, 145, 245},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.1,
-			rate = 1.6,
-			surge = 1,
-			orientation = "VelocityPerpendicular",
-			direction = "Top",
-			speed = {0.01, 0.01},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "FeetGlow",
-			aura = "feet",
-			radius_k = 0.05,
-			texture = "fx_glow",
-			offset = {0, 0.15, 0},
-			lifetime = {0.6, 0.8},
-			size = {
-				{0, 22, 0},
-				{1, 25, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.3, 0.65, 0},
-				{0.7, 0.7, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{110, 170, 255},
-				},
-				{
-					0.5,
-					{60, 115, 240},
-				},
-				{
-					1,
-					{30, 60, 190},
-				},
-			},
-			light_emission = 1,
-			brightness = 1,
-			rate = 4,
-			orientation = "VelocityPerpendicular",
-			direction = "Top",
-			speed = {0.01, 0.01},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			drag = 0,
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "FeetRise",
-			aura = "feet",
-			radius_k = 0.6,
-			texture = "fx_spark002",
-			offset = {0, 0.3, 0},
-			direction = "Top",
-			spread = {10, 10},
-			speed = {6, 12},
-			drag = 0.5,
-			lifetime = {0.6, 1},
-			size = {
-				{0, 0, 0},
-				{0.08, 0.8, 0},
-				{0.22, 0.35, 0},
-				{0.38, 0.85, 0},
-				{0.55, 0.3, 0},
-				{0.72, 0.7, 0},
-				{1, 0, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{225, 240, 255},
-				},
-				{
-					1,
-					{170, 205, 255},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.7,
-			rotation = {0, 45},
-			rate = 25,
-			surge = 15,
-			accel = {0, 0, 0},
-			transparency = {
-				{0, 0, 0},
-				{1, 0, 0},
-			},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "FeetTongues",
-			aura = "feet",
-			radius_k = 0.55,
-			texture = "fx_aura_tongue_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			orientation = "FacingCameraWorldUp",
-			offset = {0, 0.5, 0},
-			direction = "Top",
-			speed = {2, 4},
-			accel = {0, 8, 0},
-			lifetime = {0.4, 0.6},
-			size = {
-				{0, 3, 0},
-				{0.4, 6, 0},
-				{1, 7, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.2, 0.35, 0},
-				{0.7, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.3,
-			rotation = {-8, 8},
-			rate = 18,
-			surge = 8,
-			spread = {0, 0},
-			drag = 0,
-			rot_speed = {0, 0},
-			zoffset = 0,
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "MoonGlints",
-			aura = "body",
-			box = {1.2, 1, 1.2},
-			texture = "kk_star_06",
-			direction = "Top",
-			spread = {30, 30},
-			speed = {2, 5},
-			lifetime = {0.6, 1},
-			size = {
-				{0, 0, 0},
-				{0.08, 1.6, 0},
-				{0.22, 0.7, 0},
-				{0.38, 1.7, 0},
-				{0.55, 0.6, 0},
-				{0.72, 1.4, 0},
-				{1, 0, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{225, 240, 255},
-				},
-				{
-					1,
-					{170, 205, 255},
-				},
-			},
-			light_emission = 1,
 			brightness = 2,
 			rotation = {0, 45},
-			rate = 18,
-			surge = 12,
-			accel = {0, 0, 0},
-			drag = 0,
+			spread = {0, 0},
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
@@ -15554,84 +16173,34 @@ local SPEC_LunarAura = {
 			line_u = 0,
 			emit = {},
 		},
-		{
-			name = "MoonCrescents",
-			aura = "body",
-			box = {1, 0.8, 1},
-			texture = "mf_crescent",
-			orientation = "FacingCameraWorldUp",
-			direction = "Top",
-			spread = {10, 10},
-			speed = {4, 8},
-			lifetime = {0.6, 0.9},
-			size = {
-				{0, 1.5, 0},
-				{0.3, 3.5, 0},
-				{1, 4.5, 0},
-			},
-			transparency = {
-				{0, 1, 0},
-				{0.25, 0.45, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					0.5,
-					{220, 232, 255},
-				},
-				{
-					1,
-					{165, 195, 250},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.3,
-			rotation = {-20, 20},
-			rate = 4,
-			surge = 4,
-			accel = {0, 0, 0},
-			drag = 0,
-			rot_speed = {0, 0},
-			zoffset = 0,
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
 	},
-	aura = {
+	silhouette = {
 		ref = 22,
-		fade_in = 0.6,
-		fade_out = 0.7,
-		surge = 2.2,
-		pulse_hz = 0.8,
-		max_parts = 30,
-		outline = {
-			{230, 240, 255},
-			{130, 185, 255},
+		cell = 0.014,
+		max_rays = 640,
+		hz = 20,
+		fade_in = 0.3,
+		fade_out = 0.5,
+		breath = 0.15,
+		breath_hz = 0.9,
+		light = {
+			color = {150, 200, 255},
+			brightness = 1.2,
+			range = 18,
 		},
-		outline_t = {0, 0.35},
-		fill = {40, 70, 160},
-		fill_t = {0.74, 0.88},
-		light_color = {190, 220, 255},
-		light_brightness = 2.5,
-		light_range = 26,
-		life_max = 1.4,
+		life_max = 1.6,
 	},
 }
 
--- MOONFANG SKILL 3 (la mejora del Aullido lunar): aura de luz de luna plateada que respira hacia el hielo, con medias lunas pequeñas, estrellas y destellos que suben.
--- model = el modelo (Model o Part): el aura se adapta sola a su forma y a su tamaño y lo sigue si se mueve
--- (22 studs de alto = tamaño 1; scale lo multiplica). duration = segundos que dura (nil = hasta que la
--- apagues); intensity = 1 normal (0.5 suave, 1.5 fuerte). Devuelve un control:
+-- MOONFANG SKILL 3 (la mejora del Rugido helado): aura de hielo de CONTORNO. Cada cliente busca el contorno del modelo visto desde su cámara (Raycasts solo contra el modelo) y de ahí salen llamas frías, cristales que brotan hacia afuera, brillos y vaho; del cuerpo se desprende escarcha que cae. Si cambias de ángulo, el aura cambia de lugar con el contorno. Al encender brota el hielo de todo el contorno; al apagar se cae.
+-- model = el modelo (Model o Part). El aura sale del CONTORNO del modelo visto desde la cámara de cada
+-- jugador y lo sigue si se mueve (22 studs de alto = tamaño 1; scale lo multiplica).
+-- duration = segundos que dura (nil = hasta que la apagues); intensity = 1 normal. Devuelve un control:
 --   aura:Stop(fade)          la apaga (se desvanece en fade s; nil = el de siempre)
 --   aura:SetIntensity(k)     más fuerte o más suave mientras dura
 --   aura.Active = true mientras se ve; aura.Holder = la Part que la contiene
-function MoonfangVFX.LunarAura(model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
-	return playAura(SPEC_LunarAura, model, scale, duration, intensity)
+function MoonfangVFX.FrostAura(model: Instance, scale: number?, duration: number?, intensity: number?): AuraControl
+	return playSilhouette(SPEC_FrostAura, model, scale, duration, intensity)
 end
 
 local SPEC_Eclipse = {

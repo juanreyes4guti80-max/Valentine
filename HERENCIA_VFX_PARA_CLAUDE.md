@@ -148,7 +148,8 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 | `rocks` | efecto que sale de las rocas que le pasas | `vfx_pillars.py` (H3) |
 | `line` + `blade` | una media luna de energía hecha de trazos finos de Beams que vuela de canto por la línea, con su estela (`emitters`), el corte del suelo (`gash`), las losas que saltan a los lados (`slabs`) y el cráter del final (`crater`); lo demás se sincroniza con eventos a lo largo del camino | `vfx_moonfang.py` (`CRESCENT_WAVE`) |
 | `cone` (+ `front`, `field`) | onda en forma de triángulo hacia adelante. Con `front`, emisores que viajan con el frente (sale rápido y se frena: `wave` = T0, TW, freno) y dejan una estela; con `field`, bloques y losas sólidos que brotan donde pasa el frente (los de hielo revientan al final) | `vfx_astral.py`, `vfx_moonfang.py` (`ICE_WAVE`) |
-| `aura` | aura que se adapta a cualquier modelo (Highlight + emisores por parte) | `vfx_aura.py` |
+| `aura` | aura que se adapta a cualquier modelo (Highlight + emisores por parte). **Al usuario no le gustó** ("un delineado y un filtro raro con partículas sueltas"): para auras nuevas usa `silhouette` | `vfx_aura.py` |
+| `silhouette` | **aura de contorno: el delineado ES el aura.** Cada cliente lanza una rejilla de Raycasts desde su cámara solo contra las partes visibles del modelo; los nodos que tocan y tienen un vecino que no toca son el contorno, y de ahí salen las capas `sil = "edge"` (con `side` "up"/"down", `up` y `push`), `"body"` (de los puntos de adentro) o `"feet"`. `burst` al encender y `end_burst` al apagar. La prueba comprueba que una mano delante del pecho no tiene aura de frente y sí de lado | `vfx_moonfang.py` (`FROST_AURA`) |
 | `cataclysm` | la ULTIMATE de Omnívora (campo gravitacional, geometría, plan para el servidor) | `vfx_cataclysm.py` |
 
 ### Nivel capa (un ParticleEmitter)
@@ -176,6 +177,7 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 Otras claves frecuentes:
 
 - `"decal": True` hace una marca plana del suelo con Decal (sin límite de tamaño).
+- `"floor": True` (en efectos que salen de un punto, como el rugido desde la cabeza) pone la capa en el suelo bajo el efecto (Raycast hacia abajo): `offset` horizontal, y su Y es la altura sobre el suelo. `ring = (n, radio)` la reparte en n puntos alrededor, mirando hacia afuera (`pitch` hacia arriba).
 - `"bill": True` (en zonas) hace cada partícula con una **BillboardGui + ImageLabel**: sin el tope de 100 studs (la luna del Eclipse, los destellos gigantes).
   - No tiene `LightEmission` (mezcla alfa); `brightness` la hace brillar.
   - `zoffset` es el `StudsOffset` hacia la cámara de verdad, así que se ve un poco más grande.
@@ -367,7 +369,7 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
   - `CosmicAura`;
   - **ULTIMATE `GravitationalCataclysm`**: 23 s, radio de 500 m (1786 studs), 8 fases, plan para el servidor, escena de prueba `CataclysmDemo.client.lua`.
 - **Astral Colossus** (`AstralColossusVFX`): `AstralClash`.
-- **Moonfang** (`MoonfangVFX`): `MoonBite` y `MoonBiteFinisher` (M1, mordiscos), `MoonGuard` y `MoonGuardHit` (bloqueo), `MoonFang` (pesado), `CrescentWave` (skill 1), `IceWave` (skill 2), `LunarHowl` y `LunarAura` (skill 3) y `Eclipse` (skill 4). Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
+- **Moonfang** (`MoonfangVFX`): `MoonBite` y `MoonBiteFinisher` (M1, mordiscos), `MoonGuard` y `MoonGuardHit` (bloqueo), `MoonFang` (pesado), `CrescentWave` (skill 1), `IceWave` (skill 2), `FrostRoar` y `FrostAura` (skill 3) y `Eclipse` (skill 4). Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
 - **Plugin** `SubirTexturasVFX`.
 
 **Pendiente o por verificar (tu terreno):**
@@ -381,7 +383,7 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
    - M1 como **mordiscos** al estilo de Devil Dinosaur (Marvel Rivals). Ojo con lo que quiere: **un buen mordisco muestra solo los dientes, no la encía**. No le gustaron ni las mandíbulas con encía y dientes ("eso es Pokémon") ni dos arcos de luz como una boca sin dientes ("solo veo la encía"). Ya están: `MoonBite` es un flipbook (`mf_chomp_4x4`) de dos filas de colmillos de cristal que se cierran, se traban, se rompen, más chispas, vaho y una herida de escarcha que gotea. No pude ver el video de Devil Dinosaur (red bloqueada); si tú puedes, compáralo;
    - el resto del kit, uno por uno cuando él diga. El pesado (`MoonFang`) todavía usa las mandíbulas con dientes (`kz_bite_4x4`) que no le gustaron.
 
-   Las auras tampoco le convencieron en el juego.
+   Las auras tampoco le convencieron en el juego. Codex las subió a Studio y dijo: "era como ponerle un delineado alrededor, un filtro extraño, y encima unas partículas de fuego sueltas". Su idea de aura: **"el delineado se convierte en el aura"**. Solo el borde exterior, visto desde la cámara, lleva el aura. Si miras de lado a un kaiju con las manos al frente, las manos tienen aura; de frente, las manos quedan dentro del pecho y el aura pasa a los hombros. Por eso la Skill 3 usa `silhouette` (`FrostAura`): llamas frías, cristales que brotan hacia afuera y vaho que cae por abajo, sin Highlight ni relleno. La Skill 3 ahora es un **rugido** (`FrostRoar`) que da una mejora (todo más rápido; eso es de animación y gameplay).
 
    **La skill 1 (Medialuna) va por la 3.ª versión.** Lo que pidió en cada vuelta, para que no se repita:
    - la media luna se ve **de lado**; desde la cámara del jugador (atrás) debe verse **de canto**, como una hoja que apunta hacia donde va (curvarla para que se lea como media luna desde atrás "se ve horrible");

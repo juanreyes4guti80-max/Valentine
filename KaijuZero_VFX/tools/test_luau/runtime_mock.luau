@@ -230,6 +230,35 @@ function Inst.new(class)
 			end end
 			if k == "Raycast" then return function(_, origin, dirv, params)
 				M.stats.raycasts += 1
+				-- solo contra unas partes (Include): cajas giradas (el aura de contorno busca el modelo)
+				if params and params.FilterType and params.FilterType.Name == "Include" then
+					local best, bestPart = math.huge, nil
+					for _, part in params.FilterDescendantsInstances or {} do
+						local pcf, psz = part.CFrame, part.Size
+						if pcf and psz then
+							local o = pcf:PointToObjectSpace(origin)
+							local d = pcf:PointToObjectSpace(origin + dirv) - o
+							local t0, t1 = 0, 1
+							local ok = true
+							for _, ax in { "X", "Y", "Z" } do
+								local h = psz[ax] / 2
+								if math.abs(d[ax]) < 1e-12 then
+									if math.abs(o[ax]) > h then ok = false break end
+								else
+									local a, b = (-h - o[ax]) / d[ax], (h - o[ax]) / d[ax]
+									if a > b then a, b = b, a end
+									t0, t1 = math.max(t0, a), math.min(t1, b)
+									if t0 > t1 then ok = false break end
+								end
+							end
+							if ok and t0 < best then best, bestPart = t0, part end
+						end
+					end
+					if bestPart then
+						return { Position = origin + dirv * best, Instance = bestPart, Material = M.Enum.Material.Plastic }
+					end
+					return nil
+				end
 				-- suelo plano en y = 0 (si el rayo lo cruza): el punto donde lo cruza
 				if origin.Y >= 0 and origin.Y + dirv.Y <= 0 then
 					groundFake.Color = groundFake.Color or M.Color3.fromRGB(90, 140, 70)
@@ -303,7 +332,28 @@ M.typeof = function(v)
 	return typeof(v)
 end
 M.workspace = Inst.new("Workspace")
-M.workspace.CurrentCamera = { CFrame = M.CFrame.new(0, 10, 30) }
+-- la cámara (perspectiva de 70° vertical, 800 × 600): la usa el aura de contorno para buscar el contorno del modelo
+local Cam = {}
+Cam.__index = Cam
+local function camF(self) return (self.ViewportSize.Y / 2) / math.tan(math.rad(self.FieldOfView) / 2) end
+function Cam:WorldToViewportPoint(p)
+	local q = self.CFrame:PointToObjectSpace(p)
+	local depth = -q.Z
+	if depth <= 1e-6 then return v3(0, 0, depth), false end
+	local f = camF(self)
+	return v3(self.ViewportSize.X / 2 + f * q.X / depth, self.ViewportSize.Y / 2 - f * q.Y / depth, depth), true
+end
+function Cam:ViewportPointToRay(x, y)
+	local f = camF(self)
+	local d = v3((x - self.ViewportSize.X / 2) / f, -(y - self.ViewportSize.Y / 2) / f, -1).Unit
+	return { Origin = self.CFrame.Position, Direction = self.CFrame:VectorToWorldSpace(d) }
+end
+local ws0 = M.workspace
+M.setCamera = function(pos, target)
+	ws0.CurrentCamera = setmetatable({ CFrame = if target then M.CFrame.lookAt(pos, target) else M.CFrame.new(pos.X, pos.Y, pos.Z),
+		ViewportSize = M.Vector2.new(800, 600), FieldOfView = 70 }, Cam)
+end
+M.setCamera(v3(0, 10, 30))
 
 local heart, renders = {}, {}
 local RunService = {
