@@ -47,7 +47,7 @@ En Studio vas a usar:
 | **Bloqueo** (mientras bloquea) | `MoonGuard(moonfang, escala, duración, intensidad)` | Aura de escarcha que delinea todo su cuerpo en hielo y plata, con esquirlas de cristal flotando. | se enciende en 0.15 s |
 | **Bloqueo** (cada golpe bloqueado) | `MoonGuardHit(moonfang, escala, sacudida)` | Una media luna de luz aparece como escudo delante de él, con esquirlas que rebotan a los lados. | 0.02 s |
 | **Skill 1: Medialuna** | `CrescentWave(cf, largo, escala, sacudida)` | De un zarpazo lanza una **media luna de energía** que vuela **vertical y de canto**. De lado se ve la media luna, con la punta hacia adelante. Desde atrás (la cámara del jugador) se ve una hoja fina que apunta hacia donde va. Tiene el filo blanco y duro, y el cuerpo celeste y azul hecho de trazos finos. Mientras vuela deja una **estela de humo frío**, brillos y esquirlas. Su cuerno de abajo **corta el suelo**: se abre una grieta con escarcha y **las losas del suelo saltan inclinadas a los dos lados** (algunas son placas de hielo). También salen **rocas cúbicas** que caen y se quedan un rato en el camino antes de desmoronarse. Las losas y las rocas toman **el color y el material de tu suelo**. Al llegar al final **detona en hielo**: un destello, una cúpula de ondas, lanzas de hielo, una nube helada, viento frío por el suelo, una corona de púas, pedazos de hielo y un **cráter de losas**. | detona a los **0.76 s** (`MoonfangVFX.CrescentWaveImpact`) |
-| **Skill 2: Lluvia de colmillos** | `FangRain(cf, escala, sacudida)` | Se marca un círculo de escarcha y del cielo caen 20 colmillos de cristal gigantes que se clavan, brillan y estallan en esquirlas. | caen entre los **0.85 y 1.7 s**; estallan 0.85 s después de clavarse |
+| **Skill 2: Ola de hielo** | `IceWave(cf, largo, apertura, escala, sacudida)` | Golpea el suelo y una **ola de hielo** sale hacia adelante **abriéndose en triángulo**. Es un muro de aire helado y nieve con su cresta de esquirlas y púas, y crece mientras avanza. A su paso brotan **bloques de hielo** inclinados, más grandes al fondo. También saltan losas del suelo, salen rocas volando, el suelo queda escarchado y sube **humo frío** que se queda flotando. Al llegar al borde lejano la ola choca. Los bloques de hielo aguantan un par de segundos y revientan en esquirlas. | llega al borde lejano a los **0.87 s** |
 | **Skill 3: Aullido lunar** | `LunarHowl(cabeza, escala, sacudida)` + `LunarAura(moonfang, …)` | La luz se junta en su hocico, aúlla con ondas de sonido y una luna llena enorme aparece detrás de él y lo baña de luz. Después, el aura de luz de luna mientras dure la mejora. | aúlla a los **0.3 s** |
 | **Skill 4: Eclipse** | `Eclipse(cf, radio, altura, escala, sacudida)` | Una luna llena aparece sobre la zona y se va eclipsando. La zona se agrieta en escarcha y los pedazos del suelo levitan. Al quedar cubierta cae una columna de luz de luna que hace volar tierra y cristal. Al final queda un anillo de cristal roto. | el golpe es a los **1.15 s**; la columna dura hasta los 2.6 s |
 
@@ -86,8 +86,9 @@ evento.OnClientEvent:Connect(function(que: string, d: any)
 	elseif que == "Medialuna" then
 		-- cf en el suelo, mirando hacia donde sale la media luna
 		MoonfangVFX.CrescentWave(CFrame.lookAt(d.origen, d.origen + d.direccion), 130 * d.escala, d.escala, 1)
-	elseif que == "Lluvia" then
-		MoonfangVFX.FangRain(CFrame.new(d.centro), d.escala, 1)
+	elseif que == "Ola" then
+		-- cf en el suelo, mirando hacia donde sale la ola; 110 studs de largo y 50° de apertura (a escala 1)
+		MoonfangVFX.IceWave(CFrame.lookAt(d.origen, d.origen + d.direccion), 110 * d.escala, 50, d.escala, 1)
 	elseif que == "Aullido" then
 		MoonfangVFX.LunarHowl(d.cabeza.CFrame, d.escala, 1) -- la cabeza mirando hacia adelante
 		MoonfangVFX.LunarAura(d.moonfang, 1, d.duracion)     -- el aura dura lo que dure la mejora
@@ -110,7 +111,7 @@ end)
 - Los golpes (M1, pesado, bloqueo) **se adaptan solos al alto del rival** si le pasas su Model.
 - Las auras se adaptan al modelo que les pases.
 
-**Los colmillos de la skill 2** son Parts de material `Ice`, anclados, sin colisión ni toques. Caen derechos, se quedan clavados un momento y estallan. Las grietas, los anillos y las marcas del suelo son Decals pensados para suelo plano.
+**Los bloques de hielo de la skill 2** son Parts de material `Ice`, anclados, sin colisión ni toques. Las losas y las rocas toman el color y el material de tu suelo. Las grietas, los anillos y las marcas del suelo son Decals pensados para suelo plano.
 
 ## Para que se vea como en el video
 
@@ -129,7 +130,7 @@ En el pico:
 | Efecto | Partículas | Otras piezas |
 |---|---|---|
 | Medialuna | unas 1100 | unas 118 losas, 62 rocas y 240 Beams |
-| Lluvia de colmillos | unas 600 | 20 colmillos |
+| Ola de hielo | unas 600 | unos 120 bloques y losas, y 30 rocas |
 | Eclipse | unas 600 | unos 150 pedazos |
 | Golpes | de 60 a 160 | — |
 
@@ -144,6 +145,7 @@ local MoonfangVFX = require(ReplicatedStorage.MoonfangVFX)
 local modelos = ReplicatedStorage.MoonfangMeshes -- una carpeta con tus MeshParts
 MoonfangVFX.Meshes.IceChunks = modelos.IceChunk -- los pedazos de hielo de la detonación de la Medialuna
 MoonfangVFX.Meshes.IceSlab = modelos.IceSlab    -- las placas de hielo que saltan en el corte
+MoonfangVFX.Meshes.IceBlocks = modelos.IceBlock  -- los bloques de hielo de la Ola de hielo
 ```
 
 - El modelo se clona y se escala al tamaño de cada pieza, y conserva su material, su color y su textura.
@@ -159,7 +161,7 @@ MoonfangVFX.Meshes.IceSlab = modelos.IceSlab    -- las placas de hielo que salta
 Todo el kit está en `KaijuZero_VFX/tools/vfx_moonfang.py`:
 
 - arriba están los colores;
-- después cada ataque, con sus tiempos (`T_CLAW`, `T_FIN`, `T_BITE`, `T_SHATTER`, `TW` de la medialuna, `FANGS_EMIT` de la lluvia, `T_HOWL`, `TE_C` y `TE_E` del eclipse) y sus capas.
+- después cada ataque, con sus tiempos (`T_CLAW`, `T_FIN`, `T_BITE`, `T_SHATTER`, `TW` de la medialuna, `TWW` y `WAVE_FIELD` de la ola, `T_HOWL`, `TE_C` y `TE_E` del eclipse) y sus capas.
 
 Sus texturas propias salen de `KaijuZero_VFX/tools/gen_moonfang_textures.py`.
 

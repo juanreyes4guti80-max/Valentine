@@ -176,23 +176,51 @@ def spec_end(spec):
         end = max(end, spec["beam"]["stop"] + spec["beam"]["fade"])
     if spec.get("blade"):
         end = max(end, blade_end(spec["blade"], spec.get("line", 0)))
+    if spec.get("field"):
+        end = max(end, field_end(spec["field"]))
     return end
 
 
 def norm_blade(B):
     """Los datos de la media luna para el módulo: trazos, emisores de la estela, corte, losas y cráter."""
-    def plain(v):
-        if isinstance(v, dict):
-            return {k: plain(x) for k, x in v.items()}
-        if isinstance(v, (list, tuple)):
-            return [plain(x) for x in v]
-        return v
     Bd = {k: plain(v) for k, v in B.items() if k not in ("strands", "emitters", "slab_color")}
     Bd["strands"] = [plain(S) for S in B["strands"]]
     Bd["emitters"] = [dict(norm_layer({k: v for k, v in E.items() if k not in ("at", "j", "arc_k", "rate")}),
                            at=list(E["at"]), j=E.get("j", 0.0), arc_k=E.get("arc_k", 1.0), rate=E["rate"])
                       for E in B.get("emitters", [])]
     return Bd
+
+
+def plain(v):
+    """Tuplas a listas, en profundidad (para escribir los datos en Lua)."""
+    if isinstance(v, dict):
+        return {k: plain(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [plain(x) for x in v]
+    return v
+
+
+def norm_field(F):
+    """Los grupos de bloques y losas de la ola triangular (las partículas al reventar, normalizadas)."""
+    out = {"wave": list(F["wave"]), "groups": []}
+    for G in F["groups"]:
+        g = {k: plain(v) for k, v in G.items() if k not in ("shatter", "preview_color")}
+        g["mesh"] = G["name"]
+        if G.get("shatter"):
+            g["shatter"] = [norm_layer(L) for L in G["shatter"]]
+        out["groups"].append(g)
+    return out
+
+
+def field_end(F):
+    """Cuándo termina lo último del campo (los bloques que revientan y sus partículas): cota superior."""
+    end = 0.0
+    T0, TW = F["wave"]
+    for G in F["groups"]:
+        t = T0 + TW * G["u"][1] + G["delay"][1] + G["rise"] + G["hold"][1]
+        after = max([L["lifetime"][1] for L in G.get("shatter", [])] + [0]) if G.get("end") == "shatter" else G["sink"]
+        end = max(end, t + after)
+    return end
 
 
 def blade_end(B, length):
@@ -259,7 +287,7 @@ DOC_MOONFANG = """	MoonfangVFX — VFX del lobo kaiju lunar de cristal (plata, h
 		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
 		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado
 		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 130, 1, 1)   -- skill 1
-		MoonfangVFX.FangRain(CFrame.new(centroEnElSuelo), 1, 1)  -- skill 2
+		MoonfangVFX.IceWave(CFrame.lookAt(origen, origen + direccion), nil, nil, 1, 1)  -- skill 2
 		MoonfangVFX.LunarHowl(cabeza.CFrame, 1, 1)               -- skill 3 (y LunarAura para la mejora)
 		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), 26, 150, 1, 1)   -- skill 4"""
 
@@ -1070,6 +1098,177 @@ local function finish(spec: Layer, holder: BasePart, s: number, shake: number?, 
 	Debris:AddItem(holder, spec.cleanup)
 end
 
+-- ---------------------------------------------------------------- losas y bloques que saltan del suelo
+-- Los usan la Medialuna (las filas a los lados del corte y el cráter) y la Ola de hielo (el campo del triángulo).
+-- Cada pieza aparece a su tiempo con el color y el material del suelo (o de hielo), sube con un rebote, se queda y
+-- se hunde; con end = "shatter" desaparece de golpe al terminar y revienta en partículas. Se puede cambiar por un
+-- modelo de Blender en KaijuFireVFX.Meshes[mesh].
+type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
+	rise: number, sink: number, ice: any, shatter: boolean, mesh: string?, L: any, part: BasePart?, base: CFrame?,
+	gy: number, gone: boolean }
+
+local function easeOutBack(p: number): number
+	local q = math.clamp(p, 0, 1) - 1
+	return 1 + q * q * (2.6 * q + 1.6)
+end
+
+local function bladePart(name: string, holder: BasePart): Part
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Parent = holder
+	return p
+end
+
+-- una pieza en (x, z) local, inclinada hacia yaw (radianes en el plano X-Z): el borde de adentro asoma y el de afuera
+-- queda enterrado. Con "ice" una fracción son de hielo (y pueden tener su tamaño); "big" agranda unas pocas.
+local function makeSlab(SL: any, s: number, x: number, z: number, yaw: number, side: number, tS: number): Slab
+	local ice = SL.ice ~= nil and rng:NextNumber() < (SL.ice.frac or 1)
+	local function P(key: string): any
+		return if ice and SL.ice[key] then SL.ice[key] else SL[key]
+	end
+	local k = if SL.big and rng:NextNumber() < SL.big.frac then SL.big.k else 1
+	local w = rng:NextNumber(P("wid")[1], P("wid")[2]) * s * k
+	local th = rng:NextNumber(P("thick")[1], P("thick")[2]) * s * k
+	local ln = rng:NextNumber(P("len")[1], P("len")[2]) * s * k
+	local a = math.rad(rng:NextNumber(P("tilt")[1], P("tilt")[2]))
+	x += side * w / 2 * math.cos(a) * math.cos(yaw)
+	z += side * w / 2 * math.cos(a) * math.sin(yaw)
+	local rot = CFrame.Angles(0, -yaw + math.rad(rng:NextNumber(-SL.yaw, SL.yaw)), 0)
+		* CFrame.Angles(math.rad(rng:NextNumber(-SL.pitch, SL.pitch)), 0, 0) * CFrame.Angles(0, 0, -side * a)
+	local top = w / 2 * math.sin(a) + th / 2 * math.cos(a)
+	local y0 = top * (2 * SL.show - 1)
+	return {
+		t = tS, x = x, z = z, size = Vector3.new(w, th, ln), rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
+		hold = rng:NextNumber(SL.hold[1], SL.hold[2]), rise = SL.rise, sink = SL.sink,
+		ice = if ice then SL.ice else nil, shatter = SL["end"] == "shatter",
+		mesh = if ice and SL.ice.mesh then SL.ice.mesh else SL.mesh, L = SL,
+		part = nil, base = nil, gy = 0, gone = false,
+	}
+end
+
+-- anima las piezas en t; onShatter(pieza, posición) revienta las de end = "shatter". Devuelve si queda alguna.
+local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: { Instance },
+	onShatter: ((Slab, Vector3) -> ())?): boolean
+	local alive = false
+	for _, L in slabs do
+		if L.gone then
+			continue
+		end
+		alive = true
+		local age = t - L.t
+		if age < 0 then
+			continue
+		end
+		if not L.part then
+			local wp = holder.CFrame:PointToWorldSpace(Vector3.new(L.x, 0, L.z))
+			local col, mat, gy = groundLook(wp, exclude)
+			L.gy = gy or holder.Position.Y
+			L.base = CFrame.new(wp.X, 0, wp.Z) * holder.CFrame.Rotation * L.rot
+			local template = if L.mesh then KaijuFireVFX.Meshes[L.mesh] else nil
+			local p: BasePart
+			if template and template:IsA("BasePart") then
+				p = (template :: BasePart):Clone()
+				p.Name = "Slab"
+				p.Anchored = true
+				p.CanCollide = false
+				p.CanQuery = false
+				p.CanTouch = false
+				p.Parent = holder
+			else
+				p = bladePart("Slab", holder)
+				if L.ice then
+					p.Material = (Enum.Material :: any)[L.ice.material]
+					p.Color = Color3.fromRGB(L.ice.color[1], L.ice.color[2], L.ice.color[3])
+					p.Transparency = L.ice.transparency
+				else
+					p.Material = mat
+					p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
+				end
+			end
+			p.Size = L.size
+			L.part = p
+		end
+		local part = L.part :: BasePart
+		local y
+		if age < L.rise then
+			y = L.y0 - L.drop * (1 - easeOutBack(age / L.rise))
+		elseif age < L.rise + L.hold then
+			y = L.y0
+		elseif L.shatter then
+			local pos = part.Position
+			part:Destroy()
+			L.gone = true
+			if onShatter then
+				onShatter(L, pos)
+			end
+			continue
+		elseif age < L.rise + L.hold + L.sink then
+			local p = (age - L.rise - L.hold) / L.sink
+			y = L.y0 - L.drop * p * p
+		else
+			part:Destroy()
+			L.gone = true
+			continue
+		end
+		part.CFrame = (L.base :: CFrame) + Vector3.new(0, L.gy + y, 0)
+	end
+	return alive
+end
+
+-- ---------------------------------------------------------------- lo que deja la ola triangular (Ola de hielo)
+-- Grupos de bloques y losas repartidos por el triángulo (más donde es más ancho): saltan cuando pasa el frente
+-- (t = wave[1] + wave[2]·u), se quedan y se hunden; los de hielo revientan al final en sus partículas "shatter".
+local function runField(F: any, holder: BasePart, s: number, len: number, tanH: number)
+	local slabs: { Slab } = {}
+	local shatterFx: { [any]: { { e: ParticleEmitter, c: Instance, n: number } } } = {}
+	for _, G in F.groups do
+		for _ = 1, math.floor(G.count * KaijuFireVFX.Quality + 0.5) do
+			local u = math.sqrt(rng:NextNumber(G.u[1] ^ 2, G.u[2] ^ 2))
+			local x = rng:NextNumber(G.s[1], G.s[2]) * u * len * tanH
+			local z = -u * len
+			local yaw = if G.lean == "radial" then math.atan2(z, x) else rng:NextNumber(0, 2 * math.pi)
+			local tS = F.wave[1] + F.wave[2] * u + rng:NextNumber(G.delay[1], G.delay[2])
+			table.insert(slabs, makeSlab(G, s, x, z, yaw, 1, tS))
+		end
+		if G.shatter then
+			local list = {}
+			for _, LL in G.shatter do
+				local e, c = buildEmitter(LL, holder, s, Vector3.zero)
+				table.insert(list, { e = e, c = c, n = LL.emit[1][2] })
+			end
+			shatterFx[G] = list
+		end
+	end
+	local exclude = { holder :: Instance }
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local alive = stepSlabs(slabs, holder, time() - t0, exclude, function(L: Slab, pos: Vector3)
+			local list = shatterFx[L.L]
+			if list then
+				for _, fx in list do
+					placeCarrier(fx.c, holder, pos)
+					fx.e:Emit(quality(fx.n))
+				end
+			end
+		end)
+		if not alive then
+			conn:Disconnect()
+		end
+	end)
+end
+
 local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?,
 	groundY: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
@@ -1168,6 +1367,9 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 			local t0 = if spec.light then (spec.light.delay or 0) + (spec.light.sweep or 0) * u else 0
 			table.insert(lights, { pos = holder.CFrame:PointToWorldSpace(lp), t = t0 })
 		end
+	end
+	if spec.field then
+		runField(spec.field, holder, s, len, tanH)
 	end
 	finish(spec, holder, s, shake, lights)
 	return holder
@@ -2674,8 +2876,6 @@ end
 type BladeStrand = { atts: { Attachment }, beams: { Beam }, S: any, tr: number }
 type BladeEmitter = { att: Attachment, pe: ParticleEmitter, E: any, S: any, sm: number }
 type GashSeg = { a: number, b: number, tc: number, parts: { BasePart }?, decal: Decal?, gy: number, done: boolean }
-type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
-	rise: number, sink: number, ice: any, part: BasePart?, base: CFrame?, gy: number, gone: boolean }
 
 local function bladeLocal(B: any, S: any, sm: number, R: number, h: number, axis: Vector3): Vector3
 	local a = math.rad(B.arc) * (S.arc_k or 1)
@@ -2683,25 +2883,6 @@ local function bladeLocal(B: any, S: any, sm: number, R: number, h: number, axis
 	local Rj = R * (1 - B.shrink * S.j)
 	-- relativo a la punta (z positivo = detrás de la punta)
 	return Vector3.new(0, h, B.thick * R * S.j + Rj * (1 - math.cos(th))) + axis * (Rj * math.sin(th))
-end
-
-local function easeOutBack(p: number): number
-	local q = math.clamp(p, 0, 1) - 1
-	return 1 + q * q * (2.6 * q + 1.6)
-end
-
-local function bladePart(name: string, holder: BasePart): Part
-	local p = Instance.new("Part")
-	p.Name = name
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanQuery = false
-	p.CanTouch = false
-	p.CastShadow = false
-	p.TopSurface = Enum.SurfaceType.Smooth
-	p.BottomSurface = Enum.SurfaceType.Smooth
-	p.Parent = holder
-	return p
 end
 
 local function runBlade(B: any, holder: BasePart, s: number, len: number)
@@ -2805,24 +2986,7 @@ local function runBlade(B: any, holder: BasePart, s: number, len: number)
 	-- las losas: dos filas a los lados del corte y el cráter de la detonación
 	local slabs: { Slab } = {}
 	local function addSlab(SL: any, x: number, z: number, yaw: number, side: number, tS: number)
-		local ice = SL.ice ~= nil and rng:NextNumber() < SL.ice.frac
-		local P = if ice then SL.ice else SL
-		local w = rng:NextNumber(P.wid[1], P.wid[2]) * s
-		local th = rng:NextNumber(P.thick[1], P.thick[2]) * s
-		local ln = rng:NextNumber(P.len[1], P.len[2]) * s
-		local a = math.rad(rng:NextNumber(P.tilt[1], P.tilt[2]))
-		x += side * w / 2 * math.cos(a) * math.cos(yaw)
-		z += side * w / 2 * math.cos(a) * math.sin(yaw)
-		-- inclinada hacia afuera: el borde que da al corte asoma y el de afuera queda enterrado
-		local rot = CFrame.Angles(0, -yaw + math.rad(rng:NextNumber(-SL.yaw, SL.yaw)), 0)
-			* CFrame.Angles(math.rad(rng:NextNumber(-SL.pitch, SL.pitch)), 0, 0) * CFrame.Angles(0, 0, -side * a)
-		local top = w / 2 * math.sin(a) + th / 2 * math.cos(a)
-		local y0 = top * (2 * SL.show - 1)
-		table.insert(slabs, {
-			t = tS, x = x, z = z, size = Vector3.new(w, th, ln), rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
-			hold = rng:NextNumber(SL.hold[1], SL.hold[2]), rise = SL.rise, sink = SL.sink,
-			ice = if ice then SL.ice else nil, part = nil, base = nil, gy = 0, gone = false,
-		})
+		table.insert(slabs, makeSlab(SL, s, x, z, yaw, side, tS))
 	end
 	local slabEnd = 0
 	if B.slabs then
@@ -2939,61 +3103,6 @@ local function runBlade(B: any, holder: BasePart, s: number, len: number)
 		end
 	end
 
-	local function stepSlabs(t: number)
-		for _, L in slabs do
-			if L.gone then
-				continue
-			end
-			local age = t - L.t
-			if age < 0 then
-				continue
-			end
-			if not L.part then
-				local wp = holder.CFrame:PointToWorldSpace(Vector3.new(L.x, 0, L.z))
-				local col, mat, gy = groundLook(wp, exclude)
-				L.gy = gy or holder.Position.Y
-				L.base = CFrame.new(wp.X, 0, wp.Z) * holder.CFrame.Rotation * L.rot
-				local template = if L.ice then KaijuFireVFX.Meshes.IceSlab else nil
-				local p: BasePart
-				if template and template:IsA("BasePart") then
-					p = (template :: BasePart):Clone()
-					p.Name = "Slab"
-					p.Anchored = true
-					p.CanCollide = false
-					p.CanQuery = false
-					p.CanTouch = false
-					p.Parent = holder
-				else
-					p = bladePart("Slab", holder)
-					if L.ice then
-						p.Material = (Enum.Material :: any)[L.ice.material]
-						p.Color = Color3.fromRGB(L.ice.color[1], L.ice.color[2], L.ice.color[3])
-						p.Transparency = L.ice.transparency
-					else
-						p.Material = mat
-						p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
-					end
-				end
-				p.Size = L.size
-				L.part = p
-			end
-			local y
-			if age < L.rise then
-				y = L.y0 - L.drop * (1 - easeOutBack(age / L.rise))
-			elseif age < L.rise + L.hold then
-				y = L.y0
-			elseif age < L.rise + L.hold + L.sink then
-				local p = (age - L.rise - L.hold) / L.sink
-				y = L.y0 - L.drop * p * p
-			else
-				(L.part :: BasePart):Destroy()
-				L.gone = true
-				continue
-			end
-			(L.part :: BasePart).CFrame = (L.base :: CFrame) + Vector3.new(0, L.gy + y, 0)
-		end
-	end
-
 	local t0 = time()
 	local doneAt = math.max(B.t0 + B.travel + B.fade, trailEnd, lightEnd, slabEnd)
 	local conn: RBXScriptConnection
@@ -3042,7 +3151,7 @@ local function runBlade(B: any, holder: BasePart, s: number, len: number)
 			light.Brightness = math.max(B.light.brightness * (1 - fade), flash)
 		end
 		stepGash(t, len * math.min(u, 1) - lowZ * R)
-		stepSlabs(t)
+		stepSlabs(slabs, holder, t, exclude)
 		local gashDone = true
 		for _, sg in segs do
 			if not sg.done then
@@ -4690,7 +4799,7 @@ def walk_textures(v):
 def spec_textures(spec):
     extra = [spec["cubes"]["fx"]] if spec.get("cubes", {}).get("fx") else []
     tex = textures_of(spec["layers"] + extra + spec.get("beams", []))
-    for k in ("cataclysm", "blade"):
+    for k in ("cataclysm", "blade", "field"):
         if spec.get(k):
             tex |= walk_textures(spec[k])
     return tex | set(spec.get("textures", []))
@@ -4728,6 +4837,8 @@ def build(specs, name, doc):
             data["beams"] = [norm_beam(B) for B in spec["beams"]]
         if spec.get("blade"):
             data["blade"] = norm_blade(spec["blade"])
+        if spec.get("field"):
+            data["field"] = norm_field(spec["field"])
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"
         doc_k = spec.get("doc", "")
         head = f"-- {doc_k}\n" if doc_k else ""

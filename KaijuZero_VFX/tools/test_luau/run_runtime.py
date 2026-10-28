@@ -492,8 +492,13 @@ for _, nm in { "Slab", "GashSeam", "GashFrost", "BladeCarrier" } do
 end
 print(("%-17s   hoja: losas=%d tramos del corte=%d rocas=%d raycasts=%d"):format("", R.stats.slabs, R.stats.gash,
 	R.stats.rocks, R.stats.raycasts))
-run("FangRain", function() return MOON.FangRain(R.CFrame.new(0, 0, 0), 1, 1) end, 6)
-assert(R.stats.rocks >= 20, "FangRain: casi no cayeron colmillos")
+run("IceWave", function()
+	return MOON.IceWave(R.CFrame.lookAt(R.Vector3.new(0, 0, 0), R.Vector3.new(0, 0, -1)), nil, nil, 1, 1)
+end, 6, 110)
+assert(R.stats.slabs >= 60, "IceWave: casi no brotaron bloques de hielo ni losas")
+assert(R.stats.rocks >= 10, "IceWave: casi no salieron rocas")
+assert(R.liveNamed("Slab") == 0, "IceWave: quedaron bloques en el suelo")
+print(("%-17s   ola: bloques y losas=%d rocas=%d raycasts=%d"):format("", R.stats.slabs, R.stats.rocks, R.stats.raycasts))
 run("LunarHowl", function() return MOON.LunarHowl(R.CFrame.new(0, 14, 0), 1, 1) end, 5)
 run("Eclipse", function() return MOON.Eclipse(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 6)
 assert(R.stats.cubes > 40, "Eclipse: casi no hubo pedazos")

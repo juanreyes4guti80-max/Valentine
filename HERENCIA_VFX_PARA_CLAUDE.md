@@ -146,7 +146,7 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 | `beam`, `beams`, `hit` | rayo apuntable (Beams + Raycast cada cuadro) | `vfx_beam.py`, `vfx_cosmicbeam.py` |
 | `rocks` | efecto que sale de las rocas que le pasas | `vfx_pillars.py` (H3) |
 | `line` + `blade` | una media luna de energía hecha de trazos finos de Beams que vuela de canto por la línea, con su estela (`emitters`), el corte del suelo (`gash`), las losas que saltan a los lados (`slabs`) y el cráter del final (`crater`); lo demás se sincroniza con eventos a lo largo del camino | `vfx_moonfang.py` (`CRESCENT_WAVE`) |
-| `cone` | onda en forma de triángulo hacia adelante | `vfx_astral.py` |
+| `cone` (+ `field`) | onda en forma de triángulo hacia adelante; con `field`, bloques y losas sólidos que brotan donde pasa el frente (los de hielo revientan al final) | `vfx_astral.py`, `vfx_moonfang.py` (`ICE_WAVE`) |
 | `aura` | aura que se adapta a cualquier modelo (Highlight + emisores por parte) | `vfx_aura.py` |
 | `cataclysm` | la ULTIMATE de Omnívora (campo gravitacional, geometría, plan para el servidor) | `vfx_cataclysm.py` |
 
@@ -358,7 +358,7 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
   - `CosmicAura`;
   - **ULTIMATE `GravitationalCataclysm`**: 23 s, radio de 500 m (1786 studs), 8 fases, plan para el servidor, escena de prueba `CataclysmDemo.client.lua`.
 - **Astral Colossus** (`AstralColossusVFX`): `AstralClash`.
-- **Moonfang** (`MoonfangVFX`): `MoonBite` y `MoonBiteFinisher` (M1, mordiscos), `MoonGuard` y `MoonGuardHit` (bloqueo), `MoonFang` (pesado), `CrescentWave` (skill 1), `FangRain` (skill 2), `LunarHowl` y `LunarAura` (skill 3) y `Eclipse` (skill 4). Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
+- **Moonfang** (`MoonfangVFX`): `MoonBite` y `MoonBiteFinisher` (M1, mordiscos), `MoonGuard` y `MoonGuardHit` (bloqueo), `MoonFang` (pesado), `CrescentWave` (skill 1), `IceWave` (skill 2), `LunarHowl` y `LunarAura` (skill 3) y `Eclipse` (skill 4). Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
 - **Plugin** `SubirTexturasVFX`.
 
 **Pendiente o por verificar (tu terreno):**
@@ -381,7 +381,14 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
    - el corte del suelo debe verse como hielo cortando la tierra, con **rocas cuadradas** (es Roblox) y **pequeñas** que quedan en el camino;
    - la explosión final, intensa.
 
-   **Tarea para ti con Blender:** los pedazos de hielo del final (`IceChunks`) no le convencieron, y las placas de hielo del corte (`IceSlab`) también serían mejores como modelo. Haz las MeshParts y conéctalas con `MoonfangVFX.Meshes` (ver arriba).
+   **La skill 2 ahora es la Ola de hielo (`IceWave`).** Lo pidió así: "una ola de hielo que crece en formato triangular y va dejando a su paso destrucción, bloques de hielo y humo". Usa el modo `cone` con `field`: bloques de hielo y losas que brotan donde pasa el frente.
+
+   **Tarea para ti con Blender:** hay tres piezas que serían mejores como modelo:
+   - los pedazos de hielo del final de la Medialuna (`IceChunks`), que no le convencieron;
+   - las placas de hielo del corte (`IceSlab`);
+   - los bloques de hielo de la Ola (`IceBlocks`), que serían mejores como cristales.
+
+   Haz las MeshParts y conéctalas con `MoonfangVFX.Meshes` (ver arriba).
 6. Mantener este documento al día con lo que aprendas en Studio. Sobre todo las diferencias entre el simulador y Roblox, para que el siguiente no tropiece.
 
 Suerte. El usuario es exigente pero agradecido, y le encanta ver el resultado: muéstraselo seguido.

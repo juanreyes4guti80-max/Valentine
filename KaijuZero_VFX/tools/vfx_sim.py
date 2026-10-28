@@ -519,6 +519,76 @@ def ease_out_back(p, k=1.6):
     return 1 + p * p * ((k + 1) * p + k)
 
 
+SIZE_KEYS = ("wid", "thick", "len", "tilt")
+
+
+def make_slab(rng, SL, s, x, z, across_yaw, side, t_s):
+    """Una losa o bloque que salta del suelo (igual que makeSlab en el módulo). (x, z) local; se inclina
+    hacia across_yaw (radianes en el plano X-Z): el borde de adentro asoma y el de afuera queda enterrado.
+    Con "ice" una fracción son de hielo (y pueden tener su propio tamaño); "big" agranda unas pocas."""
+    ice = bool(SL.get("ice")) and rng.random() < SL["ice"].get("frac", 1.0)
+    P = dict(SL, **{k: v for k, v in SL["ice"].items() if k in SIZE_KEYS}) if ice else SL
+    k = SL["big"]["k"] if SL.get("big") and rng.random() < SL["big"]["frac"] else 1.0
+    w = rng.uniform(*P["wid"]) * s * k
+    th = rng.uniform(*P["thick"]) * s * k
+    ln = rng.uniform(*P["len"]) * s * k
+    a = math.radians(rng.uniform(*P["tilt"]))
+    x += side * w / 2 * math.cos(a) * math.cos(across_yaw)
+    z += side * w / 2 * math.cos(a) * math.sin(across_yaw)
+    R3 = rot_y(-across_yaw + math.radians(rng.uniform(-SL["yaw"], SL["yaw"]))) @ \
+        rot_x(math.radians(rng.uniform(-SL["pitch"], SL["pitch"]))) @ rot_z(-side * a)
+    top = w / 2 * math.sin(a) + th / 2 * math.cos(a)            # del centro a la esquina más alta
+    y0 = top * (2 * SL["show"] - 1)                              # show = qué fracción asoma del suelo
+    return {"t": t_s, "x": x, "z": z, "size": (w, th, ln), "R3": R3, "y0": y0, "drop": y0 + top + 0.3 * s,
+            "hold": rng.uniform(*SL["hold"]), "rise": SL["rise"], "sink": SL["sink"],
+            "ice": SL["ice"] if ice else None, "shatter": SL.get("end") == "shatter", "L": SL}
+
+
+def slab_poses(slabs, t, o0, Rf, ground_y):
+    """(centro, giro, tamaño, losa) de las losas visibles en t. Suben con un rebote, se quedan y se hunden (o,
+    con end = "shatter", desaparecen de golpe al terminar: ahí revientan en partículas)."""
+    out = []
+    for L in slabs:
+        age = t - L["t"]
+        if age < 0:
+            continue
+        if age < L["rise"]:
+            y = L["y0"] - L["drop"] * (1 - ease_out_back(age / L["rise"]))
+        elif age < L["rise"] + L["hold"]:
+            y = L["y0"]
+        elif not L["shatter"] and age < L["rise"] + L["hold"] + L["sink"]:
+            p = (age - L["rise"] - L["hold"]) / L["sink"]
+            y = L["y0"] - L["drop"] * p * p
+        else:
+            continue
+        P = o0 + Rf @ np.array([L["x"], 0.0, L["z"]])
+        P[1] = ground_y + y
+        out.append((P, Rf @ L["R3"], L["size"], L))
+    return out
+
+
+class ConeField:
+    """Lo que la ola triangular deja a su paso (lo mismo que runField en el módulo): grupos de bloques y losas
+    repartidos por el triángulo (más donde es más ancho) que saltan cuando pasa el frente (t = wave[0] +
+    wave[1]·u) y se quedan; los de hielo revientan al final."""
+
+    def __init__(self, F, length, angle, scale):
+        self.F, self.len, self.s = F, length, scale
+        tanH = math.tan(math.radians(angle / 2))
+        T0, TW = F["wave"]
+        rng = random.Random(F.get("seed", 9))
+        self.slabs = []
+        for G in F["groups"]:
+            for _ in range(G["count"]):
+                u0, u1 = G["u"]
+                u = math.sqrt(rng.uniform(u0 * u0, u1 * u1))
+                x = rng.uniform(*G["s"]) * u * length * tanH
+                z = -u * length
+                yaw = math.atan2(z, x) if G.get("lean") == "radial" else rng.uniform(0, 2 * math.pi)
+                t_s = T0 + TW * u + rng.uniform(*G["delay"])
+                self.slabs.append(make_slab(rng, G, scale, x, z, yaw, 1, t_s))
+
+
 class BladeGeo:
     """La media luna de energía que vuela (lo mismo que runBlade en el módulo). Va vertical y de canto: de lado se ve
     la media luna (la punta adelante, los cuernos atrás) y desde atrás, una hoja fina que apunta hacia donde va.
@@ -621,26 +691,6 @@ class BladeGeo:
         return out
 
     # ---------------------------------------------------------------- las losas del suelo
-    def _slab(self, rng, SL, x, z, across_yaw, side, t_s):
-        s = self.s
-        ice = SL.get("ice") and rng.random() < SL["ice"]["frac"]
-        base = SL
-        if ice:                                   # placa de hielo: más delgada y más parada
-            SL = dict(SL, **{k: v for k, v in SL["ice"].items() if k in ("wid", "thick", "len", "tilt")})
-        w = rng.uniform(*SL["wid"]) * s
-        th = rng.uniform(*SL["thick"]) * s
-        ln = rng.uniform(*SL["len"]) * s
-        a = math.radians(rng.uniform(*SL["tilt"]))
-        x += side * w / 2 * math.cos(a) * math.cos(across_yaw)
-        z += side * w / 2 * math.cos(a) * math.sin(across_yaw)
-        R3 = rot_y(-across_yaw + math.radians(rng.uniform(-SL["yaw"], SL["yaw"]))) @ \
-            rot_x(math.radians(rng.uniform(-SL["pitch"], SL["pitch"]))) @ rot_z(-side * a)
-        top = w / 2 * math.sin(a) + th / 2 * math.cos(a)            # del centro a la esquina más alta
-        y0 = top * (2 * SL["show"] - 1)                              # show = qué fracción asoma del suelo
-        return {"t": t_s, "x": x, "z": z, "size": (w, th, ln), "R3": R3, "y0": y0, "drop": y0 + top + 0.3 * s,
-                "hold": rng.uniform(*SL["hold"]), "rise": SL["rise"], "sink": SL["sink"],
-                "ice": base["ice"] if ice else None}
-
     def _make_slabs(self):
         B, s, out = self.B, self.s, []
         SL = B.get("slabs")
@@ -652,7 +702,7 @@ class BladeGeo:
                 for side in (-1, 1):
                     zz = z + rng.uniform(-0.3, 0.3) * SL["spacing"] * s
                     t_s = self.cut_time(zz) + rng.uniform(0, SL["delay"])
-                    out.append(self._slab(rng, SL, xc + side * SL["gap"] * s, -zz, 0.0, side, t_s))
+                    out.append(make_slab(rng, SL, s, xc + side * SL["gap"] * s, -zz, 0.0, side, t_s))
                 z += SL["spacing"] * s
         CR = B.get("crater")
         if CR:          # el cráter de la detonación: losas en anillo, inclinadas hacia afuera
@@ -661,29 +711,11 @@ class BladeGeo:
                 phi = 2 * math.pi * (i + rng.uniform(-0.3, 0.3)) / CR["count"]
                 r = CR["radius"] * s * rng.uniform(0.85, 1.15)
                 t_s = B["t0"] + B["travel"] + CR["at"] + rng.uniform(0, CR["delay"])
-                out.append(self._slab(rng, CR, r * math.cos(phi), -self.len + r * math.sin(phi), phi, 1, t_s))
+                out.append(make_slab(rng, CR, s, r * math.cos(phi), -self.len + r * math.sin(phi), phi, 1, t_s))
         return out
 
     def slab_poses(self, t, o0, Rf, ground_y):
-        """(centro, giro, tamaño, losa) de las losas visibles en t."""
-        out = []
-        for L in self.slabs:
-            age = t - L["t"]
-            if age < 0:
-                continue
-            if age < L["rise"]:
-                y = L["y0"] - L["drop"] * (1 - ease_out_back(age / L["rise"]))
-            elif age < L["rise"] + L["hold"]:
-                y = L["y0"]
-            elif age < L["rise"] + L["hold"] + L["sink"]:
-                p = (age - L["rise"] - L["hold"]) / L["sink"]
-                y = L["y0"] - L["drop"] * p * p
-            else:
-                continue
-            P = o0 + Rf @ np.array([L["x"], 0.0, L["z"]])
-            P[1] = ground_y + y
-            out.append((P, Rf @ L["R3"], L["size"], L))
-        return out
+        return slab_poses(self.slabs, t, o0, Rf, ground_y)
 
 
 def blade_chains(B, t, o0, Rf, length, scale):
@@ -821,10 +853,11 @@ def draw_ground_quad(buf, cam, center, along, half_len, half_w, rgb, alpha, tex=
     dst += col.reshape(yb - ya, xb - xa, 3) * al
 
 
-def slab_color(B, SLb):
+def slab_color(spec, SLb):
     """Color de vista previa de una losa (en Roblox toma el color y el material del suelo)."""
     if "col" not in SLb:
-        base = np.array(B["slab_color"], float) / 255
+        base = np.array(SLb["L"].get("preview_color") or spec.get("blade", {}).get("slab_color") or (96, 94, 104),
+                        float) / 255
         h = (hash((round(SLb["x"], 2), round(SLb["z"], 2))) % 1000) / 1000
         SLb["col"] = np.clip(base * (0.82 + 0.25 * h), 0, 1)
     return SLb["col"]
@@ -905,6 +938,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
     meteors = []
     blade_geo = BladeGeo(spec["blade"], length, scale) if spec.get("blade") else None
     blade_acc = {}
+    field = ConeField(spec["field"], length, cone_angle, scale) if spec.get("field") else None
+    shattered = set()
     streams = []   # (L, origin, t_base)
     for L in spec["layers"]:
         if L.get("orb"):
@@ -975,6 +1010,16 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 acc -= 1.0
                 parts.append(spawn(L, o, rng, scale, Rs, length))
             st_[3] = acc
+        # los bloques que revientan al terminar (end = "shatter"): sus partículas salen donde estaban
+        if field is not None:
+            for k_, SLb in enumerate(field.slabs):
+                if SLb["shatter"] and k_ not in shattered and t >= SLb["t"] + SLb["rise"] + SLb["hold"]:
+                    shattered.add(k_)
+                    P = o0 + Rf @ np.array([SLb["x"], 0.0, SLb["z"]])
+                    P[1] = ground_y + SLb["y0"]
+                    for LL in SLb["L"].get("shatter", []):
+                        for _ in range(LL["emit"][0][1]):
+                            parts.append(spawn(LL, P, rng, scale, Rf))
         # la hoja que vuela suelta su estela (emisores pegados a ella, por tasa)
         if blade_geo is not None:
             for ei_, E in enumerate(spec["blade"].get("emitters", [])):
@@ -1096,6 +1141,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 if w > 0.02 and bfade < 0.999 and kg > 0:
                     dz = cam.to_cam((bA + bB) * 0.5)[2] - Bm.get("zoffset", 0.0) * scale
                     items.append((dz, 4, (Bm, bA, bB, w, bfade), None, None))
+        if draw and field is not None:           # los bloques de hielo y las losas que deja la ola triangular
+            for P, R3, size3, SLb in slab_poses(field.slabs, t, o0, Rf, ground_y):
+                d = cam.to_cam(P)
+                if d[2] > 0.5:
+                    items.append((d[2], 6, (P, R3, size3, SLb), d, None))
         if draw and blade_geo is not None:       # la media luna que vuela (cadenas de Beams que miran a la cámara)
             for P, R3, size3, SLb in blade_geo.slab_poses(t, o0, Rf, ground_y):
                 d = cam.to_cam(P)
@@ -1143,7 +1193,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                     draw_solid_box(buf, cam, P, R3, size3, np.array(SLb["ice"]["color"], float) / 255 * 1.15,
                                    1 - SLb["ice"]["transparency"])
                 else:
-                    draw_solid_box(buf, cam, P, R3, size3, slab_color(spec["blade"], SLb))
+                    draw_solid_box(buf, cam, P, R3, size3, slab_color(spec, SLb))
                 continue
             am = fade.get(id(obj.L), 1.0)
             if obj.spin:

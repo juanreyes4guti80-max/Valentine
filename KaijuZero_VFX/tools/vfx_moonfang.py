@@ -7,7 +7,7 @@ estrella. Formas cortantes y brillantes (Omnívora, en cambio, es nebulosa suave
   BLOQUEO   MoonGuard (aura mientras bloquea) y MoonGuardHit (cada golpe bloqueado)
   PESADO    MoonFang: mordida lunar; brotan cristales de la herida y estallan
   SKILL 1   CrescentWave "Medialuna": una media luna de energía vuela de canto, corta el suelo y detona en hielo
-  SKILL 2   FangRain "Lluvia de colmillos": colmillos de cristal caen del cielo sobre una zona
+  SKILL 2   IceWave "Ola de hielo": una ola de hielo se abre en triángulo y deja bloques de hielo, destrucción y humo
   SKILL 3   LunarHowl "Aullido lunar" (el aullido y la luna llena) + LunarAura (la mejora)
   SKILL 4   Eclipse: una luna se eclipsa sobre la zona y cae una columna de luz de luna
 Los golpes sobre el rival usan el marco de playHit (X = derecha de la pantalla, Y = arriba, +Z hacia la cámara;
@@ -403,7 +403,7 @@ BLADE = {
               "sink": 0.5, "delay": 0.04, "seed": 5,
               # algunas son de hielo: el corte congela el suelo y saltan placas de hielo entre las de tierra
               "ice": {"frac": 0.3, "wid": (1.8, 3.0), "thick": (0.45, 0.8), "len": (0.8, 1.5), "tilt": (50, 72),
-                      "color": CRYSTAL_RGB, "material": "Ice", "transparency": 0.15}},
+                      "color": CRYSTAL_RGB, "material": "Ice", "transparency": 0.15, "mesh": "IceSlab"}},
     # el cráter de la detonación
     "crater": {"count": 20, "radius": 10.0, "wid": (2.2, 4.0), "thick": (0.8, 1.4), "len": (2.0, 3.6),
                "tilt": (30, 58), "yaw": 12, "pitch": 10, "show": 0.6, "rise": 0.1, "hold": (1.9, 2.4), "sink": 0.6,
@@ -632,84 +632,215 @@ CRESCENT_WAVE = {
     ],
 }
 
-# ----------------------------------------------------------------------------- SKILL 2: Lluvia de colmillos
-RR = 30.0                  # radio de la zona (escala 1)
-T_FALL = (0.4, 1.3)        # cuándo caen los colmillos
-FANGS_EMIT = [(0.40, 3), (0.52, 3), (0.64, 3), (0.76, 3), (0.88, 2), (1.0, 2), (1.12, 2), (1.24, 2)]
-FANG_RAIN = {
-    "name": "FangRain",
-    "doc": ("MOONFANG SKILL 2 (Lluvia de colmillos): se marca un círculo de escarcha en el suelo y del cielo caen "
-            "colmillos de cristal gigantes que se clavan, brillan y estallan en esquirlas. cf = centro de la zona en "
-            "el suelo (radio 30 studs × escala). Los colmillos caen entre los 0.4 y los 1.3 s."),
-    "duration": 3.4,
-    "light": {"color": (170, 210, 255), "brightness": 3, "range": 50, "time": 1.6},
-    "shakes": [(0.45, 0.3, 0.3), (0.7, 0.4, 0.3), (0.95, 0.45, 0.3), (1.2, 0.45, 0.3), (2.05, 0.35, 0.3)],
-    "layers": [
-        # la zona: anillo, grietas de escarcha y sombra fría
-        dict(name="ZoneRing", texture="kk_circle_02", emit=[(0.0, 1)], offset=(0, 0.2, 0), lifetime=(2.4, 2.4),
-             size=[(0, 3.39 * RR * 1.2), (0.08, 3.39 * RR), (1, 3.39 * RR)],
-             transparency=[(0, 1), (0.06, 0.15), (0.85, 0.3), (1, 1)], color=ICE, light_emission=0.8, **DECAL),
-        dict(name="ZoneCracks", texture="mf_frost_cracks", emit=[(0.05, 1)], offset=(0, 0.25, 0), lifetime=(2.6, 2.6),
-             rotation=(0, 360), size=[(0, 0.6 * RR), (0.1, 2.3 * RR), (1, 2.4 * RR)],
-             transparency=[(0, 1), (0.08, 0.2), (0.7, 0.35), (1, 1)], color=FROST, light_emission=0.8, **DECAL),
-        dict(name="ZoneShade", texture="fx_glow", emit=[(0.02, 1)], offset=(0, 0.15, 0), lifetime=(3.0, 3.0),
-             size=[(0, RR), (0.1, 2.3 * RR), (1, 2.4 * RR)], transparency=[(0, 1), (0.1, 0.45), (0.8, 0.5), (1, 1)],
-             color=NIGHT, **DECAL),
-        # destellos que suben de la zona y destellos en el cielo antes de que caigan
-        dict(name="ZoneRise", texture="kk_star_06", shape={"type": "Box", "size": (1.6 * RR, 1, 1.6 * RR)},
-             direction="Top", spread=(10, 10), speed=(10, 20), lifetime=(0.6, 1.0), size=twinkle(1.2), color=GLINT,
-             light_emission=1.0, brightness=2.0, rotation=(0, 45), stream=[(0.05, 1.4, 40, 10)]),
-        dict(name="SkyGlints", texture="kk_star_08", offset=(0, 95, 0),
-             shape={"type": "Box", "size": (1.5 * RR, 6, 1.5 * RR)}, lifetime=(0.25, 0.35),
-             size=[(0, 2), (0.3, 12, 3), (1, 0)], color=GLINT, light_emission=1.0, brightness=1.6, rotation=(0, 90),
-             stream=[(0.1, 1.2, 22, 8)]),
-        # los colmillos: piezas de cristal (material Ice) que caen derechas, se clavan y estallan
-        dict(name="Fangs", type="meteor", emit=FANGS_EMIT, offset=(0, 100, 0),
-             shape={"type": "Box", "size": (1.75 * RR, 4, 1.75 * RR)}, direction="Bottom", spread=(4, 4),
-             speed=(150, 190), accel=(0, -220, 0), drag=0, lifetime=(2.0, 2.0),
-             sprite={"texture": "mf_shard_2x2", "layout": "Grid2x2", "frame": 0, "size": (10, 15),
-                     "aspect": (0.55, 2.4, 0.55), "upright": True, "stick": 0.85, "sink": 0.3,
-                     "rot_speed": (0, 0), "color": CRYSTAL_RGB, "material": "Ice"},
-             trails=[{"name": "FangTrail", "rate": 60, "texture": "kk_trace_01", "orientation": "VelocityParallel",
-                      "speed": (0, 0), "lifetime": (0.12, 0.16), "size": [(0, 6, 1), (1, 2)], "color": ICE,
-                      "light_emission": 1.0, "brightness": 1.6},
-                     {"name": "FangGlow", "rate": 30, "texture": "fx_glow", "speed": (0, 0), "lifetime": (0.1, 0.14),
-                      "size": [(0, 9), (1, 5)], "transparency": [(0, 0.5), (1, 1)], "color": CRYST,
-                      "light_emission": 1.0, "brightness": 1.0},
-                     {"name": "FangSparkle", "rate": 18, "texture": "fx_spark002", "speed": (0, 6),
-                      "direction": "Top", "spread": (180, 180), "lifetime": (0.3, 0.5), "size": twinkle(0.5),
-                      "color": GLINT, "light_emission": 1.0, "brightness": 1.8, "rotation": (0, 45)}],
-             land=[dict(name="LandFlash", texture="fx_glow", emit=[(0, 1)], lifetime=(0.16, 0.18),
-                        size=[(0, 6), (0.3, 20), (1, 22)], transparency=[(0, 0.4), (1, 1)], color=ICE,
-                        light_emission=1.0, brightness=1.0),
-                   dict(name="LandRing", texture="kk_circle_02", emit=[(0, 1)], lifetime=(0.35, 0.35),
-                        size=[(0, 4), (1, 30)], transparency=[(0, 0.2), (0.6, 0.55), (1, 1)], color=ICE,
-                        light_emission=0.9, **DECAL),
-                   dict(name="LandCracks", texture="mf_frost_cracks", emit=[(0, 1)], lifetime=(1.6, 1.8),
-                        rotation=(0, 360), size=[(0, 4), (0.1, 16), (1, 17)],
-                        transparency=[(0, 0), (0.3, 0.15), (0.8, 0.45), (1, 1)], color=FROST, light_emission=0.9,
-                        **DECAL),
-                   dict(name="LandChips", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0, 8)],
-                        direction="Top", spread=(70, 70), speed=(20, 45), drag=0.5, accel=(0, -110, 0),
-                        lifetime=(0.45, 0.7), size=[(0, 1.2, 0.4), (1, 0.9, 0.3)], color=SHARD,
-                        light_emission=0.45, brightness=1.4, rotation=(0, 360), rot_speed=(-500, 500)),
-                   dict(name="LandMist", texture="kk_smoke_04", emit=[(0, 3)], direction="Top", spread=(80, 80),
-                        speed=(6, 14), drag=2, accel=(0, 3, 0), lifetime=(0.6, 0.9), size=[(0, 5, 1), (1, 14, 2)],
-                        transparency=[(0, 0.55), (0.4, 0.6), (1, 1)], color=MIST, rotation=(0, 360), zoffset=-2)],
-             shatter=[dict(name="BreakFlash", texture="kk_star_06", emit=[(0, 1)], lifetime=(0.14, 0.16),
-                           size=[(0, 6), (0.3, 18), (1, 10)], color=GLINT, light_emission=1.0, brightness=1.5,
-                           rotation=(0, 360)),
-                      dict(name="BreakShards", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0, 12)],
-                           shape={"type": "Box", "size": (3, 10, 3)}, direction="Top", spread=(90, 90),
-                           speed=(15, 40), drag=0.5, accel=(0, -110, 0), lifetime=(0.45, 0.75),
-                           size=[(0, 1.6, 0.5), (1, 1.0, 0.3)], color=SHARD, light_emission=0.45, brightness=1.4,
-                           rotation=(0, 360), rot_speed=(-500, 500)),
-                      dict(name="BreakGlints", texture="fx_spark002", emit=[(0, 6)],
-                           shape={"type": "Box", "size": (4, 10, 4)}, direction="Top", spread=(90, 90),
-                           speed=(4, 10), lifetime=(0.4, 0.7), size=twinkle(0.7), color=GLINT, light_emission=1.0,
-                           brightness=1.8, rotation=(0, 45))]),
+# ----------------------------------------------------------------------------- SKILL 2: Ola de hielo
+# Moonfang golpea el suelo y una ola de hielo sale hacia adelante abriéndose en TRIÁNGULO (modo "cone": u = fracción
+# del largo, s = fracción del medio ancho). El frente es un muro de aire helado y nieve que avanza con su cresta de
+# espuma de nieve, esquirlas y púas. A su paso brotan bloques de hielo (Parts) inclinados, saltan losas del suelo,
+# salen rocas volando hacia afuera, el suelo queda escarchado y sube humo frío que se queda flotando. Al llegar al
+# borde lejano la ola choca; los bloques de hielo aguantan un par de segundos y revientan en esquirlas.
+WL, WA = 110.0, 50.0       # largo y apertura del triángulo (escala 1; se eligen al llamar el efecto)
+T0W, TWW = 0.12, 0.75      # el frente sale y tarda en cruzar el triángulo
+TEW = T0W + TWW            # llega al borde lejano
+
+
+def wfront(u, delay=0.0):
+    """Instante en que el frente pasa por u."""
+    return round(T0W + delay + TWW * u, 3)
+
+
+def wsamples(g, n, u0=0.05, u1=1.0, s_max=0.95, up=(0.3, 0.3), delay=(0.0, 0.0)):
+    """Puntos del triángulo (más donde es más ancho), en el instante en que pasa el frente (+ delay)."""
+    out = []
+    for _ in range(n):
+        u = math.sqrt(g.uniform(u0 * u0, u1 * u1))
+        out.append((round(wfront(u) + g.uniform(*delay), 3), 1, round(u, 4), round(g.uniform(-s_max, s_max), 3),
+                    round(g.uniform(*up), 2)))
+    return sorted(out)
+
+
+def wcrest(g, n_u, per, up=0.5, u0=0.05, u1=1.0, s_max=0.97, delay=0.0):
+    """La cresta: eventos repartidos a lo ancho del frente mientras avanza (más a lo ancho donde es más ancho)."""
+    out = []
+    for i in range(n_u):
+        u = u0 + (u1 - u0) * i / max(1, n_u - 1)
+        k = max(2, int(round(per * (0.35 + 0.65 * u))))
+        for j in range(k):
+            s = -s_max + 2 * s_max * (j + g.uniform(0.2, 0.8)) / k
+            out.append((wfront(u, delay), 1, round(u, 4), round(s, 3), up))
+    return sorted(out)
+
+
+def wfan(n, up):
+    """El abanico del frente: sale del vértice y cada partícula viaja hacia su lado a la velocidad de la ola."""
+    return [(T0W, 1, 0.02, round(-0.97 + 1.94 * j / (n - 1), 3), up) for j in range(n)]
+
+
+def wedge(n, up=0.5):
+    """El choque contra el borde lejano."""
+    return [(round(TEW, 3), 1, 1.0, round(-0.97 + 1.94 * j / (n - 1), 3), up) for j in range(n)]
+
+
+ICE_BREAK = [dict(name="IceBreak", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0, 6)],
+                  shape={"type": "Box", "size": (2.5, 2.5, 2.5)}, direction="Top", spread=(80, 80), speed=(12, 30),
+                  drag=0.5, accel=(0, -110, 0), lifetime=(0.4, 0.7), size=[(0, 1.2, 0.4), (1, 0.8, 0.3)],
+                  transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.4,
+                  rotation=(0, 360), rot_speed=(-500, 500)),
+             dict(name="IceBreakGlint", texture="kk_star_06", emit=[(0, 2)], shape={"type": "Box", "size": (3, 3, 3)},
+                  direction="Top", spread=(80, 80), speed=(2, 6), drag=2, lifetime=(0.3, 0.5), size=twinkle(1.0),
+                  color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45)),
+             dict(name="IceBreakMist", texture="fx_fog2001", emit=[(0, 1)], direction="Top", spread=(60, 60),
+                  speed=(2, 5), drag=2, accel=(0, 1, 0), lifetime=(0.6, 0.9), size=[(0, 3, 1), (1, 8, 2)],
+                  transparency=[(0, 0.6), (0.4, 0.65), (1, 1)], color=FROSTMIST, light_emission=0.15,
+                  rotation=(0, 360), zoffset=-1)]
+WAVE_FIELD = {
+    "wave": (T0W, TWW), "seed": 9,
+    "groups": [
+        # bloques de hielo que brotan inclinados (algunos grandes) y al final revientan
+        {"name": "IceBlocks", "count": 34, "u": (0.08, 0.55), "s": (-0.92, 0.92), "lean": "random",
+         "wid": (1.0, 2.2), "thick": (1.0, 2.4), "len": (1.0, 2.2), "tilt": (5, 30), "yaw": 0, "pitch": 15,
+         "show": 0.75, "rise": 0.09, "hold": (1.3, 2.0), "sink": 0.4, "delay": (0.0, 0.07),
+         "big": {"frac": 0.15, "k": 1.8}, "end": "shatter", "shatter": ICE_BREAK,
+         "ice": {"color": CRYSTAL_RGB, "material": "Ice", "transparency": 0.15}},
+        {"name": "IceBlocks", "count": 36, "u": (0.55, 1.0), "s": (-0.92, 0.92), "lean": "random",
+         "wid": (1.5, 3.2), "thick": (1.5, 3.4), "len": (1.5, 3.2), "tilt": (5, 30), "yaw": 0, "pitch": 15,
+         "show": 0.75, "rise": 0.1, "hold": (1.3, 2.0), "sink": 0.4, "delay": (0.0, 0.07),
+         "big": {"frac": 0.2, "k": 2.0}, "end": "shatter", "shatter": ICE_BREAK,
+         "ice": {"color": CRYSTAL_RGB, "material": "Ice", "transparency": 0.15}},
+        # losas del suelo que saltan inclinadas hacia afuera (toman el color y el material del suelo)
+        {"name": "WaveSlabs", "count": 50, "u": (0.06, 1.0), "s": (-1.0, 1.0), "lean": "radial",
+         "wid": (1.6, 3.0), "thick": (0.5, 1.0), "len": (1.4, 2.8), "tilt": (15, 40), "yaw": 14, "pitch": 10,
+         "show": 0.62, "rise": 0.07, "hold": (1.4, 2.0), "sink": 0.5, "delay": (0.0, 0.05),
+         "ground": True, "preview_color": SLAB_RGB},
     ],
 }
+
+
+def wave_layers(g):
+    L = [
+        # ---------------- el golpe en el suelo que la lanza (en el vértice) ----------------
+        dict(name="SlamFlash", texture="fx_glow", emit=[(0.0, 1)], offset=(0, 3, -4), lifetime=(0.2, 0.2),
+             size=[(0, 8), (0.3, 30), (1, 34)], transparency=[(0, 0.4), (1, 1)], color=CRYST, light_emission=1.0,
+             brightness=1.1, zoffset=3),
+        dict(name="SlamStar", texture="kk_star_09", emit=[(0.0, 1)], offset=(0, 3, -4), lifetime=(0.22, 0.22),
+             size=[(0, 8), (0.2, 34), (1, 12)], transparency=[(0, 0.1), (1, 1)], color=GLINT, light_emission=1.0,
+             brightness=1.4, rotation=(0, 90), zoffset=4),
+        dict(name="SlamRing", texture="kk_circle_02", emit=[(0.02, 1)], offset=(0, 0.3, -4), lifetime=(0.45, 0.45),
+             size=[(0, 6), (1, 60)], transparency=[(0, 0.15), (0.5, 0.45), (1, 1)], color=ICE, light_emission=0.8,
+             **DECAL),
+        dict(name="SlamMist", texture="kk_smoke_07", emit=[(0.02, 8)], offset=(0, 2, -4),
+             shape={"type": "Sphere", "radius": 3}, direction="Top", spread=(180, 180), speed=(18, 36), drag=3,
+             accel=(0, 2, 0), lifetime=(0.8, 1.2), size=[(0, 6, 1), (1, 18, 3)],
+             transparency=[(0, 0.45), (0.4, 0.6), (1, 1)], color=FROSTMIST, rotation=(0, 360), zoffset=-2),
+        dict(name="SlamShards", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0.0, 16)], offset=(0, 2, -4),
+             shape={"type": "Sphere", "radius": 2}, direction="Top", spread=(90, 90), speed=(30, 60), drag=0.5,
+             accel=(0, -110, 0), lifetime=(0.5, 0.8), size=[(0, 1.5, 0.4), (1, 1.0, 0.3)],
+             transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD, light_emission=0.45, brightness=1.4,
+             rotation=(0, 360), rot_speed=(-500, 500)),
+        # ---------------- el frente: un muro de aire helado y nieve que se abre en triángulo ----------------
+        # (crece: las partículas del muro se agrandan mientras avanzan, y la cresta es más alta al fondo)
+        dict(name="WaveWall", texture="kk_smoke_07", direction="Front", speed_len=(0.985 / TWW, 1.015 / TWW),
+             lifetime=(TWW, TWW * 1.04), size=[(0, 5, 1), (0.5, 13, 2), (1, 20, 3)],
+             transparency=[(0, 0.6), (0.85, 0.62), (1, 1)], color=FROSTMIST, rotation=(0, 360), rot_speed=(-30, 30),
+             zoffset=-2, cone_emit=wfan(30, 3.0)),
+        dict(name="WaveWallHigh", texture="fx_fog2001", direction="Front", speed_len=(0.97 / TWW, 1.0 / TWW),
+             lifetime=(TWW, TWW * 1.04), size=[(0, 5, 1), (0.5, 14, 2), (1, 22, 3)],
+             transparency=[(0, 0.68), (0.85, 0.7), (1, 1)], color=[(0, (235, 245, 255)), (1, (190, 215, 250))],
+             light_emission=0.2, rotation=(0, 360), rot_speed=(-30, 30), zoffset=-1, cone_emit=wfan(24, 9.0)),
+        dict(name="WaveSnow", texture="kk_smoke_04", direction="Front", speed_len=(0.98 / TWW, 1.0 / TWW),
+             lifetime=(TWW, TWW * 1.04), size=[(0, 4, 1), (0.5, 8, 2), (1, 12, 2)],
+             transparency=[(0, 0.5), (0.85, 0.55), (1, 1)], color=SNOW, rotation=(0, 360), zoffset=-1,
+             cone_emit=wfan(36, 1.2)),
+        dict(name="WaveGlow", texture="fx_glow", direction="Front", speed_len=(0.99 / TWW, 1.01 / TWW),
+             lifetime=(TWW, TWW), size=[(0, 6), (1, 16)], transparency=[(0, 0.78), (0.85, 0.8), (1, 1)],
+             color=ICE, light_emission=1.0, brightness=1.0, zoffset=1, cone_emit=wfan(20, 4.0)),
+        # ---------------- la cresta: nieve, esquirlas y púas que saltan donde pasa el frente ----------------
+        dict(name="CrestSpray", texture="kk_smoke_04", direction="Top", spread=(30, 30), speed=(22, 44), drag=2.5,
+             accel=(0, -8, 0), lifetime=(0.6, 0.9), size=[(0, 4, 1), (1, 12, 2)],
+             transparency=[(0, 0.35), (0.4, 0.5), (1, 1)], color=SNOW, rotation=(0, 360), rot_speed=(-60, 60),
+             cone_emit=wcrest(g, 14, 7, up=0.6)),
+        dict(name="CrestShards", texture="mf_shard_2x2", flipbook=STATIC2x2, direction="Front", pitch=40,
+             spread=(25, 20), speed=(30, 60), drag=0.5, accel=(0, -120, 0), lifetime=(0.5, 0.9),
+             size=[(0, 1.3, 0.4), (1, 0.8, 0.3)], transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD,
+             light_emission=0.45, brightness=1.4, rotation=(0, 360), rot_speed=(-500, 500),
+             cone_emit=wcrest(g, 12, 5, up=0.8)),
+        dict(name="CrestSpikes", texture="mf_spike", orientation="VelocityParallel", direction="Top", spread=(20, 20),
+             speed=(26, 44), drag=12, lifetime=(0.7, 1.0), size=[(0, 0.6), (0.12, 6, 1.5), (0.8, 6.5, 1.5), (1, 0)],
+             transparency=[(0, 0), (0.8, 0.1), (1, 1)], color=SHARD, light_emission=0.5, brightness=1.6,
+             cone_emit=wcrest(g, 6, 6, up=0.3, u1=0.5)),
+        dict(name="CrestSpikesFar", texture="mf_spike", orientation="VelocityParallel", direction="Top",
+             spread=(20, 20), speed=(30, 50), drag=12, lifetime=(0.8, 1.1),
+             size=[(0, 0.8), (0.12, 9.5, 2), (0.8, 10, 2), (1, 0)], transparency=[(0, 0), (0.8, 0.1), (1, 1)],
+             color=SHARD, light_emission=0.5, brightness=1.6, cone_emit=wcrest(g, 7, 7, up=0.3, u0=0.55)),
+        dict(name="CrestGlints", texture="kk_star_06", direction="Top", spread=(60, 60), speed=(4, 10), drag=1.5,
+             lifetime=(0.4, 0.7), size=twinkle(1.0), color=GLINT, light_emission=1.0, brightness=2.0,
+             rotation=(0, 45), cone_emit=wcrest(g, 12, 4, up=2.0)),
+        # ---------------- lo que queda: suelo escarchado, polvo, cubitos, rocas y humo frío ----------------
+        dict(name="FrostFloor", texture="mf_frost_patch", lifetime=(2.2, 2.6), rotation=(0, 360),
+             size=[(0, 6), (0.06, 18, 3), (1, 19, 3)], transparency=[(0, 0.3), (0.8, 0.5), (1, 1)],
+             color=[(0, (190, 225, 255)), (1, (150, 200, 255))], light_emission=0.5,
+             cone_emit=wsamples(g, 46, up=(0.2, 0.2), delay=(0.0, 0.08)), **DECAL),
+        dict(name="FrostCracks", texture="mf_frost_cracks", lifetime=(2.0, 2.4), rotation=(0, 360),
+             size=[(0, 8), (0.06, 24, 4), (1, 25, 4)], transparency=[(0, 0.4), (0.3, 0.45), (0.8, 0.65), (1, 1)],
+             color=FROST, light_emission=0.5, cone_emit=wsamples(g, 8, u0=0.2, up=(0.25, 0.25), delay=(0, 0.05)),
+             **DECAL),
+        dict(name="FieldDust", texture="kk_smoke_04", direction="Top", spread=(70, 70), speed=(6, 14), drag=2,
+             accel=(0, 3, 0), lifetime=(0.6, 1.0), size=[(0, 4, 1), (1, 12, 3)],
+             transparency=[(0, 0.5), (0.4, 0.62), (1, 1)], color=MIST, rotation=(0, 360), zoffset=-2,
+             cone_emit=wsamples(g, 30, up=(0.8, 0.8), delay=(0.0, 0.05))),
+        dict(name="FieldChips", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(55, 55),
+             speed=(25, 55), drag=0.4, accel=(0, -130, 0), lifetime=(0.6, 0.9), size=[(0, 0.9, 0.3), (1, 0.7, 0.2)],
+             color=[(0, (128, 126, 136)), (1, (100, 98, 108))], rotation=(0, 360), rot_speed=(-500, 500),
+             cone_emit=wce2(wsamples(g, 26, up=(0.5, 0.5)), 2)),
+        dict(name="FieldSmoke", texture="fx_fog2001", direction="Top", spread=(30, 30), speed=(2, 6), drag=1,
+             accel=(0, 1.5, 0), lifetime=(1.6, 2.4), size=[(0, 6, 2), (0.5, 14, 3), (1, 18, 3)],
+             transparency=[(0, 0.78), (0.3, 0.66), (1, 1)], color=FROSTMIST, light_emission=0.15, rotation=(0, 360),
+             rot_speed=(-20, 20), zoffset=-3, cone_emit=wsamples(g, 40, up=(1.0, 2.5), delay=(0.05, 0.5))),
+        dict(name="WaveRocks", type="meteor", direction="Front", pitch=45, spread=(25, 20), speed=(40, 80),
+             accel=(0, -196, 0), drag=0.1, lifetime=(2.2, 2.2),
+             sprite={"texture": "om_cubes_2x2", "layout": "Grid2x2", "size": (1.2, 3.0), "aspect": (1.0, 1.0, 1.0),
+                     "cube": True, "ground": True, "color": SLAB_RGB, "color_var": (0.8, 1.1),
+                     "rot_speed": (-420, 420), "material": "Slate", "stick": 1.0, "sink": 0.2},
+             trails=[{"name": "WaveRockDust", "rate": 12, "texture": "kk_smoke_04", "speed": (0, 2),
+                      "direction": "Top", "spread": (180, 180), "drag": 2, "lifetime": (0.4, 0.6),
+                      "size": [(0, 1.5, 0.5), (1, 4, 1)], "transparency": [(0, 0.55), (0.5, 0.65), (1, 1)],
+                      "color": MIST, "rotation": (0, 360)}],
+             land=ROCK_LAND, shatter=ROCK_CRUMBLE, cone_emit=wce2(wsamples(g, 30, up=(0.5, 0.5)), 1)),
+        # ---------------- el choque contra el borde lejano ----------------
+        dict(name="CrashSpray", texture="kk_smoke_07", direction="Top", spread=(35, 35), speed=(20, 45), drag=2.5,
+             accel=(0, -6, 0), lifetime=(0.7, 1.1), size=[(0, 6, 1), (1, 18, 3)],
+             transparency=[(0, 0.4), (0.4, 0.55), (1, 1)], color=SNOW, rotation=(0, 360), rot_speed=(-40, 40),
+             cone_emit=wedge(16, 1.0)),
+        dict(name="CrashSpikes", texture="mf_spike", orientation="VelocityParallel", direction="Front", pitch=60,
+             spread=(20, 20), speed=(30, 50), drag=12, lifetime=(0.9, 1.2),
+             size=[(0, 0.6), (0.12, 10, 2.5), (0.8, 10.5, 2.5), (1, 0)], transparency=[(0, 0), (0.8, 0.1), (1, 1)],
+             color=SHARD, light_emission=0.5, brightness=1.7, cone_emit=wedge(14, 0.3)),
+        dict(name="CrashShards", texture="mf_shard_2x2", flipbook=STATIC2x2, direction="Front", pitch=50,
+             spread=(35, 30), speed=(35, 70), drag=0.5, accel=(0, -110, 0), lifetime=(0.6, 1.0),
+             size=[(0, 1.8, 0.5), (1, 1.2, 0.4)], transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=SHARD,
+             light_emission=0.45, brightness=1.4, rotation=(0, 360), rot_speed=(-500, 500),
+             cone_emit=wce2(wedge(12, 1.0), 2)),
+    ]
+    return L
+
+
+def wce2(events, n):
+    """Los mismos eventos con n partículas cada uno."""
+    return [(t, n, u, s, h) for (t, _, u, s, h) in events]
+
+
+ICE_WAVE = {
+    "name": "IceWave",
+    "doc": ("MOONFANG SKILL 2 (Ola de hielo): golpea el suelo y una ola de hielo sale hacia adelante abriéndose en "
+            "triángulo: un muro de aire helado y nieve con su cresta de esquirlas y púas. A su paso brotan bloques de "
+            "hielo inclinados, saltan losas del suelo, salen rocas volando, el suelo queda escarchado y sube humo "
+            "frío. Llega al borde lejano a los 0.87 s y choca; los bloques de hielo revientan al final."),
+    "duration": 3.8,
+    "cone": {"length": WL, "angle": WA, "wave": [T0W, TWW]},
+    "field": WAVE_FIELD,
+    "light": {"color": (170, 210, 255), "brightness": 4, "range": 40, "time": 0.6},
+    "shakes": [(0.02, 0.5, 0.25), (T0W + 0.05, 0.3, TWW), (TEW, 0.7, 0.35)],
+}
+ICE_WAVE["layers"] = wave_layers(random.Random(52))
 
 # ----------------------------------------------------------------------------- SKILL 3: Aullido lunar
 T_HOWL = 0.3
@@ -931,6 +1062,6 @@ ECLIPSE = {
 SPECS = {
     "MoonBite": MOON_BITE, "MoonBiteFinisher": MOON_BITE_FINISHER, "MoonFang": MOON_FANG,
     "MoonGuard": MOON_GUARD, "MoonGuardHit": MOON_GUARD_HIT,
-    "CrescentWave": CRESCENT_WAVE, "FangRain": FANG_RAIN,
+    "CrescentWave": CRESCENT_WAVE, "IceWave": ICE_WAVE,
     "LunarHowl": LUNAR_HOWL, "LunarAura": LUNAR_AURA, "Eclipse": ECLIPSE,
 }
