@@ -3,11 +3,11 @@
 El kit se está haciendo por partes:
 
 - **Skill 1: Rugido sísmico.** Lista.
-- **Skill 2:** el aliento azul delgado. Viene después.
+- **Skill 2: Aliento azul** (como el de Godzilla). Lista.
 - **Skill 3:** el cristal gigante. Viene después.
 - **ULTIMATE:** está por elegirse.
 
-Todo vive en un solo módulo, `PebledonVFX`. Por ahora usa **16 texturas**.
+Todo vive en un solo módulo, `PebledonVFX`. Por ahora usa **19 texturas**.
 
 ## Qué trae la carpeta
 
@@ -41,6 +41,7 @@ El plugin que sube las texturas está en la carpeta `Plugin_Studio` del reposito
 | Skill | Función | Qué se ve | Momentos clave |
 |---|---|---|---|
 | **Skill 1: Rugido sísmico** | `SeismicRoar(boca, largo, apertura, escala, sacudida)` | **Carga:** la energía turquesa se junta en la boca, le salen llamitas cian y el suelo tiembla bajo él (saltan piedritas). **Rugido:** destello en la boca, **ondas de sonido turquesa** que avanzan y se abren, líneas de grito y un chorro de aire cargado con **fuego cian** y brasas. Bajo él se abre un anillo con grietas que brillan y llamas alrededor de sus pies. **La onda del suelo** avanza en triángulo hacia adelante y se va frenando. A su paso parte el suelo y levanta losas. **Arrastra rocas**: saltan delante del frente, dan vueltas y caen más allá, levantando polvo. Algunas piedras flotan un momento por la vibración. Deja **grietas con venas turquesa** de las que **brota fuego cian** un rato. Al final, lo que arrastraba se amontona y revienta en polvo, rocas y llamas. | ruge a los **0.36 s**; la onda sale a los **0.39 s** y llega al final a los **1.24 s** (`SeismicRoarTimes`) |
+| **Skill 2: Aliento azul** | `BlueBreath(boca, objetivo, escala, sacudida, ignorar)` | Como el aliento de Godzilla. **Carga:** la energía se junta en la boca y le salen llamas azules. **Disparo:** escupe **fuego azul concentrado que sale recto**: un núcleo casi blanco, fuego turquesa en vetas que corre muy rápido hacia adelante y llamas azules pegadas al rayo, de la boca a la punta. No lleva aros ni espirales. Es más delgado que los rayos de Kaiju Zero y Omnívora. **Se puede apuntar** los 3 s que dura: se corta en lo primero que toca y llega hasta **126 studs × escala** (3 veces su largo). **Donde pega**, el fuego salpica hacia afuera, saltan rocas con venas y chispas, y el suelo queda con grietas turquesa que arden. Si barre el suelo, deja una estela. | sale a los **0.69 s** (`BlueBreathStart`) y se corta a los **3.55 s** (`BlueBreathStop`) |
 
 `PebledonVFX.SeismicRoarTimes` tiene tres momentos:
 
@@ -70,6 +71,11 @@ evento.OnClientEvent:Connect(function(que: string, d: any)
 		-- la boca (un Attachment en la boca) o la cabeza, mirando hacia adelante.
 		-- El triángulo va por el suelo debajo: 100 studs de largo y 42° de apertura (a escala 1)
 		PebledonVFX.SeismicRoar(d.boca.WorldCFrame, nil, nil, d.escala, 1)
+	elseif que == "Aliento" then
+		-- sale de la boca (un Attachment: lo sigue solo) hacia el rival (lo sigue si se mueve);
+		-- el último valor es lo que el rayo atraviesa (el modelo de Pebledon)
+		local aliento = PebledonVFX.BlueBreath(d.boca, d.objetivo, d.escala, 1, { d.pebledon })
+		-- mientras dura, lo puedes apuntar: aliento:AimAt(otraCosa) o aliento:SetDirection(direccion)
 	end
 end)
 ```
@@ -126,6 +132,32 @@ local function rugido(pebledon: Model, escala: number, rivales: { Model })
 end
 ```
 
+### El aliento: el daño mientras pega (servidor)
+
+El rayo se corta en lo primero que toca. En el servidor puedes hacer lo mismo con un Raycast cada pocos instantes, desde la boca hacia donde apunta, hasta `126 × escala` studs. Así le haces daño a lo que esté tocando:
+
+```lua
+local function aliento(pebledon: Model, escala: number, objetivo: Model)
+	local boca = pebledon.Head.Boca :: Attachment
+	evento:FireAllClients("Aliento", { boca = boca, objetivo = objetivo, escala = escala, pebledon = pebledon })
+	local params = RaycastParams.new()
+	params.FilterDescendantsInstances = { pebledon }
+	task.wait(PebledonVFX.BlueBreathStart)             -- llega a su largo
+	local fin = os.clock() + (PebledonVFX.BlueBreathStop - PebledonVFX.BlueBreathStart)
+	while os.clock() < fin do
+		local dir = (objetivo:GetPivot().Position - boca.WorldPosition).Unit
+		local hit = workspace:Raycast(boca.WorldPosition, dir * 126 * escala, params)
+		local modelo = hit and hit.Instance:FindFirstAncestorOfClass("Model")
+		if modelo and modelo:FindFirstChildOfClass("Humanoid") then
+			hacerDanio(modelo, 4)                        -- daño por tic (tus valores)
+		end
+		task.wait(0.2)
+	end
+end
+```
+
+Si cambias a dónde apunta (por ejemplo, para que siga la cámara del jugador), haz lo mismo en el servidor y en el cliente (`aliento:SetDirection(dir)`).
+
 **Escala.** Tamaño 1 está pensado para un Pebledon de unos **25 studs de alto**, con la boca a unos 21 studs del suelo. Si el tuyo mide 75 studs, usa escala 3. El largo del triángulo también se escala solo; si le pasas otro largo, usa el mismo en `SeismicRoarFrontTime`.
 
 ## Para que se vea como en el video
@@ -133,11 +165,15 @@ end
 - El video es de mi simulador, con Bloom. Pebledon es una figura de cajas de prueba.
 - Las losas y las rocas que arrastra la onda miran con un Raycast **el color y el material del suelo** donde salen. En el video son grises porque el suelo de prueba es oscuro.
 - Las grietas, los anillos y las marcas del suelo son Decals pensados para suelo plano.
+- **Aliento:** el rayo son **Beams** (el núcleo y dos capas de fuego en vetas que corren hacia adelante) más llamas que van **pegadas al rayo** (`LockedToPart`): si lo barres, el fuego se queda recto con él. Se corta en lo primero que toca con un Raycast cada cuadro.
 - Para que el fuego cian brille como en el video, pon un `BloomEffect` en `Lighting`: *Intensity* 0.6–1, *Size* 24, *Threshold* 1.5–2.
 
 ## Rendimiento
 
-En el pico del Rugido sísmico salen unas **1200 partículas**, unas **58 losas** y unas **68 rocas** (Parts ancladas, sin colisión) y **70 Decals** de grietas. Todo se limpia solo a los 5.5 s.
+| Skill | Partículas en el pico | Otras piezas |
+|---|---|---|
+| Rugido sísmico | unas 1200 | unas 58 losas y 68 rocas (Parts ancladas, sin colisión) y 70 Decals de grietas; todo se limpia solo a los 5.5 s |
+| Aliento azul | unas 220 | 4 Beams y Decals en el suelo (más si lo barre) |
 
 `PebledonVFX.Quality = 0.6` baja las partículas, las losas y las rocas (por ejemplo, en celulares).
 
@@ -166,9 +202,10 @@ Están en `textures/`. El plugin las sube todas.
 |---|---|---|
 | `pb_rock_2x2` | cuatro rocas facetadas con venas turquesa que brillan (ya coloreada) | Rugido |
 | `pb_sonic_ring` | onda de sonido: un anillo nítido con ondas detrás | Rugido |
-| `pb_vein_cracks` | grietas que salen del centro y se ramifican | Rugido |
+| `pb_vein_cracks` | grietas que salen del centro y se ramifican | Rugido, Aliento |
+| `pb_breath_fire` | fuego concentrado en vetas que corre a lo largo (Beams del aliento) | Aliento |
 
-**Del proyecto (de los otros kits):** `kz_beam_ring` (anillo nítido) y `om_cubes_2x2` (pedazos de tierra).
+**Del proyecto (de los otros kits):** `kz_beam_ring` (anillo nítido), `kz_beam_core` y `kz_beam_glow` (el núcleo y la luz del aliento) y `om_cubes_2x2` (pedazos de tierra).
 
 **Kenney (CC0):** `kk_circle_02` (anillo del suelo), `kk_smoke_04` (polvo), `kk_star_09` (destello) y `kk_trace_01` (líneas de grito).
 
@@ -184,13 +221,14 @@ Están en `textures/`. El plugin las sube todas.
 En `preview/`:
 
 1. `1_Skill1_RugidoSismico`
+2. `2_Skill2_AlientoAzul`
 
 ## Si quieres cambiar algo
 
 Todo el kit está en `KaijuZero_VFX/tools/vfx_pebledon.py`:
 
 - arriba están los colores;
-- después cada skill, con sus tiempos y sus capas. Del rugido: `RL` y `RA` (largo y apertura), `T_ROAR`, `T0R`, `TWR` y `EASE_R` (cuándo ruge, cuándo sale la onda, cuánto tarda y cuánto se frena), `ROAR_FRONT` (lo que viaja con el frente) y `ROAR_FIELD` (las losas).
+- después cada skill, con sus tiempos y sus capas. Del rugido: `RL` y `RA` (largo y apertura), `T_ROAR`, `T0R`, `TWR` y `EASE_R` (cuándo ruge, cuándo sale la onda, cuánto tarda y cuánto se frena), `ROAR_FRONT` (lo que viaja con el frente) y `ROAR_FIELD` (las losas). Del aliento: `B_START`, `B_STOP` y `B_LEN` (cuándo sale, cuándo se corta y su largo máximo), `BREATH_BEAMS` (el núcleo y el fuego) y `B_JET` (lo que tarda una llama en ir de la boca a la punta).
 
 Sus texturas propias salen de `KaijuZero_VFX/tools/gen_pebledon_textures.py`.
 
@@ -205,4 +243,5 @@ La prueba `KaijuZero_VFX/tools/test_luau/run_runtime.py` ejecuta el kit contra u
 - que el polvo, las grietas y el fuego vayan al suelo y cubran todo el triángulo;
 - que salten las losas y las rocas;
 - que exporte los tiempos, el largo y la apertura;
+- que el aliento llegue a su largo máximo, se corte en el suelo, deje estela al barrer, siga a un objetivo que se mueve y se limpie si lo cortas antes;
 - que no quede nada vivo al terminar.

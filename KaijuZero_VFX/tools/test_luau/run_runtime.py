@@ -78,11 +78,11 @@ local function stepFor(sec)
 		t += 1 / 60
 	end
 end
-local function runSteer(name, mod, fnName, maxLen)
+local function runSteer(name, mod, fnName, maxLen, warm)
 	R.reset()
 	local A = R.Vector3.new(0, 20, 0)
 	local beam = mod[fnName](A, R.Vector3.new(0, 20, -50), 1, 1, {})
-	stepFor(0.6)
+	stepFor(warm or 0.6)    -- la carga más lo que tarda en llegar a su largo
 	assert(math.abs(beam.Length - maxLen) < 0.5, name .. ": sin nada delante no llegó a su largo máximo")
 	assert(beam.HitPosition == nil and beam.HitInstance == nil, name .. ": pegó sin tener nada delante")
 	-- apunta al suelo 40 studs adelante: se corta donde el rayo cruza el suelo
@@ -566,6 +566,12 @@ do -- lo de la boca sale a la altura de la boca; lo del suelo, en el piso y haci
 	print(("%-17s   rugido: boca=%d piso=%d fuego en grietas=%d (llega a z=%.0f) losas=%d rocas=%d grietas=%d"):format(
 		"", mouth, floor, cone, fwd, R.stats.slabs, R.stats.rocks, R.stats.decals))
 end
+-- el aliento: fuego azul concentrado que se apunta, hasta 126 studs (3 veces su largo)
+runSteer("BlueBreath", PEB, "BlueBreath", 126, 0.8)
+run("BlueBreath 3s", function()
+	return PEB.BlueBreath(R.CFrame.new(0, 21, 0), R.Vector3.new(0, -10, -60), 1, 1).Holder
+end, 8)
+assert(PEB.BlueBreathStart > 0.6 and PEB.BlueBreathStop >= PEB.BlueBreathStart + 2.85, "tiempos del aliento")
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"

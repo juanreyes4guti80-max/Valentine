@@ -2,7 +2,7 @@
   pb_rock_2x2        cuatro rocas facetadas con venas turquesa que brillan (ya coloreada: se usa con Color blanco)
   pb_sonic_ring      onda de sonido: un anillo nítido con ondas detrás (blanco con alfa: el color lo pone la capa)
   pb_vein_cracks     grietas del suelo con venas de energía (blanco con alfa: oscuras = suelo roto, turquesa = venas)
-  pb_breath_spiral   Beam del aliento: dos hebras que se enroscan (se repite a lo largo y corre: parece una espiral)
+  pb_breath_fire     Beam del aliento: fuego concentrado en vetas que corre a lo largo (se repite a lo largo del rayo)
 uso: python gen_pebledon_textures.py <carpeta textures de Pebledon>"""
 import math
 import os
@@ -180,23 +180,37 @@ def vein_cracks(n, seed=11):
     return v, a
 
 
-# ----------------------------------------------------------------------------- hebras del aliento
-def breath_spiral(w, h, periods=2):
-    """Dos hebras senoidales en contrafase (una doble hélice vista de lado) con un brillo suave; se repite en X."""
+# ----------------------------------------------------------------------------- fuego del aliento
+def periodic_noise(W, H, a, b, beta, seed):
+    """Ruido que se repite en los dos ejes (sale de un espectro al azar): a y b = cuántas vueltas de detalle a lo
+    largo (U) y a lo ancho (V); con a < b las vetas quedan estiradas a lo largo."""
+    g = np.random.default_rng(seed)
+    fu = np.fft.fftfreq(W)[None, :] * W
+    fv = np.fft.fftfreq(H)[:, None] * H
+    amp = 1.0 / (1.0 + (fu / a) ** 2 + (fv / b) ** 2) ** beta
+    amp[0, 0] = 0
+    spec = amp * np.exp(2j * math.pi * g.random((H, W)))
+    n = np.real(np.fft.ifft2(spec)).astype(np.float32)
+    n -= n.min()
+    return n / max(n.max(), 1e-6)
+
+
+def breath_fire(w, h):
+    """Fuego concentrado que corre a lo largo (Beam en Wrap): vetas estiradas, el centro denso y los bordes que se
+    deshacen en lenguas; se repite en U (a lo largo del rayo)."""
     W, H = w * SS, h * SS
-    x = (np.arange(W, dtype=np.float32) + 0.5) / W
-    y = (np.arange(H, dtype=np.float32)[:, None] + 0.5) / H
-    a = np.zeros((H, W), np.float32)
-    for ph, k in ((0.0, 1.0), (math.pi, 0.8)):
-        yc = 0.5 + 0.34 * np.sin(2 * math.pi * periods * x + ph)[None, :]
-        # la hebra se adelgaza donde "va por detrás" (cerca de los cruces se ve más fina)
-        depth = 0.5 + 0.5 * np.cos(2 * math.pi * periods * x + ph)[None, :]
-        wid = 0.035 + 0.035 * depth
-        a = np.maximum(a, k * (0.55 + 0.45 * depth) * np.exp(-((y - yc) / wid) ** 2))
-    glow = blur(a, SS * 3) * 0.6
-    al = np.clip(np.maximum(a, glow), 0, 1)
-    v = np.clip(0.8 + 0.2 * a, 0, 1)
-    rgb = np.stack([v] * 3, -1)
+    v = (np.arange(H, dtype=np.float32)[:, None] + 0.5) / H * 2 - 1          # -1..1 a lo ancho
+    streak = periodic_noise(W, H, 3.0, 14.0, 1.1, 41)                         # vetas a lo largo
+    fine = periodic_noise(W, H, 8.0, 30.0, 1.0, 42)
+    edge = periodic_noise(W, 8, 4.0, 2.0, 1.2, 43)[0][None, :]                 # el borde que ondula a lo largo
+    hw = 0.36 + 0.24 * edge
+    body = np.exp(-(v / hw) ** 2 * 1.8)
+    dens = body * (0.3 + 0.9 * streak ** 1.4) * (0.8 + 0.4 * fine)
+    tongues = np.clip((streak - 0.58) * 2.4, 0, 1) * np.exp(-(v / (hw + 0.22)) ** 2) * (1 - body) * 1.3
+    core = np.exp(-(v / 0.15) ** 2)
+    al = np.clip(dens * 1.2 + tongues + core * 0.5, 0, 1) * np.clip((1 - np.abs(v)) / 0.3, 0, 1)
+    val = np.clip(0.72 + 0.28 * np.maximum(core, streak * body), 0, 1)
+    rgb = np.repeat(val[..., None], 3, -1)
     im = Image.fromarray(np.dstack([np.clip(rgb * 255, 0, 255), al[..., None] * 255]).astype(np.uint8), "RGBA")
     return im.resize((w, h), Image.LANCZOS)
 
@@ -210,7 +224,7 @@ def main(out):
     save(v, a, os.path.join(out, "pb_sonic_ring.png"), 512)
     v, a = vein_cracks(512 * SS)
     save(v, a, os.path.join(out, "pb_vein_cracks.png"), 512)
-    breath_spiral(512, 128).save(os.path.join(out, "pb_breath_spiral.png"))
+    breath_fire(512, 128).save(os.path.join(out, "pb_breath_fire.png"))
     print("OK texturas de Pebledon ->", out)
 
 

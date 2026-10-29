@@ -358,7 +358,8 @@ DOC_PEBLEDON = """	PebledonVFX — VFX del kaiju de piedra con venas de energía
 
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local PebledonVFX = require(ReplicatedStorage.PebledonVFX)
-		PebledonVFX.SeismicRoar(boca.WorldCFrame, nil, nil, 1, 1)   -- skill 1 (o la CFrame de la cabeza)"""
+		PebledonVFX.SeismicRoar(boca.WorldCFrame, nil, nil, 1, 1)   -- skill 1 (o la CFrame de la cabeza)
+		local aliento = PebledonVFX.BlueBreath(boca, rival, 1, 1, { pebledon })   -- skill 2 (aliento:AimAt(...))"""
 
 DOC_ASTRAL = """	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
 	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
@@ -503,7 +504,7 @@ local function configureEmitter(L: Layer, scale: number): ParticleEmitter
 	e.RotSpeed = NumberRange.new(L.rot_speed[1], L.rot_speed[2])
 	e.ZOffset = L.zoffset * scale
 	e.Orientation = (Enum.ParticleOrientation :: any)[L.orientation]
-	e.LockedToPart = false
+	e.LockedToPart = L.locked == true -- p. ej. el fuego que va pegado al rayo y gira con él
 	if L.flipbook then
 		e.FlipbookLayout = (Enum.ParticleFlipbookLayout :: any)[L.flipbook.layout]
 		e.FlipbookMode = (Enum.ParticleFlipbookMode :: any)[L.flipbook.mode]

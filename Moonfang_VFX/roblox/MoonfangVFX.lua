@@ -181,7 +181,7 @@ local function configureEmitter(L: Layer, scale: number): ParticleEmitter
 	e.RotSpeed = NumberRange.new(L.rot_speed[1], L.rot_speed[2])
 	e.ZOffset = L.zoffset * scale
 	e.Orientation = (Enum.ParticleOrientation :: any)[L.orientation]
-	e.LockedToPart = false
+	e.LockedToPart = L.locked == true -- p. ej. el fuego que va pegado al rayo y gira con él
 	if L.flipbook then
 		e.FlipbookLayout = (Enum.ParticleFlipbookLayout :: any)[L.flipbook.layout]
 		e.FlipbookMode = (Enum.ParticleFlipbookMode :: any)[L.flipbook.mode]

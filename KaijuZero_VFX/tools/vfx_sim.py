@@ -149,7 +149,7 @@ def rand_unit(rng):
 
 class P:
     __slots__ = ("pos", "vel", "age", "life", "rot", "rots", "r_size", "r_tr", "frame0", "L", "seed", "ks", "spin",
-                 "lock", "lofs", "gm")
+                 "lock", "lofs", "gm", "bloc", "bvl")
 
 
 def spawn(L, origin, rng, scale, Rf=None, length=0.0, zone=None):
@@ -161,6 +161,7 @@ def spawn(L, origin, rng, scale, Rf=None, length=0.0, zone=None):
     p.ks = scale
     p.spin = 0.0
     p.lock = None                      # roca a la que va pegada (estela con LockedToPart)
+    p.bloc = None                      # posición en el marco del rayo (capas del rayo con LockedToPart)
     p.gm = 1.0                         # multiplicador de tamaño (capas que crecen con el proyectil)
     sh = L.get("shape")
     off = np.zeros(3)
@@ -2147,7 +2148,11 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
                 meteors.append(spawn_meteor(L, tip_origin(L), rng, scale, st["R"]))
         else:
             for _ in range(n):
-                parts.append(spawn(L, tip_origin(L), rng, scale, st["R"], st["len"]))
+                p = spawn(L, tip_origin(L), rng, scale, st["R"], st["len"])
+                if L.get("locked"):        # LockedToPart: la partícula va pegada al rayo y gira con él
+                    p.bloc = st["R"].T @ (p.pos - st["A"])
+                    p.bvl = st["R"].T @ p.vel
+                parts.append(p)
 
     for L in spec["layers"]:
         if L.get("on_hit") or L.get("trail"):
@@ -2169,6 +2174,9 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
         st["len"] = max(min(ray_len, head), 0.05)
         st["hit"] = th is not None and head >= ray_len and t < Bq["stop"]
         st["A"], st["R"] = A, look_frame(d)
+        for p in parts:                    # las pegadas al rayo siguen su origen y su dirección de ahora
+            if p.bloc is not None:
+                p.pos = A + st["R"] @ p.bloc
         P = A + d * st["len"]
         st["ground"] = None
         if st["hit"]:
@@ -2312,7 +2320,12 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
             L = p.L
             accp = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
             p.vel = p.vel * (2.0 ** (-L.get("drag", 0.0) * dt)) + accp * dt
-            if p.lock is not None:
+            if p.bloc is not None:
+                p.bvl = p.bvl * (2.0 ** (-L.get("drag", 0.0) * dt)) + (st["R"].T @ accp) * dt
+                p.bloc = p.bloc + p.bvl * dt
+                p.pos = st["A"] + st["R"] @ p.bloc
+                p.vel = st["R"] @ p.bvl            # (para orientar las que van a lo largo de la velocidad)
+            elif p.lock is not None:
                 p.lofs = p.lofs + p.vel * dt
                 p.pos = p.lock.pos + p.lofs
             else:
