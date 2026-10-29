@@ -18,4 +18,5 @@ pb_breath_fire.png
 pb_buff_ring.png
 pb_rock_2x2.png
 pb_sonic_ring.png
+pb_tectonic_veins.png
 pb_vein_cracks.png

@@ -69,21 +69,21 @@ class TexBank:
 
     def sprite(self, name, layout, idx, w_px, h_px, angle):
         """Frame escalado a (w_px, h_px) y rotado `angle` grados (antihorario).
-        Tamaños en escalones geométricos de 4% y ángulos de 3° para reutilizar el caché."""
+        Tamaños en escalones geométricos de 5% y ángulos de 4° para reutilizar el caché."""
         def q(v):
             v = max(1.0, float(v))
-            return max(1, int(round(1.04 ** round(math.log(v) / math.log(1.04)))))
+            return max(1, int(round(1.05 ** round(math.log(v) / math.log(1.05)))))
         # una partícula que pasa pegada a la cámara no puede pedir un sprite de miles de píxeles (memoria)
         k = min(1.0, 2600.0 / max(w_px, h_px, 1.0))
         w_px, h_px = q(w_px * k), q(h_px * k)
-        a = int(round(angle / 3.0)) * 3 % 360
+        a = int(round(angle / 4.0)) * 4 % 360
         key = (name, layout, idx, w_px, h_px, a)
         s = self.cache.get(key)
         if s is None:
             fr = self.get(name, layout)[idx]
             im = fr.resize((w_px, h_px), Image.BILINEAR)
             if a:
-                im = im.rotate(a, resample=Image.BICUBIC, expand=True)
+                im = im.rotate(a, resample=Image.BILINEAR, expand=True)   # (BILINEAR: la mitad de lento que BICUBIC)
             s = np.asarray(im, dtype=np.uint8)      # en uint8: 4 veces más sprites en el caché
             self.bytes = getattr(self, "bytes", 0) + s.nbytes
             if self.bytes > 1.5e9:
@@ -717,7 +717,8 @@ class ZoneField:
                 else:
                     ang = rng.uniform(0, 2 * math.pi)
                     r = math.sqrt(rng.uniform(G["r"][0] ** 2, G["r"][1] ** 2))
-                x, z = math.cos(ang) * r * R, math.sin(ang) * r * R
+                x, z = math.cos(ang) * r * R + (G["at"][0] * R if G.get("at") else 0.0), \
+                    math.sin(ang) * r * R + (G["at"][1] * R if G.get("at") else 0.0)
                 yaw = ang if G.get("lean") == "radial" else rng.uniform(0, 2 * math.pi)
                 t_s = G["t"] + G.get("sweep", 0.0) * r + rng.uniform(*G["delay"])
                 SL = make_slab(rng, G, k, x, z, yaw, 1, t_s)
@@ -1715,6 +1716,12 @@ def zone_y(L, h, k, zone):
     return h * k
 
 
+def zone_at(L, zone):
+    """El punto alrededor del cual sale una capa, un grupo o una luz con at = (x, z) (fracciones del radio)."""
+    at = L.get("at")
+    return np.array([at[0] * zone["R"], 0.0, at[1] * zone["R"]]) if at else np.zeros(3)
+
+
 def zone_point(L, rng, zone, k, o0, local=False):
     """Punto al azar según L["zdist"] = {"r": (r0, r1), "h": (h0, h1), "area": bool} y la rotación del portador."""
     d = L["zdist"]
@@ -1722,7 +1729,7 @@ def zone_point(L, rng, zone, k, o0, local=False):
     r = math.sqrt(rng.uniform(r0 * r0, r1 * r1)) if d.get("area") else rng.uniform(r0, r1)
     th = rng.uniform(0, 2 * math.pi)
     y = zone_y(L, rng.uniform(*d["h"]), k, zone)
-    pos = np.array([math.cos(th) * r * zone["R"], y, math.sin(th) * r * zone["R"]])
+    pos = np.array([math.cos(th) * r * zone["R"], y, math.sin(th) * r * zone["R"]]) + zone_at(L, zone)
     Rv = radial_frame(th, L.get("pitch", 0.0)) if L.get("radial", True) else np.eye(3)
     return (pos if local else o0 + pos), Rv
 
@@ -1742,7 +1749,8 @@ def zone_setup(spec, zone, o0, scale, rng, ground_y):
         k = layer_k(L, scale, zone, Z0)
         for (t, n, a, r, h) in L.get("ring_emit", []):
             th = 2 * math.pi * a
-            pos = o0 + np.array([math.cos(th) * r * zone["R"], zone_y(L, h, k, zone), math.sin(th) * r * zone["R"]])
+            pos = o0 + np.array([math.cos(th) * r * zone["R"], zone_y(L, h, k, zone), math.sin(th) * r * zone["R"]]) + \
+                zone_at(L, zone)
             Rv = radial_frame(th, L.get("pitch", 0.0)) if L.get("radial", True) else np.eye(3)
             events.append((t, n, L, pos, Rv, k))
         if L.get("zstream"):
@@ -1859,10 +1867,10 @@ def zone_light_points(Lt, zone, s):
     y = Lt["h"] * (zone["H"] if Lt.get("hu") == "H" else s)
     ring = Lt.get("ring")
     if not ring:
-        return [np.array([0.0, y, 0.0])]
+        return [np.array([0.0, y, 0.0]) + zone_at(Lt, zone)]
     n, rf = ring
     return [np.array([math.cos(2 * math.pi * i / n) * rf * zone["R"], y, math.sin(2 * math.pi * i / n) * rf * zone["R"]])
-            for i in range(n)]
+            + zone_at(Lt, zone) for i in range(n)]
 
 
 def light_at(Lt, t):
@@ -1906,8 +1914,9 @@ class CubeSim:
                 c.out = np.array([math.cos(c.ang), 0.0, -math.sin(c.ang)])
                 c.r = math.sqrt(rng.uniform(G["r"][0] ** 2, G["r"][1] ** 2)) * zone["R"]
                 c.size = (G["size"][0] + (G["size"][1] - G["size"][0]) * rng.random() ** G["skew"]) * scale
-                c.t0 = rng.uniform(*G["t"])
-                c.pos = o0 + c.out * c.r + np.array([0, ground_y + c.size * 0.5, 0])
+                c.t0 = rng.uniform(*G["t"]) + G.get("sweep", 0.0) * c.r / zone["R"]   # (sweep: con el frente)
+                c.o = o0 + zone_at(G, zone)    # (at: los cubos salen alrededor de ese punto)
+                c.pos = c.o + c.out * c.r + np.array([0, ground_y + c.size * 0.5, 0])
                 c.vel = np.zeros(3)
                 c.rot = orthonormal(np.array([[rng.uniform(-1, 1) for _ in range(3)] for _ in range(3)]))
                 c.axis = np.array([rng.uniform(-1, 1) for _ in range(3)])
@@ -1974,7 +1983,7 @@ class CubeSim:
                 e = 1 - (1 - u) ** 3
                 jit = np.array([math.sin(37 * t + c.ph[0]) * 0.12, math.sin(29 * t + c.ph[1]) * 0.08,
                                 math.sin(41 * t + c.ph[2]) * 0.12]) * s * u
-                c.pos = self.o0 + c.out * c.r + np.array([0, c.y0 + (c.y1 - c.y0) * e, 0]) + jit
+                c.pos = c.o + c.out * c.r + np.array([0, c.y0 + (c.y1 - c.y0) * e, 0]) + jit
                 c.rot = axis_angle(c.axis, c.spin * 0.15 * dt) @ c.rot
                 if t >= c.trel:
                     self.launch(c, t)
@@ -2014,7 +2023,7 @@ class CubeSim:
                 c.y += c.rise * dt
                 prog = min(1.0, max(0.0, (c.y - gy) / max(c.top - gy, 1e-3)))
                 r = c.r0 * (1 - 0.35 * prog)
-                c.pos = self.o0 + np.array([math.cos(c.ang) * r, c.y, -math.sin(c.ang) * r])
+                c.pos = c.o + np.array([math.cos(c.ang) * r, c.y, -math.sin(c.ang) * r])
                 c.rot = orthonormal(axis_angle(c.axis, c.spin * dt) @ c.rot)
                 if c.y >= c.top:
                     self.start_dissolve(c, t, fxpos)

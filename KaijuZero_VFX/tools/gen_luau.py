@@ -155,9 +155,9 @@ def cubes_end(C):
             # al acabar el pilar los que quedan se sueltan y se desintegran en menos de 0.45 s
             end = max(end, G["release"] + 0.45 + C["shrink"][1] + C["fx"]["lifetime"][1])
             continue
-        t_launch = G["release"][1] if G["mode"] == "lift" else G["t"][1]
+        t_launch = (G["release"][1] if G["mode"] == "lift" else G["t"][1]) + G.get("sweep", 0.0) * G["r"][1]
         up = G["up"][1]
-        h0 = G["size"][1] + (G["lift"][1] if G["mode"] == "lift" else 0.0)
+        h0 = G["size"][1] + (G["lift"][1] if G["mode"] == "lift" else 0.0) + (G["h"][1] if G.get("h") else 0.0)
         v_hit = (up * up + 2 * g * h0) ** 0.5
         fly = (up + v_hit) / g
         vb = v_hit * b
@@ -364,7 +364,8 @@ DOC_PEBLEDON = """	PebledonVFX — VFX del kaiju de piedra con venas de energía
 		PebledonVFX.SeismicRoar(boca.WorldCFrame, nil, nil, 1, 1)   -- skill 1 (o la CFrame de la cabeza)
 		local aliento = PebledonVFX.BlueBreath(boca, rival, 1, 1, { pebledon })   -- skill 2 (aliento:AimAt(...))
 		local cristal = PebledonVFX.CrystalSpire(pie.Position, puntoEnElSuelo, 1, 1)   -- skill 3 (el pie y dónde brota)
-		local rayos = PebledonVFX.CrystalRefract(cristal, { rival1, rival2 }, 1)   -- el aliento le pega al cristal"""
+		local rayos = PebledonVFX.CrystalRefract(cristal, { rival1, rival2 }, 1)   -- el aliento le pega al cristal
+		PebledonVFX.TectonicEruption(piesCFrame, nil, nil, 1, 1)   -- ULTIMATE (en sus pies, mirando hacia adelante)"""
 
 DOC_ASTRAL = """	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
 	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
@@ -2261,11 +2262,20 @@ local function zoneLocal(Z: Zone, a: number, r: number, y: number, pitch: number
 	return cf
 end
 
+-- con at = {x, z} (fracciones del radio en el marco de la zona; -Z = hacia donde mira) la capa, el grupo o la luz
+-- salen alrededor de ese punto en vez del centro (p. ej. una montaña que brota delante del que la invoca)
+local function zoneAt(L: any, Z: Zone, cf: CFrame): CFrame
+	if L.at then
+		return CFrame.new(L.at[1] * Z.R, 0, L.at[2] * Z.R) * cf
+	end
+	return cf
+end
+
 -- punto al azar de la zona según L.zdist = {r = {r0, r1}, h = {h0, h1}, area}
 local function zoneRandom(L: Layer, Z: Zone): CFrame
 	local d = L.zdist
 	local r = if d.area then math.sqrt(rng:NextNumber(d.r[1] ^ 2, d.r[2] ^ 2)) else rng:NextNumber(d.r[1], d.r[2])
-	return zoneLocal(Z, rng:NextNumber(), r, zoneY(L, Z, rng:NextNumber(d.h[1], d.h[2])), L.pitch, L.radial)
+	return zoneAt(L, Z, zoneLocal(Z, rng:NextNumber(), r, zoneY(L, Z, rng:NextNumber(d.h[1], d.h[2])), L.pitch, L.radial))
 end
 
 -- emisor de una capa de zona, en su propio Attachment (que se coloca con .CFrame respecto al centro)
@@ -2410,7 +2420,7 @@ local function zoneLights(spec: Layer, Z: Zone)
 				local a = Instance.new("Attachment")
 				a.Name = "Light"
 				a.Parent = Z.holder
-				a.Position = pos
+				a.Position = if Lt.at then pos + Vector3.new(Lt.at[1] * Z.R, 0, Lt.at[2] * Z.R) else pos
 				local li = Instance.new("PointLight")
 				li.Color = Color3.fromRGB(Lt.color[1], Lt.color[2], Lt.color[3])
 				li.Brightness = 0
@@ -2485,6 +2495,8 @@ local function playCubes(spec: Layer, Z: Zone)
 				G = G, state = "wait", t0 = rng:NextNumber(G.t[1], G.t[2]), size = skewed(G.size[1], G.size[2], G.skew) * s,
 				ang = ang, out = base:VectorToWorldSpace(Vector3.new(math.cos(ang), 0, -math.sin(ang))),
 				r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2)) * Z.R, pos = center, vel = Vector3.zero,
+				center = if G.at then center + base:VectorToWorldSpace(Vector3.new(G.at[1] * Z.R, 0, G.at[2] * Z.R))
+					else center,
 				k = 1, bounces = 0, seed = rng:NextNumber(0, 100),
 				rot = CFrame.Angles(rng:NextNumber(0, 6.283), rng:NextNumber(0, 6.283), rng:NextNumber(0, 6.283)),
 				axis = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1) + 0.01).Unit,
@@ -2493,6 +2505,10 @@ local function playCubes(spec: Layer, Z: Zone)
 				color = Color3.new(math.min(color.R * f, 1), math.min(color.G * f, 1), math.min(color.B * f, 1)),
 				neonColor = Color3.fromRGB(nc[1], nc[2], nc[3]),
 			})
+			if G.sweep then -- salen cuando el frente que va del centro hacia afuera llega a su radio
+				local c = list[#list]
+				c.t0 += G.sweep * c.r / Z.R
+			end
 		end
 	end
 	local function spawnPart(c: Layer)
@@ -2563,7 +2579,7 @@ local function playCubes(spec: Layer, Z: Zone)
 					continue
 				end
 				local G = c.G
-				local cx, cz = center.X + c.out.X * c.r, center.Z + c.out.Z * c.r
+				local cx, cz = c.center.X + c.out.X * c.r, c.center.Z + c.out.Z * c.r
 				if G.mode == "lift" then
 					c.state = "rise"
 					c.y0 = gy - c.size * 0.5
@@ -2601,7 +2617,7 @@ local function playCubes(spec: Layer, Z: Zone)
 				local e = 1 - (1 - u) ^ 3
 				local jit = Vector3.new(math.noise(c.seed, t * 6) * 0.25, math.noise(c.seed + 7, t * 6) * 0.16,
 					math.noise(c.seed + 13, t * 6) * 0.25) * s * u
-				c.pos = Vector3.new(center.X + c.out.X * c.r, c.y0 + (c.y1 - c.y0) * e, center.Z + c.out.Z * c.r) + jit
+				c.pos = Vector3.new(c.center.X + c.out.X * c.r, c.y0 + (c.y1 - c.y0) * e, c.center.Z + c.out.Z * c.r) + jit
 				c.rot = CFrame.fromAxisAngle(c.axis, c.spin * 0.15 * dt) * c.rot
 				if t >= c.trel then
 					launch(c, t)
@@ -2654,7 +2670,7 @@ local function playCubes(spec: Layer, Z: Zone)
 				local prog = math.clamp((c.y - gy) / math.max(c.top - gy, 1e-3), 0, 1)
 				local r = c.r0 * (1 - 0.35 * prog)
 				local dir = base:VectorToWorldSpace(Vector3.new(math.cos(c.ang), 0, -math.sin(c.ang)))
-				c.pos = Vector3.new(center.X + dir.X * r, c.y, center.Z + dir.Z * r)
+				c.pos = Vector3.new(c.center.X + dir.X * r, c.y, c.center.Z + dir.Z * r)
 				c.rot = CFrame.fromAxisAngle(c.axis, c.spin * dt) * c.rot
 				if c.y >= c.top then
 					startDissolve(c, t)
@@ -2907,6 +2923,10 @@ local function runZoneField(F: any, Z: Zone)
 					r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2))
 				end
 				x, z = math.cos(ang) * r * Z.R, math.sin(ang) * r * Z.R
+				if G.at then
+					x += G.at[1] * Z.R
+					z += G.at[2] * Z.R
+				end
 				yaw = if G.lean == "radial" then ang else rng:NextNumber(0, 2 * math.pi)
 				tS = G.t + (G.sweep or 0) * r + rng:NextNumber(G.delay[1], G.delay[2])
 			end
@@ -2974,7 +2994,7 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 		elseif L.bill then
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
-				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false)
+				local lcf = zoneAt(L, Z, zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false))
 				task.delay(ev[1], function()
 					if holder.Parent then
 						playBill(L, Z, k, ev[2], lcf)
@@ -2984,7 +3004,7 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 		elseif L.decal then
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
-				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false)
+				local lcf = zoneAt(L, Z, zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false))
 				task.delay(ev[1], function()
 					if holder.Parent then
 						playDecalAt(L, holder, k, ev[2], holder.CFrame * lcf)
@@ -3009,7 +3029,7 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 		else
 			local e, a = zoneEmitter(L, Z, holder)
 			for _, ev in L.ring_emit or {} do
-				local lcf = zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), L.pitch, L.radial)
+				local lcf = zoneAt(L, Z, zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), L.pitch, L.radial))
 				local n = quality(ev[2])
 				task.delay(ev[1], function()
 					if e.Parent then
@@ -5808,6 +5828,18 @@ def build(specs, name, doc):
             if spec.get("times"):
                 out += "-- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la cámara\n" + \
                     f"KaijuFireVFX.{key}Times = " + lua(spec["times"]) + "\n\n"
+            if z.get("front"):
+                t0f, swf = z["front"]
+                out += "-- radio de la zona (studs a escala 1; multiplícalo por la escala)\n" \
+                    f"KaijuFireVFX.{key}Radius = {z['radius']:g}\n" \
+                    "-- segundos (desde la llamada) en que el frente que sale del centro pasa a `distance` studs (usa el\n" \
+                    "-- mismo radio con que llamaste el efecto): para aplicar el daño a cada enemigo cuando lo alcanza\n" \
+                    f"function KaijuFireVFX.{key}FrontTime(distance: number, radius: number?): number\n" \
+                    f"\treturn {t0f:g} + {swf:g} * math.clamp(distance / (radius or {z['radius']:g}), 0, 1)\nend\n"
+            for nm, (val, why) in spec.get("exports", {}).items():
+                out += f"-- {why}\nKaijuFireVFX.{key}{nm} = {val:g}\n"
+            if z.get("front") or spec.get("exports"):
+                out += "\n"
         elif spec.get("blade"):
             B = spec["blade"]
             out += head + \
