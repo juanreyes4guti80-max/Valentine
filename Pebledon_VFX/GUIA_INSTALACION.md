@@ -8,7 +8,7 @@ El kit se está haciendo por partes:
 - **Combo: el aliento en el cristal.** Listo: si el aliento le pega al cristal, del cristal salen rayos a los enemigos del área.
 - **ULTIMATE: Erupción tectónica.** Lista.
 
-Todo vive en un solo módulo, `PebledonVFX`. Usa **22 texturas**.
+Todo vive en un solo módulo, `PebledonVFX`. Usa **21 texturas**.
 
 ## Qué trae la carpeta
 
@@ -45,7 +45,7 @@ El plugin que sube las texturas está en la carpeta `Plugin_Studio` del reposito
 | **Skill 2: Aliento azul** | `BlueBreath(boca, objetivo, escala, sacudida, ignorar)` | Como el aliento de Godzilla. **Carga:** la energía se junta en la boca y le salen llamas azules. **Disparo:** escupe **fuego azul concentrado que sale recto**: un núcleo casi blanco, fuego turquesa en vetas que corre muy rápido hacia adelante y llamas azules pegadas al rayo, de la boca a la punta. No lleva aros ni espirales. Es más delgado que los rayos de Kaiju Zero y Omnívora. **Se puede apuntar** los 3 s que dura: se corta en lo primero que toca y llega hasta **126 studs × escala** (3 veces su largo). **Donde pega**, el fuego salpica hacia afuera, saltan rocas con venas y chispas, y el suelo queda con grietas turquesa que arden. Si barre el suelo, deja una estela. | sale a los **0.69 s** (`BlueBreathStart`) y se corta a los **3.55 s** (`BlueBreathStop`) |
 | **Skill 3: Pilar de cristal** | `CrystalSpire(pie, dónde, escala, sacudida)` | **Pisotón:** el suelo se raja bajo su pie y **algo avanza bajo tierra** hasta el punto elegido: por donde pasa se levantan **losas y bloques de roca a los dos lados**, saltan pedazos y sube polvo, con una grieta turquesa, llamitas y chispas. **Ahí revienta:** destello, fuego cian, muchos **bloques de roca** que vuelan, bloques grandes y losas que se levantan alrededor, polvo y grietas. **Brota duro un pilar de cristal** como los de su espalda: un prisma hexagonal de vidrio turquesa con un núcleo de luz adentro y punta, de unos **33 studs** (un poco más que Pebledon), con cristales más chicos alrededor inclinados hacia afuera. Sale golpeando: el servidor empuja y manda a volar a quien esté encima. **Queda un círculo grande** en el suelo que marca el área de la mejora, con llamitas y brasas por el borde. El cristal brilla, con fuego cian en la base. **Dura 10 s.** Al final **avisa** (titila, se raja con grietas de luz y el círculo parpadea), **el círculo se encoge hasta el cristal** y **el pilar se desmorona**: se hunde en el suelo entre esquirlas, pedazos de cristal que se le caen y polvo. | revienta el suelo a los **0.44 s** (`CrystalSpireTimes.Erupt`); avisa desde los **8.8 s** (`Warning`) y se desmorona a los **10 s** (`End`). Golpea hasta **12 studs** (`CrystalSpireHitRadius`) y la mejora llega a **100 studs** (`CrystalSpireRadius`: un círculo de 200 studs de lado a lado), los dos × escala |
 | **Combo: el aliento en el cristal** | `CrystalRefract(cristal, enemigos, escala)` | Mientras el **aliento le pega al pilar**, el cristal lo reparte: de su parte alta salen **rayos más delgados** del mismo fuego azul (sin aros), uno hacia **cada enemigo dentro del círculo**, y les pegan mientras el aliento siga en el cristal. Donde pegan, el fuego salpica sobre el enemigo. `refr:SetTargets(lista)` cambia a quiénes y `refr:Stop()` los corta. El aliento del cliente ya se corta en el cristal (el pilar tiene `CanQuery`). | salen al instante (`CrystalRayStart` = 0.1 s para llegar) y duran como mucho **3.4 s** (`CrystalRayStop`) |
-| **ULTIMATE: Erupción tectónica** | `TectonicEruption(cf, radio, altura, escala, sacudida)` | Pebledon **hunde los puños en el suelo** y es el epicentro. **Carga:** desde él se riegan **venas turquesa** por una zona gigante (**150 studs de radio**), con llamitas cian; el mundo se oscurece y tiembla, y las piedras vibran y flotan. **Ruptura:** el suelo se rompe en **placas enormes** que se levantan inclinadas y salen **géiseres de fuego cian** (chorros de unos 50 studs) en cadena, del centro hacia afuera; de las venas brotan cristalitos y la tierra arde. **Montaña:** **delante de él** brota una **montaña de cristal de más de 100 studs** (unas cinco veces Pebledon) que rompe las placas de alrededor y se carga de luz. **Explosión:** revienta en una **lluvia de cristales** que cae sobre toda la zona, con un **pilar de energía hasta el cielo**. | el suelo se rompe a los **1.15 s** y el frente llega al borde a los **1.95 s** (`TectonicEruptionFrontTime`); la montaña brota a los **2.75 s** y revienta a los **4.35 s** (`TectonicEruptionTimes`) |
+| **ULTIMATE: Erupción tectónica** | `TectonicEruption(cf, radio, altura, escala, sacudida)` | **Pebledon ruge** y ese punto es el epicentro: **él se puede seguir moviendo**, todo sale de donde rugió. **El grito:** destello en la boca, anillos que sacuden el aire a su alrededor y rayas de grito; el suelo responde bajo él. **Las grietas:** desde ahí **corren grietas de luz turquesa** por toda la zona (**150 studs de radio**): avanzan con una punta que brilla y suelta chispas, se ramifican y se cruzan como bordes de placas, mientras salta polvo y brotan llamitas. El mundo se oscurece y tiembla. **Ruptura:** el suelo se rompe en **placas enormes con venas que brillan** y **de las grietas salen géiseres de fuego cian** en cadena, del centro hacia afuera. Cada géiser **avisa** (brilla y chisporrotea), **revienta** con un anillo de choque, **lanza rocas en llamas** (rocas de verdad con estela que caen y arden) y rocas con venas, sale el **chorro de unos 50 studs** con una garganta blanca, **abre arriba como una fuente** que cae en gotas de fuego, y después queda ardiendo y humeando. **Montaña:** en el centro brota una **montaña de cristal de más de 100 studs** (unas cinco veces Pebledon) que rompe las placas de alrededor y se carga de luz. **Explosión:** revienta en una **lluvia de cristales** sobre toda la zona, con un **pilar de energía hasta el cielo**. | las grietas salen a los **0.12 s**; el suelo se rompe a los **1.15 s** y el frente llega al borde a los **1.95 s** (`TectonicEruptionFrontTime`); la montaña brota a los **2.75 s** y revienta a los **4.35 s** (`TectonicEruptionTimes`) |
 
 `PebledonVFX.SeismicRoarTimes` tiene tres momentos:
 
@@ -60,11 +60,12 @@ Además:
 
 El daño, la lentitud, la exposición y el empujón los pones tú en tu sistema de combate (ver abajo).
 
-`PebledonVFX.TectonicEruptionTimes` (la ULTIMATE) tiene cinco momentos: `Slam` (los puños), `Rupture` (el suelo se rompe), `Mountain` (brota la montaña), `Detonation` (revienta) y `End` (se acaba). Además:
+`PebledonVFX.TectonicEruptionTimes` (la ULTIMATE) tiene cinco momentos: `Roar` (el grito), `Rupture` (el suelo se rompe), `Mountain` (brota la montaña), `Detonation` (revienta) y `End` (se acaba). Además:
 
 - `PebledonVFX.TectonicEruptionRadius` (150) es el radio de la zona, y `TectonicEruptionFrontTime(distancia, radio)` te dice en qué segundo el frente de la ruptura pasa por cada punto.
-- `PebledonVFX.TectonicEruptionMountainOffset` (45) es a cuántos studs delante de Pebledon brota la montaña, y `TectonicEruptionMountainRadius` (26) hasta dónde golpea al brotar.
+- `PebledonVFX.TectonicEruptionMountainRadius` (26) es hasta dónde golpea la montaña al brotar, alrededor del centro.
 - Todos son a escala 1: multiplícalos por la escala.
+- **Pebledon se puede mover mientras dura.** La ultimate se queda donde rugió: no lo sigue ni depende de su modelo. La montaña brota en ese punto, así que si se queda quieto ahí, la montaña lo atraviesa; lo normal es que se aleje.
 
 ## Cómo llamarlo
 
@@ -102,7 +103,7 @@ evento.OnClientEvent:Connect(function(que: string, d: any)
 			refraccion = nil
 		end
 	elseif que == "Ultimate" then
-		-- Pebledon en el suelo, mirando hacia adelante: la zona sale de él y la montaña brota delante
+		-- donde rugió (sus pies, mirando hacia adelante): todo sale de ahí aunque él se siga moviendo
 		PebledonVFX.TectonicEruption(d.cf, nil, nil, d.escala, 1)
 	end
 end)
@@ -306,18 +307,18 @@ Cuando el aliento se corta, manda también `"RefraccionFin"`.
 
 ### La ULTIMATE: el daño (servidor)
 
-Pega en cuatro tiempos: el frente de la ruptura (a cada enemigo cuando lo alcanza), la tierra que arde, la montaña al brotar (a los que estén junto a ella) y la explosión (en toda la zona):
+Pega en cuatro tiempos: el frente de la ruptura (a cada enemigo cuando lo alcanza), la tierra que arde, la montaña al brotar (a los que estén junto a ella) y la explosión (en toda la zona). El centro se toma una sola vez, cuando ruge: Pebledon puede seguir moviéndose.
 
 ```lua
 local function ultimate(pebledon: Model, escala: number, rivales: { Model })
 	local raiz = pebledon:FindFirstChild("HumanoidRootPart") :: BasePart
 	local hum = pebledon:FindFirstChildOfClass("Humanoid") :: Humanoid
 	local adelante = (raiz.CFrame.LookVector * Vector3.new(1, 0, 1)).Unit
-	local centro = raiz.Position - Vector3.new(0, hum.HipHeight + raiz.Size.Y / 2, 0)   -- sus pies
+	local centro = raiz.Position - Vector3.new(0, hum.HipHeight + raiz.Size.Y / 2, 0)   -- sus pies, cuando ruge
 	evento:FireAllClients("Ultimate", { cf = CFrame.lookAt(centro, centro + adelante), escala = escala })
 	local T = PebledonVFX.TectonicEruptionTimes
 	local R = PebledonVFX.TectonicEruptionRadius * escala
-	local montania = centro + adelante * PebledonVFX.TectonicEruptionMountainOffset * escala
+	local montania = centro                                  -- la montaña brota donde rugió
 	local function plano(v: Vector3): Vector3
 		return v * Vector3.new(1, 0, 1)
 	end
@@ -378,7 +379,7 @@ end
 - Las grietas, los anillos y las marcas del suelo son Decals pensados para suelo plano.
 - **Aliento:** el rayo son **Beams** (el núcleo y dos capas de fuego en vetas que corren hacia adelante) más llamas que van **pegadas al rayo** (`LockedToPart`): si lo barres, el fuego se queda recto con él. Se corta en lo primero que toca con un Raycast cada cuadro.
 - **Pilar de cristal:** el cristal es un **marcador** hecho con Parts. El pilar es un prisma hexagonal de tres bloques de `Glass` girados 60°, con punta y un núcleo de `Neon` adentro. Los chicos son de `Glass` y `Neon`. El pilar se llama `PebledonCrystal` y tiene `CanQuery` activado (sin colisión), así que el aliento se corta en él. El círculo es un Decal (`pb_buff_ring`) del radio de la mejora. Los pedazos que vuelan rebotan en el suelo y se deshacen. Al final los cristales se hunden en el suelo: el suelo tapa la parte enterrada (sobre agua o un suelo transparente se verían bajar).
-- **ULTIMATE:** las venas son un Decal gigante (`pb_tectonic_veins`) que crece desde Pebledon. Las placas y las losas toman el color y el material del suelo. La montaña es un **marcador**, como el pilar: un prisma hexagonal de `Glass` de unos 30 × 115 studs con un núcleo de `Neon`, rodeado de cristales grandes y chicos. El pilar de energía son Beams. El mundo se oscurece con un `ColorCorrectionEffect`, solo para los jugadores cerca (como el Eclipse de Moonfang).
+- **ULTIMATE:** las grietas son **tramos de `Neon`** que crecen uno tras otro (unos 330 Parts finos pegados al suelo): por eso se ven correr. Las placas y las losas toman el color y el material del suelo, y las placas llevan un Decal de venas (`pb_vein_cracks`) en la cara de arriba. Las rocas en llamas de los géiseres son Parts con estela que caen, arden un momento y se rompen. La montaña es un **marcador**, como el pilar: un prisma hexagonal de `Glass` de unos 30 × 115 studs con un núcleo de `Neon`, rodeado de cristales grandes y chicos. El pilar de energía son Beams. El mundo se oscurece con un `ColorCorrectionEffect`, solo para los jugadores cerca (como el Eclipse de Moonfang).
 - Para que el fuego cian brille como en el video, pon un `BloomEffect` en `Lighting`: *Intensity* 0.6–1, *Size* 24, *Threshold* 1.5–2.
 
 ## Rendimiento
@@ -389,7 +390,7 @@ end
 | Aliento azul | unas 220 | 4 Beams y Decals en el suelo (más si lo barre) |
 | Pilar de cristal | unas 450 | 20 cristales (Parts con sus puntas), unas 100 rocas y losas (48 losas y 16 bloques alrededor del pilar, 38 por el camino), 144 pedazos, unas 48 Decals y 3 PointLights; se limpia solo a los 12.7 s |
 | Combo (por rayo) | unas 60 | 4 Beams y una PointLight |
-| ULTIMATE (Erupción tectónica) | unas 2500 | 54 placas y 70 losas (del color del suelo), 86 cristales con sus puntas, 580 pedazos, unas 75 Decals, 5 BillboardGuis, 3 Beams y hasta 10 PointLights a la vez; se limpia sola a los 9.5 s |
+| ULTIMATE (Erupción tectónica) | unas 2600 | unos 330 tramos de grieta (Neon), 54 placas y 70 losas (del color del suelo), 86 cristales con sus puntas, 48 rocas en llamas, 530 pedazos, unas 280 Decals (casi todas duran menos de medio segundo), 5 BillboardGuis, 3 Beams y hasta 10 PointLights a la vez; se limpia sola a los 9.5 s |
 
 `PebledonVFX.Quality = 0.6` baja las partículas, las losas y las rocas (por ejemplo, en celulares).
 
@@ -412,6 +413,7 @@ PebledonVFX.Meshes.PathBlocks = modelos.Rock            -- los bloques del camin
 PebledonVFX.Meshes.TectonicCrystal = modelos.Crystal    -- la montaña de la ULTIMATE y sus cristales grandes
 PebledonVFX.Meshes.TectonicPlates = modelos.Plate       -- las placas enormes del suelo de la ULTIMATE
 PebledonVFX.Meshes.RubbleSlabs = modelos.Slab           -- las losas de la ULTIMATE
+PebledonVFX.Meshes.GeyserBoulders = modelos.Boulder     -- las rocas en llamas que lanzan los géiseres
 ```
 
 El pilar (`PebledonCrystal`) es **lo más importante para hacer en Blender**: un cristal hexagonal alto con punta, como las placas de su espalda, de proporción 1 × 3.2 × 1 (ancho, alto, fondo). Con un modelo se escala al tamaño del pilar (unos 9.5 × 30 × 9.5 studs a escala 1) y ya no lleva los tres bloques ni el núcleo de Neon. Ponle tú el brillo, por ejemplo con un material de vidrio y una parte de Neon adentro.
@@ -429,12 +431,11 @@ Están en `textures/`. El plugin las sube todas.
 
 | Textura | Qué es | Dónde se usa |
 |---|---|---|
-| `pb_rock_2x2` | cuatro rocas facetadas con venas turquesa que brillan (ya coloreada) | Rugido |
-| `pb_sonic_ring` | onda de sonido: un anillo nítido con ondas detrás | Rugido |
-| `pb_vein_cracks` | grietas que salen del centro y se ramifican | Rugido, Aliento, Pilar de cristal, ULTIMATE |
+| `pb_rock_2x2` | cuatro rocas facetadas con venas turquesa que brillan (ya coloreada) | Rugido, ULTIMATE |
+| `pb_sonic_ring` | onda de sonido: un anillo nítido con ondas detrás | Rugido, ULTIMATE (el grito) |
+| `pb_vein_cracks` | grietas que salen del centro y se ramifican | Rugido, Aliento, Pilar de cristal, ULTIMATE (las venas de las placas) |
 | `pb_breath_fire` | fuego concentrado en vetas que corre a lo largo (Beams del aliento) | Aliento, ULTIMATE (el pilar de energía) |
 | `pb_buff_ring` | el círculo de la mejora: un anillo nítido con marcas de cristal | Pilar de cristal |
-| `pb_tectonic_veins` | la red de venas: fisuras que salen del centro hasta el borde y se cruzan como placas tectónicas | ULTIMATE |
 
 **Del proyecto (de los otros kits):** `kz_beam_ring` (anillo nítido), `kz_beam_core` y `kz_beam_glow` (el núcleo y la luz del aliento), `mf_shard_2x2` (esquirlas de cristal) y `om_cubes_2x2` (pedazos de tierra).
 
@@ -462,7 +463,7 @@ En `preview/`:
 Todo el kit está en `KaijuZero_VFX/tools/vfx_pebledon.py`:
 
 - arriba están los colores;
-- después cada skill, con sus tiempos y sus capas. Del rugido: `RL` y `RA` (largo y apertura), `T_ROAR`, `T0R`, `TWR` y `EASE_R` (cuándo ruge, cuándo sale la onda, cuánto tarda y cuánto se frena), `ROAR_FRONT` (lo que viaja con el frente) y `ROAR_FIELD` (las losas). Del aliento: `B_START`, `B_STOP` y `B_LEN` (cuándo sale, cuándo se corta y su largo máximo), `BREATH_BEAMS` (el núcleo y el fuego) y `B_JET` (lo que tarda una llama en ir de la boca a la punta). Del pilar: `SR` (el radio de la mejora), `S_TRAVEL` (lo que tarda en llegar lo que avanza bajo tierra), `S_ERUPT`, `S_RISE`, `S_WARN` y `S_END` (cuándo revienta el suelo, cuándo brota, cuándo empieza a avisar y cuándo se desmorona), `S_HIT_R` (el radio del golpe) y `SPIRE_FIELD` (los cristales, las rocas de alrededor y las del camino). De la ULTIMATE: `TR` (el radio), `T_RUP`, `SW_RUP`, `T_MOUNT` y `T_DET` (cuándo se rompe el suelo, lo que tarda el frente en llegar al borde, cuándo brota la montaña y cuándo revienta), `MT` (dónde brota la montaña), `geysers()` (cuántos géiseres y cuándo), `TECTONIC_FIELD` (placas, losas y cristales) y `TECTONIC_ZBEAMS` (el pilar de energía).
+- después cada skill, con sus tiempos y sus capas. Del rugido: `RL` y `RA` (largo y apertura), `T_ROAR`, `T0R`, `TWR` y `EASE_R` (cuándo ruge, cuándo sale la onda, cuánto tarda y cuánto se frena), `ROAR_FRONT` (lo que viaja con el frente) y `ROAR_FIELD` (las losas). Del aliento: `B_START`, `B_STOP` y `B_LEN` (cuándo sale, cuándo se corta y su largo máximo), `BREATH_BEAMS` (el núcleo y el fuego) y `B_JET` (lo que tarda una llama en ir de la boca a la punta). Del pilar: `SR` (el radio de la mejora), `S_TRAVEL` (lo que tarda en llegar lo que avanza bajo tierra), `S_ERUPT`, `S_RISE`, `S_WARN` y `S_END` (cuándo revienta el suelo, cuándo brota, cuándo empieza a avisar y cuándo se desmorona), `S_HIT_R` (el radio del golpe) y `SPIRE_FIELD` (los cristales, las rocas de alrededor y las del camino). De la ULTIMATE: `TR` (el radio), `T_CRACK` y `CR_SPEED` (cuándo salen las grietas y qué tan rápido corren), `tectonic_cracks()` (cuántas fisuras, ramas y cruces), `T_RUP`, `SW_RUP`, `T_MOUNT` y `T_DET` (cuándo se rompe el suelo, lo que tarda el frente en llegar al borde, cuándo brota la montaña y cuándo revienta), `geysers()` (cuántos géiseres y cuándo), `TECTONIC_FIELD` (placas, losas y cristales) y `TECTONIC_ZBEAMS` (el pilar de energía).
 
 Sus texturas propias salen de `KaijuZero_VFX/tools/gen_pebledon_textures.py`.
 

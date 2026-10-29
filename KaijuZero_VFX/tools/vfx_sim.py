@@ -727,6 +727,42 @@ class ZoneField:
                 self.slabs.append(SL)
 
 
+class ZoneCracks:
+    """Grietas que corren por el suelo (lo mismo que runZoneCracks en el módulo): tramos rectos de Neon que crecen de
+    su punto de partida a su punto final entre t0 y t1; nacen calientes y se enfrían; tr y heat (segundos absolutos)
+    las hacen destellar y apagarse todas a la vez."""
+
+    def __init__(self, C, zone, scale, quality=1.0):
+        self.C, self.R, self.s = C, zone["R"], scale
+        self.segs = [sg for sg in C["segs"] if (sg[7] if len(sg) > 7 else 0) <= quality * 2.5]
+
+    def boxes(self, t, o0, ground_y):
+        """(centro, giro, tamaño, color, opacidad) de los tramos que ya nacieron."""
+        C = self.C
+        if t > C["t_end"]:
+            return []
+        tr = eval_seq(C["tr"], t)
+        heat = eval_seq(C["heat"], t)
+        base, hot = np.array(C["color"], float) / 255, np.array(C["hot"], float) / 255
+        out = []
+        for sg in self.segs:
+            x0, z0, x1, z1, t0, t1, w = sg[:7]
+            if t < t0:
+                continue
+            age = t - t0
+            u = min(1.0, age / max(t1 - t0, 1e-3))
+            ax, az = x0 * self.R, z0 * self.R
+            dx, dz = x1 * self.R - ax, z1 * self.R - az
+            full = max(math.hypot(dx, dz), 1e-3)
+            ln = max(full * u, 0.05)
+            dx, dz = dx / full, dz / full
+            P = np.array([o0[0] + ax + dx * ln / 2, ground_y + C["height"] * self.s, o0[2] + az + dz * ln / 2])
+            h = max(heat, 1 - min(age / C["birth"], 1.0))
+            out.append((P, rot_y(-math.atan2(dz, dx)), (ln, C["thick"] * self.s, w * self.s), base * (1 - h) + hot * h,
+                        1 - tr))
+        return out
+
+
 class BladeGeo:
     """La media luna de energía que vuela (lo mismo que runBlade en el módulo). Va vertical y de canto: de lado se ve
     la media luna (la punta adelante, los cuernos atrás) y desde atrás, una hoja fina que apunta hacia donde va.
@@ -967,6 +1003,63 @@ def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0, glow=None, ground=N
     dst += rgb[ya - y0:yb - y0, xa - x0:xb - x0] * alpha
 
 
+def perspective_coeffs(dst, src):
+    """Los 8 coeficientes de Image.PERSPECTIVE que llevan los puntos dst (salida) a src (entrada)."""
+    A, b = [], []
+    for (x, y), (u, v) in zip(dst, src):
+        A.append([x, y, 1, 0, 0, 0, -u * x, -u * y])
+        A.append([0, 0, 0, x, y, 1, -v * x, -v * y])
+        b += [u, v]
+    return np.linalg.solve(np.array(A, float), np.array(b, float))
+
+
+def draw_top_texture(buf, cam, tb, P, R3, size3, V, ground_y):
+    """Un Decal en la cara de arriba de una pieza (p. ej. las venas de la roca de Pebledon): la textura estirada sobre
+    la cara (U a lo largo de X, V a lo largo de Z), con su color y su brillo; lo enterrado no se ve."""
+    from PIL import ImageDraw
+    half = np.asarray(size3, float) * 0.5
+    n = R3 @ np.array([0.0, 1.0, 0.0])
+    top = P + n * half[1]
+    if n @ (cam.C - top) <= 0:
+        return
+    loc = [(-1, -1), (-1, 1), (1, 1), (1, -1)]              # (x, z) de las esquinas: U = x, V = z
+    pts3 = [P + R3 @ np.array([sx * half[0], half[1], sz * half[2]]) for sx, sz in loc]
+    pr = [cam.project(q) for q in pts3]
+    if any(q is None for q in pr):
+        return
+    xs, ys = [q[0] for q in pr], [q[1] for q in pr]
+    H, W = buf.shape[:2]
+    x0, y0 = max(0, int(math.floor(min(xs)))), max(0, int(math.floor(min(ys))))
+    x1, y1 = min(W, int(math.ceil(max(xs))) + 1), min(H, int(math.ceil(max(ys))) + 1)
+    if x1 - x0 < 2 or y1 - y0 < 2 or (x1 - x0) * (y1 - y0) > 600000:
+        return
+    tex = tb.get(V["texture"], "None")[0]
+    tw, th = tex.size
+    src = [(0, 0), (0, th), (tw, th), (tw, 0)]
+    try:
+        co = perspective_coeffs([(q[0] - x0, q[1] - y0) for q in pr], src)
+    except np.linalg.LinAlgError:
+        return
+    im = np.asarray(tex.transform((x1 - x0, y1 - y0), Image.PERSPECTIVE, tuple(co), Image.BILINEAR),
+                    np.float32) / 255
+    # lo que queda bajo el suelo no se ve: la máscara es la cara recortada contra el plano del suelo
+    poly = clip_above(pts3, ground_y)
+    if len(poly) < 3:
+        return
+    m = Image.new("L", (x1 - x0, y1 - y0), 0)
+    pp = [cam.project(q) for q in poly]
+    if any(q is None for q in pp):
+        return
+    ImageDraw.Draw(m).polygon([(q[0] - x0, q[1] - y0) for q in pp], fill=255)
+    a = im[..., 3:4] * (np.asarray(m, np.float32)[..., None] / 255) * (1 - V.get("transparency", 0.0))
+    col = np.array(V["color"], float) / 255 * (1 + 1.5 * V.get("light_emission", 0.0)) * 0.7
+    rgb = im[..., :3] * col
+    dst = buf[y0:y1, x0:x1]
+    light = V.get("light_emission", 0.0)
+    dst *= (1 - a * (1 - light))
+    dst += rgb * a
+
+
 def draw_ground_quad(buf, cam, center, along, half_len, half_w, rgb, alpha, tex=None, light=0.0):
     """Rectángulo horizontal en el suelo (una Part delgada o un Decal sobre ella) centrado en `center` y con el largo
     hacia `along`. tex = RGBA 0..1 estirada sobre el rectángulo (u a lo largo, v a lo ancho). light = LightEmission:
@@ -1161,7 +1254,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             phi = -math.atan(sfrac * tan_h)
             Ry = np.array([[math.cos(phi), 0, math.sin(phi)], [0, 1, 0], [-math.sin(phi), 0, math.cos(phi)]])
             events.append((t, n, L, pos, Rf @ Ry @ Rx, None))
-    zst, cubes = [], None
+    zst, cubes, zcracks = [], None, None
     if spec.get("zone"):
         zone = zone or {"R": spec["zone"]["radius"] * scale, "H": spec["zone"]["height"] * scale}
         zone["s"] = scale
@@ -1169,6 +1262,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         events += zev
         if spec.get("zfield"):
             field = ZoneField(spec["zfield"], zone, scale, spec["zone"]["radius"])
+        if spec.get("zcracks"):
+            zcracks = ZoneCracks(spec["zcracks"], zone, scale)
     events.sort(key=lambda e: e[0])
     clears = sorted(((L["clear_at"], L) for L in spec["layers"] if L.get("clear_at") is not None), key=lambda c: c[0])
     fades = [L for L in spec["layers"] if L.get("fade_at")]
@@ -1360,6 +1455,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 d = cam.to_cam(P)
                 if d[2] > 0.5:
                     items.append((d[2], 6, (P, R3, size3, SLb), d, None))
+        if draw and zcracks is not None:         # las grietas que corren por el suelo
+            for bx in zcracks.boxes(t, o0, ground_y):
+                d = cam.to_cam(bx[0])
+                if d[2] > 0.5:
+                    items.append((d[2], 8, bx, d, None))
         if draw and blade_geo is not None:       # la media luna que vuela (cadenas de Beams que miran a la cámara)
             for P, R3, size3, SLb in blade_geo.slab_poses(t, o0, Rf, ground_y):
                 d = cam.to_cam(P)
@@ -1404,6 +1504,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 asp = obj.L["sprite"].get("aspect", (1, 0.8, 0.9))
                 draw_solid_box(buf, cam, obj.pos, obj.R3, np.asarray(asp, float) * obj.size, obj.col)
                 continue
+            if kind == 8:
+                P, R3, size3, col, op = obj
+                if op > 0.01:
+                    draw_solid_box(buf, cam, P, R3, size3, col * 1.3, op, glow=1.0)
+                continue
             if kind == 6:
                 P, R3, size3, SLb = obj
                 if SLb["ice"] and SLb["ice"].get("material") == "Neon":     # brilla solo (Neon): casi sin sombra
@@ -1414,6 +1519,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                                    1 - SLb["ice"]["transparency"], ground=ground_y)
                 else:
                     draw_solid_box(buf, cam, P, R3, size3, slab_color(spec, SLb), ground=ground_y)
+                    if SLb["L"].get("veins") and size3 is SLb["size"]:
+                        draw_top_texture(buf, cam, tb, P, R3, size3, SLb["L"]["veins"], ground_y)
                 continue
             am = fade.get(id(obj.L), 1.0)
             if obj.spin:

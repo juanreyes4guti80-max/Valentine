@@ -4,8 +4,6 @@
   pb_vein_cracks     grietas del suelo con venas de energía (blanco con alfa: oscuras = suelo roto, turquesa = venas)
   pb_breath_fire     Beam del aliento: fuego concentrado en vetas que corre a lo largo (se repite a lo largo del rayo)
   pb_buff_ring       el círculo de la mejora alrededor del cristal: un anillo nítido con marcas de cristal (Decal)
-  pb_tectonic_veins  la red de venas de la ULTIMATE: fisuras que salen del centro hasta el borde y se cruzan formando
-                     placas (Decal gigante; blanco con alfa: el color lo pone la capa)
 uso: python gen_pebledon_textures.py <carpeta textures de Pebledon>"""
 import math
 import os
@@ -242,62 +240,6 @@ def buff_ring(n):
     return v, np.clip(a, 0, 1)
 
 
-# ----------------------------------------------------------------------------- la red de venas de la ultimate
-def tectonic_veins(n, seed=5):
-    """Fisuras que salen del centro y llegan al borde (gruesas en el centro, finas afuera), con ramas, y grietas que
-    las cruzan a tres radios como bordes de placas tectónicas. Con un resplandor suave alrededor."""
-    g = np.random.default_rng(seed)
-    img = Image.new("L", (n, n), 0)
-    d = ImageDraw.Draw(img)
-    c0 = np.array([n / 2, n / 2])
-    R = n / 2 * 0.96
-    K = 11
-    angs = [2 * math.pi * k / K + g.uniform(-0.1, 0.1) for k in range(K)]
-    mains = []
-    for a in angs:
-        # cada fisura principal: una polilínea quebrada que se va torciendo un poco
-        pts, ang, r = [c0.copy()], a, 0.0
-        while r < R:
-            r = min(R, r + R / 22)
-            ang += g.normal(0, 0.06) + 0.3 * (a - ang)      # se tuerce un poco pero sigue hacia afuera
-            pts.append(c0 + r * np.array([math.cos(ang), math.sin(ang)]) + g.normal(0, R * 0.006, 2))
-        mains.append(pts)
-        for j in range(len(pts) - 1):
-            u = j / (len(pts) - 1)
-            d.line([tuple(pts[j]), tuple(pts[j + 1])], fill=255, width=max(2, int(n / 95 * (1 - 0.72 * u))))
-        # ramas
-        for j in range(2, len(pts) - 3):
-            if g.random() < 0.3:
-                u = j / (len(pts) - 1)
-                p = pts[j]
-                da = math.atan2(*(pts[j + 1] - p)[::-1]) + g.choice([-1, 1]) * g.uniform(0.45, 0.95)
-                L = R * g.uniform(0.08, 0.2)
-                q = p + L * np.array([math.cos(da), math.sin(da)])
-                d.line(jagged(g, tuple(p), tuple(q), 5, L * 0.08), fill=255,
-                       width=max(1, int(n / 200 * (1 - 0.6 * u))))
-
-    def at(pts, rf):
-        """El punto de una fisura principal más cercano al radio rf (fracción de R)."""
-        rs = [np.linalg.norm(p - c0) for p in pts]
-        return pts[int(np.argmin([abs(x - rf * R) for x in rs]))]
-    # los bordes de las placas: grietas que unen fisuras vecinas a tres radios (no todas: placas de distinto tamaño)
-    for rf, prob in ((0.3, 0.75), (0.56, 0.7), (0.8, 0.6)):
-        for k in range(K):
-            if g.random() < prob:
-                p0 = at(mains[k], rf * g.uniform(0.9, 1.1))
-                p1 = at(mains[(k + 1) % K], rf * g.uniform(0.9, 1.1))
-                L = float(np.linalg.norm(p1 - p0))
-                d.line(jagged(g, tuple(p0), tuple(p1), 7, L * 0.07), fill=255, width=max(1, int(n / 170 * (1.2 - rf))))
-    c = np.asarray(img, np.float32) / 255
-    x, y = grid(n)
-    r = np.sqrt(x * x + y * y)
-    fade = np.clip((0.995 - r) / 0.05, 0, 1)
-    glow = np.clip(blur(c, n / 160) * 1.7, 0, 1)
-    a = np.clip(np.maximum(c, glow * 0.5), 0, 1) * fade
-    v = np.clip(0.6 + 0.4 * c, 0, 1)
-    return v, a
-
-
 def main(out):
     os.makedirs(out, exist_ok=True)
     n = 256 * SS
@@ -310,8 +252,6 @@ def main(out):
     breath_fire(512, 128).save(os.path.join(out, "pb_breath_fire.png"))
     v, a = buff_ring(1024 * SS)
     save(v, a, os.path.join(out, "pb_buff_ring.png"), 1024)
-    v, a = tectonic_veins(1024 * SS)
-    save(v, a, os.path.join(out, "pb_tectonic_veins.png"), 1024)
     print("OK texturas de Pebledon ->", out)
 
 

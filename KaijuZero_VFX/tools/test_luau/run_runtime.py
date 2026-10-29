@@ -659,43 +659,56 @@ do
 		"CrystalRefract", alive, tostring(rf.Active), tostring(R.isDestroyed(spire)), hb, rs))
 	assert(not rf.Active and R.isDestroyed(spire) and hb == 0 and rs == 0, "CrystalRefract: no se limpió")
 end
--- la ULTIMATE: Pebledon en (0, 0, 0) mirando hacia -Z; la montaña brota delante de él, no encima
+-- la ULTIMATE: ruge en (0, 0, 0); las grietas corren hasta el borde, los géiseres lanzan rocas en llamas y la
+-- montaña brota en el epicentro
 do
 	R.reset()
 	R.workspace = R.Instance.new("Workspace")
 	local T = PEB.TectonicEruptionTimes
 	local holder = PEB.TectonicEruption(R.CFrame.new(0, 0, 0), nil, nil, 1, 1)
-	stepFor(T.Mountain + 0.6)
-	local off = PEB.TectonicEruptionMountainOffset
+	stepFor(0.6)
+	local early = R.liveNamed("Crack")
+	stepFor(1.4)
+	-- las grietas: tramos de Neon que fueron creciendo del centro hacia el borde
+	local cracks, far = 0, 0
+	for _, p in R.livePositions("Crack") do
+		cracks += 1
+		far = math.max(far, math.sqrt(p.X * p.X + p.Z * p.Z))
+	end
+	assert(early > 10 and cracks > early and cracks >= 200, ("TectonicEruption: las grietas no corrieron (%d -> %d)"):format(early, cracks))
+	assert(far > 120, ("TectonicEruption: las grietas no llegaron al borde (%.0f)"):format(far))
+	stepFor(T.Mountain + 0.6 - 2)
 	local mt = R.livePositions("TectonicCrystal")
 	assert(#mt == 3, "TectonicEruption: la montaña no es un prisma de tres bloques (" .. #mt .. ")")
-	assert(math.abs(mt[1].Z + off) < 2 and math.abs(mt[1].X) < 2 and mt[1].Y > 30,
-		"TectonicEruption: la montaña no brotó delante de Pebledon")
+	assert(math.abs(mt[1].Z) < 2 and math.abs(mt[1].X) < 2 and mt[1].Y > 30,
+		"TectonicEruption: la montaña no brotó en el epicentro")
 	-- los géiseres salen por toda la zona: cerca del centro y cerca del borde
-	local near, far = 0, 0
+	local near, edge = 0, 0
 	for i, p in R.stats.emitPos do
 		if R.stats.emitNames[i] == "GeyserJet" then
 			local d = math.sqrt(p.X * p.X + p.Z * p.Z)
-			if d < 60 then near += 1 elseif d > 110 then far += 1 end
+			if d < 60 then near += 1 elseif d > 110 then edge += 1 end
 		end
 	end
-	assert(near >= 10 and far >= 10, ("TectonicEruption: los géiseres no cubren la zona (%d cerca, %d lejos)"):format(near, far))
+	assert(near >= 10 and edge >= 10, ("TectonicEruption: los géiseres no cubren la zona (%d cerca, %d lejos)"):format(near, edge))
 	stepFor(7)
 	local dl, wt, hb, rs = R.pending()
-	print(("%-17s emits=%d particulas=%d cristales y losas=%d puntas=%d pedazos=%d decals=%d destellos=%d pilar=%.0f | géiseres=%d/%d | vivos=%d holderDestruido=%s"):format(
-		"TectonicEruption", R.stats.emits, R.stats.emitted, R.stats.slabs, R.stats.tips, R.stats.cubes, R.stats.decals,
-		R.stats.bills, R.stats.beamMaxW, near, far, R.liveCount(), tostring(R.isDestroyed(holder))))
+	print(("%-17s emits=%d particulas=%d grietas=%d cristales y losas=%d puntas=%d pedazos=%d rocas=%d decals=%d destellos=%d pilar=%.0f | géiseres=%d/%d | vivos=%d holderDestruido=%s"):format(
+		"TectonicEruption", R.stats.emits, R.stats.emitted, cracks, R.stats.slabs, R.stats.tips, R.stats.cubes, R.stats.rocks,
+		R.stats.decals, R.stats.bills, R.stats.beamMaxW, near, edge, R.liveCount(), tostring(R.isDestroyed(holder))))
 	assert(R.stats.cubes > 400, "TectonicEruption: casi no hubo pedazos")
+	assert(R.stats.rocks >= 30, "TectonicEruption: los géiseres no lanzaron rocas en llamas")
 	assert(R.stats.bills >= 5, "TectonicEruption: faltan los destellos gigantes (BillboardGui)")
 	assert(R.stats.beamMaxW > 60, "TectonicEruption: no se armó el pilar de energía (Beams)")
 	assert(R.stats.slabs >= 150 and R.stats.tips >= 60, "TectonicEruption: faltan placas, losas o cristales")
-	assert(R.stats.decals >= 50, "TectonicEruption: faltan las venas o las grietas")
-	for _, nm in { "TectonicCrystal", "Slab", "SlabTip", "Light", "PillarGlow" } do
+	assert(R.stats.decals >= 100, "TectonicEruption: faltan los anillos, las marcas o las venas de las placas")
+	for _, nm in { "TectonicCrystal", "Slab", "SlabTip", "Light", "PillarGlow", "Crack", "Rock" } do
 		assert(R.liveNamed(nm) == 0, "TectonicEruption: quedaron piezas " .. nm)
 	end
 	assert(R.isDestroyed(holder) and hb == 0 and rs == 0, "TectonicEruption: no se limpió")
-	assert(T.Rupture == 1.15 and T.Mountain == 2.75 and T.Detonation == 4.35 and PEB.TectonicEruptionRadius == 150
-		and PEB.TectonicEruptionMountainRadius == 26 and off == 45, "TectonicEruption: faltan los tiempos o los números")
+	assert(T.Roar == 0 and T.Rupture == 1.15 and T.Mountain == 2.75 and T.Detonation == 4.35
+		and PEB.TectonicEruptionRadius == 150 and PEB.TectonicEruptionMountainRadius == 26,
+		"TectonicEruption: faltan los tiempos o los números")
 	assert(math.abs(PEB.TectonicEruptionFrontTime(0) - 1.15) < 1e-6 and math.abs(PEB.TectonicEruptionFrontTime(150) - 1.95) < 1e-6
 		and math.abs(PEB.TectonicEruptionFrontTime(150, 300) - 1.55) < 1e-6, "TectonicEruption: FrontTime no sigue al frente")
 end

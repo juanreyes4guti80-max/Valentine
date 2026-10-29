@@ -191,6 +191,8 @@ def spec_end(spec):
         end = max(end, max(max(B["width_t"][-1][0], B["alpha_t"][-1][0]) for B in spec["zbeams"]))
     if spec.get("zfield"):
         end = max(end, zfield_end(spec["zfield"]))
+    if spec.get("zcracks"):
+        end = max(end, spec["zcracks"]["t_end"])
     return end
 
 
@@ -1279,6 +1281,16 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 					p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
 				end
 				p.Size = L.size
+				if L.L.veins then -- venas que brillan en la cara de arriba (la roca de Pebledon)
+					local V = L.L.veins
+					local d = Instance.new("Decal")
+					d.Face = Enum.NormalId.Top
+					d.Texture = KaijuFireVFX.TEXTURES[V.texture] or ""
+					local glow = (1 + 1.5 * (V.light_emission or 0)) / 255
+					d.Color3 = Color3.new(V.color[1] * glow, V.color[2] * glow, V.color[3] * glow)
+					d.Transparency = V.transparency or 0
+					d.Parent = p
+				end
 				local function copy(name: string, size: Vector3): BasePart
 					local c = bladePart(name, holder)
 					c.Material = p.Material
@@ -2897,6 +2909,70 @@ local function runZoneBeams(spec: Layer, Z: Zone)
 	end)
 end
 
+-- Grietas que corren por el suelo (zcracks): tramos rectos (de Neon) que crecen de su punto de partida a su punto
+-- final entre sus segundos t0 y t1; así una grieta avanza, se ramifica y se cruza con otras. Nacen calientes (hot) y se
+-- enfrían en `birth` s; tr y heat (en segundos desde la llamada) las hacen destellar, latir y apagarse todas a la vez.
+-- segs = {x0, z0, x1, z1, t0, t1, ancho, nivel}: coordenadas en fracciones del radio; con menos calidad se saltan los
+-- niveles altos (0 = fisuras, 1 = ramas, 2 = grietas que las cruzan).
+local function runZoneCracks(C: any, Z: Zone)
+	local holder = Z.holder
+	local segs = C.segs
+	local parts: { [number]: Part } = {}
+	local shaped: { [number]: boolean } = {}
+	local base = Color3.fromRGB(C.color[1], C.color[2], C.color[3])
+	local hot = Color3.fromRGB(C.hot[1], C.hot[2], C.hot[3])
+	local mat = (Enum.Material :: any)[C.material or "Neon"]
+	local maxLevel = KaijuFireVFX.Quality * 2.5
+	local t0 = time()
+	local lastTr, lastHeat = -1, -1
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		local t = time() - t0
+		if not holder.Parent or t > C.t_end then
+			conn:Disconnect()
+			for _, p in parts do
+				p:Destroy()
+			end
+			return
+		end
+		local tr = evalNum(C.tr, t)
+		local heat = evalNum(C.heat, t)
+		local global = math.abs(tr - lastTr) > 0.003 or math.abs(heat - lastHeat) > 0.003
+		lastTr, lastHeat = tr, heat
+		for i, sg in segs do
+			if t < sg[5] or (sg[8] or 0) > maxLevel then
+				continue
+			end
+			local p: Part
+			local had = parts[i]
+			if had then
+				p = had
+			else
+				p = bladePart("Crack", holder)
+				p.Material = mat
+				parts[i] = p
+			end
+			local age = t - sg[5]
+			local grow = t < sg[6]
+			if grow or not shaped[i] then
+				shaped[i] = not grow
+				local ax, az = sg[1] * Z.R, sg[2] * Z.R
+				local dx, dz = sg[3] * Z.R - ax, sg[4] * Z.R - az
+				local full = math.max(math.sqrt(dx * dx + dz * dz), 1e-3)
+				local len = math.max(full * (if grow then age / math.max(sg[6] - sg[5], 1e-3) else 1), 0.05)
+				dx, dz = dx / full, dz / full
+				p.Size = Vector3.new(len, C.thick * Z.s, sg[7] * Z.s)
+				p.CFrame = holder.CFrame * CFrame.new(ax + dx * len / 2, C.height * Z.s, az + dz * len / 2)
+					* CFrame.Angles(0, math.atan2(-dz, dx), 0)
+			end
+			if age < C.birth + 0.05 or global then
+				p.Color = base:Lerp(hot, math.max(heat, 1 - math.min(age / C.birth, 1)))
+				p.Transparency = tr
+			end
+		end
+	end)
+end
+
 -- Cristales y losas que brotan en una zona circular (zfield): cada grupo reparte count piezas entre r = {r0, r1}
 -- (fracción del radio; ring = parejas alrededor del anillo); brotan cuando la onda del centro llega a su radio
 -- (t + sweep·r) y se inclinan hacia afuera (lean = "radial"); con end_at todas terminan a la vez (las de hielo
@@ -2988,6 +3064,12 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 		groundY = holder.Position.Y, groundColor = gColor, groundMaterial = gMaterial,
 	}
 	local spinners: { [number]: BasePart } = {}
+	-- los eventos de las capas (ring_emit) van en una sola cola que recorre un solo Heartbeat (miles de task.delay
+	-- serían miles de hilos)
+	local queue: { { t: number, fn: () -> () } } = {}
+	local function at(t: number, fn: () -> ())
+		table.insert(queue, { t = t, fn = fn })
+	end
 	for _, L in spec.layers do
 		if L.orb then
 			continue -- van pegadas al proyectil (runOrb)
@@ -2995,20 +3077,26 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
 				local lcf = zoneAt(L, Z, zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false))
-				task.delay(ev[1], function()
-					if holder.Parent then
-						playBill(L, Z, k, ev[2], lcf)
-					end
+				at(ev[1], function()
+					playBill(L, Z, k, ev[2], lcf)
 				end)
 			end
 		elseif L.decal then
 			local k = zoneK(L, Z)
 			for _, ev in L.ring_emit or {} do
 				local lcf = zoneAt(L, Z, zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), nil, false))
-				task.delay(ev[1], function()
-					if holder.Parent then
-						playDecalAt(L, holder, k, ev[2], holder.CFrame * lcf)
-					end
+				at(ev[1], function()
+					playDecalAt(L, holder, k, ev[2], holder.CFrame * lcf)
+				end)
+			end
+		elseif L.type == "meteor" then
+			-- rocas de verdad (Parts) con estela que salen de cada punto (p. ej. las que lanza un géiser)
+			for _, ev in L.ring_emit or {} do
+				local lcf = zoneAt(L, Z, zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), L.pitch, L.radial))
+				local n = quality(ev[2])
+				at(ev[1], function()
+					local w = holder.CFrame * lcf
+					launchMeteors(L, holder, Z.s, n, w.Position, Z.groundY, w)
 				end)
 			end
 		elseif L.zstream and L.spin then
@@ -3031,7 +3119,7 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 			for _, ev in L.ring_emit or {} do
 				local lcf = zoneAt(L, Z, zoneLocal(Z, ev[3], ev[4], zoneY(L, Z, ev[5]), L.pitch, L.radial))
 				local n = quality(ev[2])
-				task.delay(ev[1], function()
+				at(ev[1], function()
 					if e.Parent then
 						a.CFrame = lcf
 						e:Emit(n)
@@ -3049,6 +3137,33 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 			end
 		end
 	end
+	if #queue > 0 then
+		table.sort(queue, function(x, y)
+			return x.t < y.t
+		end)
+		local qi = 1
+		local function fire(t: number)
+			while qi <= #queue and queue[qi].t <= t do
+				queue[qi].fn()
+				qi += 1
+			end
+		end
+		fire(0)
+		if qi <= #queue then
+			local q0 = time()
+			local qconn: RBXScriptConnection
+			qconn = RunService.Heartbeat:Connect(function()
+				if not holder.Parent then
+					qconn:Disconnect()
+					return
+				end
+				fire(time() - q0)
+				if qi > #queue then
+					qconn:Disconnect()
+				end
+			end)
+		end
+	end
 	if spec.cubes then
 		playCubes(spec, Z)
 	end
@@ -3057,6 +3172,9 @@ local function startZone(spec: Layer, cf: CFrame, s: number, R: number, H: numbe
 	end
 	if spec.zfield then
 		runZoneField(spec.zfield, Z)
+	end
+	if spec.zcracks then
+		runZoneCracks(spec.zcracks, Z)
 	end
 	zoneLights(spec, Z)
 	return holder, Z
@@ -5656,6 +5774,8 @@ def build(specs, name, doc):
             data["zbeams"] = [norm_zbeam(B) for B in spec["zbeams"]]
         if spec.get("zfield"):
             data["zfield"] = norm_zfield(spec["zfield"])
+        if spec.get("zcracks"):
+            data["zcracks"] = {k: plain(v) for k, v in spec["zcracks"].items()}
         if spec.get("lights"):
             data["lights"] = [plain(Lt) for Lt in spec["lights"]]
         out += f"local SPEC_{key} = " + lua(data) + "\n\n"

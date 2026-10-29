@@ -883,29 +883,105 @@ def crystal_ray(stop=R_STOP):
 CRYSTAL_RAY = crystal_ray()
 
 # ----------------------------------------------------------------------------- ULTIMATE: Erupción tectónica
-# Pebledon hunde los puños en el suelo y es el epicentro: desde él se riegan VENAS TURQUESA por toda la zona (el mundo
-# se oscurece y tiembla, las piedras vibran). El suelo SE ROMPE (T_RUP): placas enormes se levantan inclinadas y de
-# las grietas salen GÉISERES DE FUEGO CIAN en cadena, del centro hacia afuera (el frente tarda SW_RUP s en llegar al
-# borde: ver TectonicEruptionFrontTime). Siguen saliendo géiseres más chicos mientras la tierra arde. Frente a él brota
-# una MONTAÑA DE CRISTAL de más de 100 studs (T_MOUNT) que rompe y levanta las placas de alrededor, se carga de luz y
-# REVIENTA (T_DET) en una lluvia de cristales con un pilar de energía hasta el cielo. La montaña va delante (MT) para
-# no aplastar al que la invoca. Los cristales son marcadores (Parts de Glass y Neon): Meshes.TectonicCrystal (los
-# grandes) y Meshes.CrystalShards (los chicos) los cambian por modelos de Blender; las placas y losas toman el color
-# y el material del suelo (Meshes.TectonicPlates para un modelo de placa).
+# Pebledon RUGE y ese punto es el epicentro (él se puede seguir moviendo: todo sale de donde rugió). El grito sacude
+# el aire en anillos, el suelo responde y desde ahí CORREN GRIETAS DE LUZ TURQUESA por toda la zona: avanzan, se
+# ramifican y se cruzan como bordes de placas (zcracks), con chispas en la punta; el mundo se oscurece y tiembla. El
+# suelo SE ROMPE (T_RUP): placas enormes con venas que brillan se levantan inclinadas y de las grietas salen GÉISERES
+# DE FUEGO CIAN en cadena, del centro hacia afuera (el frente tarda SW_RUP s en llegar al borde: ver
+# TectonicEruptionFrontTime). Cada géiser avisa (brilla, chisporrotea), revienta con un anillo de choque, lanza rocas en
+# llamas y abre arriba como una fuente que cae; después queda ardiendo y humeando. En el centro brota una MONTAÑA DE
+# CRISTAL de más de 100 studs (T_MOUNT) que rompe las placas de alrededor, se carga de luz y REVIENTA (T_DET) en una
+# lluvia de cristales con un pilar de energía hasta el cielo. Los cristales son marcadores (Parts de Glass y Neon):
+# Meshes.TectonicCrystal (los grandes) y Meshes.CrystalShards (los chicos) los cambian por modelos de Blender; las
+# placas y losas toman el color y el material del suelo (Meshes.TectonicPlates para un modelo de placa).
 TR, TH = 150.0, 420.0          # radio de la zona y alto del pilar de energía (escala 1)
+T_CRACK = 0.12                 # las grietas salen del centro, justo después del grito
+CR_SPEED = 1.0                 # lo que avanzan las grietas (fracciones del radio por segundo: 150 studs/s)
 T_RUP = 1.15                   # el suelo se rompe
 SW_RUP = 0.8                   # lo que tarda el frente de la ruptura en llegar al borde
 T_MOUNT = 2.75                 # brota la montaña de cristal
 T_DET = 4.35                   # la montaña revienta
 T_END = T_DET + 2.3
-MT = (0.0, -0.3)               # dónde brota la montaña (fracciones del radio; -Z = hacia donde mira Pebledon)
+MT = (0.0, 0.0)                # dónde brota la montaña (fracciones del radio): en el epicentro
 MOUNT_R = 26.0                 # el golpe de la montaña al brotar (studs a escala 1, alrededor de ella)
-DV = 2 * TR / 0.96             # pb_tectonic_veins: las fisuras llegan al borde de la zona
+MOUTH_UH = 21.0                # alto de la boca de Pebledon (escala 1): ahí sale el grito
 DC = 3.39 * TR                 # kk_circle_02: con este tamaño el anillo queda en el radio
 NIGHT_T = [(0, (8, 20, 22)), (1, (8, 20, 22))]
 SHARD_T = [(0, (190, 255, 252)), (0.5, CRYSTAL), (1, CRYSTAL_MID)]
 DUST_T = [(0, (172, 196, 192)), (0.5, (134, 150, 146)), (1, (104, 112, 108))]
+SMOKE_T = [(0, (96, 110, 108)), (1, (70, 78, 78))]
 TBIG = dict(bill=True, rel="r")
+
+
+def polar(x, z):
+    """(x, z) en fracciones del radio -> (ángulo como fracción de vuelta, radio) para ring_emit."""
+    return round((math.atan2(z, x) / (2 * math.pi)) % 1.0, 4), round(math.hypot(x, z), 4)
+
+
+def tectonic_cracks(g):
+    """La red de grietas: fisuras que salen del centro hasta el borde, ramas y grietas que las cruzan a tres radios
+    (bordes de placas). Devuelve los tramos (x0, z0, x1, z1, t0, t1, ancho, nivel) en fracciones del radio, con
+    cuándo crece cada uno, y los puntos de las grietas (x, z, t, nivel) para los géiseres y las chispas."""
+    segs, verts = [], []
+
+    def dist(p, q):
+        return math.hypot(q[0] - p[0], q[1] - p[1])
+
+    def add(pts, ts, w0, w1, lvl):
+        for i in range(len(pts) - 1):
+            u = i / max(1, len(pts) - 2)
+            segs.append((round(pts[i][0], 4), round(pts[i][1], 4), round(pts[i + 1][0], 4), round(pts[i + 1][1], 4),
+                         round(ts[i], 3), round(ts[i + 1], 3), round(w0 + (w1 - w0) * u, 2), lvl))
+        verts.extend((x, z, t, lvl) for (x, z), t in zip(pts[1:], ts[1:]))
+
+    K = 10
+    mains = []
+    for k in range(K):
+        a0 = 2 * math.pi * k / K + g.uniform(-0.12, 0.12)
+        sp = CR_SPEED * g.uniform(0.88, 1.12)
+        pts, ang, r = [(0.025 * math.cos(a0), 0.025 * math.sin(a0))], a0, 0.025
+        while r < 0.97:
+            r = min(0.98, r + 0.06)
+            ang += g.gauss(0, 0.09) + 0.3 * (a0 - ang)        # se tuerce pero sigue hacia afuera
+            pts.append((r * math.cos(ang) + g.gauss(0, 0.006), r * math.sin(ang) + g.gauss(0, 0.006)))
+        ts = [T_CRACK]
+        for i in range(1, len(pts)):
+            ts.append(ts[-1] + dist(pts[i - 1], pts[i]) / sp)
+        add(pts, ts, 2.4, 0.8, 0)
+        mains.append((pts, ts, sp))
+    for pts, ts, sp in mains:                              # ramas que salen de las fisuras
+        for i in range(3, len(pts) - 2):
+            if g.random() < 0.18:
+                (x, z), t = pts[i], ts[i]
+                ang = math.atan2(pts[i + 1][1] - z, pts[i + 1][0] - x) + g.choice([-1, 1]) * g.uniform(0.5, 1.0)
+                step = g.uniform(0.08, 0.2) / 4
+                bp, bt = [(x, z)], [t]
+                for _ in range(4):
+                    ang += g.gauss(0, 0.25)
+                    bp.append((bp[-1][0] + step * math.cos(ang), bp[-1][1] + step * math.sin(ang)))
+                    bt.append(bt[-1] + step / sp)
+                add(bp, bt, 1.0, 0.5, 1)
+
+    def near(pts, ts, rf):
+        i = min(range(len(pts)), key=lambda j: abs(math.hypot(*pts[j]) - rf))
+        return pts[i], ts[i]
+    for rf, prob in ((0.33, 0.8), (0.58, 0.7), (0.82, 0.6)):   # bordes de placas: de una fisura a la vecina
+        for k in range(K):
+            if g.random() < prob:
+                p0, t0 = near(mains[k][0], mains[k][1], rf * g.uniform(0.92, 1.08))
+                p1, _ = near(mains[(k + 1) % K][0], mains[(k + 1) % K][1], rf * g.uniform(0.92, 1.08))
+                L = dist(p0, p1)
+                nx, nz = -(p1[1] - p0[1]) / L, (p1[0] - p0[0]) / L
+                cp = [p0] + [(p0[0] + (p1[0] - p0[0]) * j / 5 + nx * off, p0[1] + (p1[1] - p0[1]) * j / 5 + nz * off)
+                             for j, off in ((j, g.gauss(0, 0.07 * L)) for j in range(1, 5))] + [p1]
+                ct = [t0 + 0.04]
+                for j in range(1, len(cp)):
+                    ct.append(ct[-1] + dist(cp[j - 1], cp[j]) / CR_SPEED)
+                add(cp, ct, 0.9, 0.9, 2)
+    return segs, verts
+
+
+CRACK_SEGS, CRACK_VERTS = tectonic_cracks(random.Random(61))
 
 
 def zscatter(g, count, t, r, h, n=1, area=True):
@@ -925,21 +1001,55 @@ def tfront(r):
 
 
 def geysers(g):
-    """Los géiseres: (segundo, ángulo, radio, fuerza). La ola grande va con el frente; después salen más chicos."""
+    """Los géiseres salen de las grietas: (segundo, ángulo, radio, fuerza). La ola grande va con el frente; después
+    salen más chicos. Se reparten por puntos de las grietas sin amontonarse."""
+    pts = [(x, z) for (x, z, t, lvl) in CRACK_VERTS if 0.12 <= math.hypot(x, z) <= 0.97]
+    g.shuffle(pts)
+    used = []
+
+    def pick(n, gap):
+        out = []
+        for (x, z) in pts:
+            if len(out) >= n:
+                break
+            if all(math.hypot(x - u, z - v) > gap for (u, v) in used):
+                used.append((x, z))
+                out.append(polar(x, z))
+        return out
     out = []
-    for _ in range(56):
-        r = g.uniform(0.1 ** 2, 0.97 ** 2) ** 0.5
-        out.append((tfront(r) + g.uniform(0.0, 0.06), g.random(), r, 1.0))
-    for _ in range(24):
-        r = g.uniform(0.15 ** 2, 0.95 ** 2) ** 0.5
-        out.append((T_RUP + 0.55 + 0.45 * r + g.uniform(0.0, 0.3), g.random(), r, 0.7))
-    for _ in range(16):
-        r = g.uniform(0.15 ** 2, 0.9 ** 2) ** 0.5
-        out.append((g.uniform(T_RUP + 1.0, T_MOUNT - 0.1), g.random(), r, 0.55))
+    for (a, r) in pick(48, 0.085):
+        out.append((tfront(r) + g.uniform(0.0, 0.06), a, r, 1.0))
+    for (a, r) in pick(20, 0.06):
+        out.append((T_RUP + 0.55 + 0.45 * r + g.uniform(0.0, 0.3), a, r, 0.7))
+    for (a, r) in pick(14, 0.05):
+        out.append((g.uniform(T_RUP + 1.0, T_MOUNT - 0.1), a, r, 0.55))
     return sorted(out)
 
 
-GSUB = (0.0, 0.06, 0.12, 0.18, 0.26, 0.34, 0.42)   # un géiser es un chorro que dura ~0.45 s: varias ráfagas seguidas
+def geyser_trail():
+    """La estela de una roca en llamas: fuego cian y humo."""
+    return [{"name": "BoulderFire", "rate": 20, "texture": "fx_fire_2x2", "flipbook": STATIC2x2, "speed": (0, 2),
+             "direction": "Top", "spread": (180, 180), "drag": 2, "lifetime": (0.25, 0.4),
+             "size": [(0, 2.6, 0.6), (1, 0.8)], "transparency": [(0, 0.15), (0.6, 0.45), (1, 1)], "color": FLAME,
+             "light_emission": 1.0, "brightness": 1.5, "rotation": (0, 360)},
+            {"name": "BoulderSmoke", "rate": 6, "texture": "kk_smoke_04", "speed": (0, 2), "direction": "Top",
+             "spread": (180, 180), "drag": 2, "lifetime": (0.4, 0.7), "size": [(0, 2.4, 0.5), (1, 6, 1)],
+             "transparency": [(0, 0.55), (0.5, 0.68), (1, 1)], "color": DUST_DARK, "rotation": (0, 360)}]
+
+
+GEYSER_LAND = [dict(name="BoulderPuff", texture="kk_smoke_04", emit=[(0, 2)], direction="Top", spread=(70, 70),
+                    speed=(4, 9), drag=2, lifetime=(0.6, 0.9), size=[(0, 4, 1), (1, 9, 2)],
+                    transparency=[(0, 0.45), (0.5, 0.62), (1, 1)], color=DUST, rotation=(0, 360)),
+               dict(name="BoulderFlames", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, emit=[(0, 2)],
+                    direction="Top", spread=(15, 15), speed=(3, 7), accel=(0, 8, 0), lifetime=(0.4, 0.6),
+                    size=[(0, 1.5, 0.5), (0.3, 4, 1), (1, 1)], transparency=[(0, 0.2), (0.6, 0.45), (1, 1)],
+                    color=FLAME, light_emission=1.0, brightness=1.45, rotation=(-10, 10)),
+               dict(name="BoulderSparks", texture="fx_spark002", emit=[(0, 3)], direction="Top", spread=(60, 60),
+                    speed=(8, 16), drag=1, accel=(0, -30, 0), lifetime=(0.3, 0.5), size=twinkle(0.4), color=GLINT,
+                    light_emission=1.0, brightness=1.8, rotation=(0, 45))]
+
+
+GSUB = (0.0, 0.08, 0.16, 0.26, 0.38)   # un géiser es un chorro que dura ~0.45 s: varias ráfagas seguidas
 
 
 def gev(G, n, h, only_big=False, subs=(0.0,)):
@@ -957,71 +1067,83 @@ def gev(G, n, h, only_big=False, subs=(0.0,)):
 
 def tectonic_layers(g):
     LIFE = T_END - 0.36                    # lo que duran las marcas grandes del suelo
-
-    def fr(t, t0=0.06, life=LIFE):         # segundo t -> fracción de la vida de una marca que nace en t0
-        return round((t - t0) / life, 4)
     G = geysers(g)
     pulses = [zc(round(T_MOUNT + 0.35 + 0.3 * i, 3), 0.24)[0] for i in range(int((T_DET - T_MOUNT - 0.45) / 0.3))]
+    # la punta de cada grieta mientras avanza: un brillo al empezar cada tramo (todos en las fisuras, la mitad en las
+    # ramas y los cruces)
+    HEADS = sorted((round(sg[4], 3), 1, *polar(sg[0], sg[1]), 0.6) for i, sg in enumerate(CRACK_SEGS)
+                   if sg[7] == 0 or i % 2 == 0)
     L = [
-        # ================= el golpe de los puños (en el centro, donde está Pebledon) =================
-        dict(name="SlamFlash", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 10), (0.25, 75), (1, 85)],
-             transparency=[(0, 0.3), (0.5, 0.6), (1, 1)], color=TURQ, light_emission=1.0, brightness=1.2, zoffset=4,
-             ring_emit=zc(0.02, 8)),
-        dict(name="SlamStar", texture="kk_star_09", lifetime=(0.3, 0.3), size=[(0, 10), (0.2, 95), (1, 15)],
-             color=GLINT, light_emission=1.0, brightness=1.6, rotation=(0, 90), zoffset=5, ring_emit=zc(0.03, 8)),
+        # ================= el grito: Pebledon ruge y ese punto es el epicentro =================
+        dict(name="RoarFlash", texture="fx_glow", lifetime=(0.35, 0.35), size=[(0, 10), (0.25, 70), (1, 85)],
+             transparency=[(0, 0.3), (0.5, 0.6), (1, 1)], color=TURQ, light_emission=1.0, brightness=1.3, zoffset=4,
+             ring_emit=zc(0.0, MOUTH_UH)),
+        dict(name="RoarStar", texture="kk_star_09", lifetime=(0.3, 0.3), size=[(0, 10), (0.2, 90), (1, 14)],
+             color=GLINT, light_emission=1.0, brightness=1.6, rotation=(0, 90), zoffset=5, ring_emit=zc(0.02, MOUTH_UH)),
+        # el grito sacude el aire: anillos planos que se abren a la altura de la boca
+        dict(name="RoarRings", texture="pb_sonic_ring", rel="r", lifetime=(0.6, 0.6),
+             size=[(0, 0.12 * TR), (1, 1.7 * TR)], transparency=[(0, 0.15), (0.6, 0.5), (1, 1)], color=TURQ,
+             light_emission=1.0, ring_emit=[(0.0, 1, 0.0, 0.0, MOUTH_UH - 1.5), (0.1, 1, 0.0, 0.0, MOUTH_UH - 1.0),
+                                            (0.2, 1, 0.0, 0.0, MOUTH_UH - 0.5)], **DECAL),
+        dict(name="RoarShout", texture="kk_trace_01", orientation="VelocityParallel", direction="Front", spread=(6, 10),
+             speed=(90, 140), drag=2, lifetime=(0.3, 0.45), size=[(0, 6), (0.3, 24), (1, 10)], color=GLINT,
+             light_emission=1.0, brightness=1.7, ring_emit=zring(0.02, 24, 0.02, MOUTH_UH)),
+        # el suelo responde bajo él
+        dict(name="SlamFlash", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 10), (0.25, 60), (1, 70)],
+             transparency=[(0, 0.4), (0.5, 0.65), (1, 1)], color=TURQ, light_emission=1.0, brightness=1.1, zoffset=3,
+             ring_emit=zc(0.06, 3)),
         dict(name="SlamRing", texture="kk_circle_02", rel="r", lifetime=(0.55, 0.55),
              size=[(0, 0.04 * DC), (1, 0.42 * DC)], transparency=[(0, 0.1), (0.6, 0.45), (1, 1)], color=TURQ,
-             light_emission=0.9, ring_emit=zc(0.02, 0.2), **DECAL),
+             light_emission=0.9, ring_emit=zc(0.06, 0.2), **DECAL),
         dict(name="SlamDust", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Front", pitch=10,
              spread=(12, 8), speed=(40, 70), drag=2.5, accel=(0, 2, 0), lifetime=(1.0, 1.5),
              size=[(0, 8, 2), (1, 26, 4)], transparency=[(0, 0.35), (0.35, 0.55), (1, 1)], color=DUST,
-             rotation=(0, 360), rot_speed=(-30, 30), ring_emit=zring(0.03, 24, 0.05, 4.0)),
+             rotation=(0, 360), rot_speed=(-30, 30), ring_emit=zring(0.07, 24, 0.05, 4.0)),
         dict(name="SlamChips", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(55, 55),
              speed=(30, 60), drag=0.4, accel=(0, -150, 0), lifetime=(0.6, 1.0), size=[(0, 2.0, 0.7), (1, 1.6, 0.5)],
-             color=EARTH, rotation=(0, 360), rot_speed=(-400, 400), radial=False, ring_emit=zc(0.02, 1, 30)),
+             color=EARTH, rotation=(0, 360), rot_speed=(-400, 400), radial=False, ring_emit=zc(0.06, 1, 30)),
         dict(name="SlamCracks", texture="pb_vein_cracks", lifetime=(LIFE, LIFE), rotation=(0, 360),
-             size=[(0, 10), (0.01, 70), (1, 72)], transparency=[(0, 1), (0.005, 0.25), (0.9, 0.4), (1, 1)],
-             color=[(0, (110, 236, 232)), (1, CRYSTAL_MID)], light_emission=0.9, ring_emit=zc(0.03, 0.24), **DECAL),
-
-        # ================= las venas se riegan por toda la zona; el suelo se oscurece =================
+             size=[(0, 10), (0.01, 50), (1, 52)], transparency=[(0, 1), (0.005, 0.3), (0.9, 0.45), (1, 1)],
+             color=[(0, (110, 236, 232)), (1, CRYSTAL_MID)], light_emission=0.9, ring_emit=zc(0.07, 0.24), **DECAL),
+        # el suelo se oscurece
         dict(name="ZoneShade", texture="fx_glow", rel="r", lifetime=(LIFE, LIFE),
              size=[(0, 0.5 * TR), (0.1, 2.6 * TR), (1, 2.7 * TR)], transparency=[(0, 1), (0.08, 0.42), (0.85, 0.5),
                                                                                  (1, 1)],
              color=NIGHT_T, ring_emit=zc(0.05, 0.08), **DECAL),
-        dict(name="VeinsDark", texture="pb_tectonic_veins", rel="r", lifetime=(LIFE, LIFE), rotation=(0, 0),
-             size=[(0, 0.06 * DV), (fr(1.0), 1.01 * DV), (1, 1.01 * DV)],
-             transparency=[(0, 1), (0.005, 0.35), (0.9, 0.45), (1, 1)], color=CRACK_DARK, ring_emit=zc(0.06, 0.18),
-             **DECAL),
-        dict(name="Veins", texture="pb_tectonic_veins", rel="r", lifetime=(LIFE, LIFE), rotation=(0, 0),
-             size=[(0, 0.06 * DV), (fr(1.0), DV), (1, DV)],
-             transparency=[(0, 1), (0.005, 0.2), (fr(T_RUP - 0.05), 0.15), (fr(T_RUP + 0.1), 0.0), (fr(T_MOUNT), 0.12),
-                           (fr(T_DET), 0.05), (fr(T_DET + 0.6), 0.4), (0.92, 0.6), (1, 1)],
-             color=[(0, (170, 255, 250)), (1, CRYSTAL)], light_emission=1.0, ring_emit=zc(0.06, 0.25), **DECAL),
-        # las venas destellan cuando el suelo se rompe y laten mientras la montaña se carga
-        dict(name="VeinsFlash", texture="pb_tectonic_veins", rel="r", lifetime=(0.6, 0.6), rotation=(0, 0),
-             size=[(0, DV), (1, 1.02 * DV)], transparency=[(0, 0.0), (1, 1)], color=GLINT, light_emission=1.0,
-             ring_emit=zc(T_RUP, 0.3), **DECAL),
-        dict(name="VeinsPulse", texture="pb_tectonic_veins", rel="r", lifetime=(0.35, 0.35), rotation=(0, 0),
-             size=[(0, DV), (1, DV)], transparency=[(0, 0.45), (1, 1)], color=GLINT, light_emission=1.0,
-             ring_emit=[(t, 1, a, r, 0.31) for (t, _, a, r, _) in pulses], **DECAL),
-        dict(name="CenterGlow", texture="fx_glow", lifetime=(1.1, 1.1), size=[(0, 30), (0.5, 70), (1, 40)],
-             transparency=[(0, 0.6), (0.5, 0.3), (1, 1)], color=TURQ, light_emission=1.0, ring_emit=zc(0.05, 0.3),
-             **DECAL),
-        # llamitas cian que brotan de las venas a medida que llegan (más lejos, más tarde)
+        # ================= las grietas corren (las grietas son tramos de Neon: zcracks): la punta brilla y suelta
+        # chispas, se levanta polvo y saltan piedritas; detrás brotan llamitas cian y suben brasas =================
+        dict(name="CrackHeads", texture="fx_glow", lifetime=(0.18, 0.18), size=[(0, 3), (0.3, 9), (1, 4)],
+             transparency=[(0, 0.2), (1, 1)], color=GLINT, light_emission=1.0, brightness=1.6, zoffset=2, radial=False,
+             ring_emit=HEADS),
+        dict(name="CrackSparks", texture="fx_spark002", direction="Top", spread=(40, 40), speed=(10, 24), drag=1.5,
+             accel=(0, -20, 0), lifetime=(0.3, 0.6), size=twinkle(0.5), color=GLINT, light_emission=1.0,
+             brightness=1.9, rotation=(0, 45), radial=False, ring_emit=[(t, 2, a, r, h) for (t, _, a, r, h) in HEADS]),
+        dict(name="CrackDust", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Top", spread=(40, 40),
+             speed=(3, 8), drag=1.5, lifetime=(0.7, 1.0), size=[(0, 3, 1), (1, 9, 2)],
+             transparency=[(0, 0.55), (0.4, 0.7), (1, 1)], color=DUST, rotation=(0, 360), radial=False,
+             ring_emit=[(t, 1, a, r, 3.0) for (t, _, a, r, _) in HEADS[::2]]),
+        dict(name="CrackChips", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(30, 30),
+             speed=(15, 30), accel=(0, -150, 0), lifetime=(0.4, 0.7), size=[(0, 0.9, 0.3), (1, 0.7, 0.2)],
+             color=EARTH, rotation=(0, 360), rot_speed=(-400, 400), radial=False,
+             ring_emit=[(t, 2, a, r, 0.4) for (t, _, a, r, _) in HEADS[1::2]]),
         dict(name="VeinFlames", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, direction="Top", spread=(12, 12),
              speed=(5, 12), accel=(0, 8, 0), lifetime=(0.4, 0.7), size=[(0, 2, 0.6), (0.3, 5.5, 1.2), (1, 1.5)],
              transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
              rotation=(-10, 10), radial=False,
-             ring_emit=[(round(0.08 + 0.95 * r + g.uniform(0, 0.15), 3), n, a, r, h)
-                        for (_, n, a, r, h) in zscatter(g, 150, 0.0, (0.04, 0.98), 0.3)]),
+             ring_emit=[(round(t + g.uniform(0.05, 0.3), 3), 1, *polar(x, z), 0.3)
+                        for (x, z, t, lvl) in g.sample(CRACK_VERTS, 120)]),
         dict(name="ChargeSparks", texture="fx_spark002", direction="Top", spread=(20, 20), speed=(8, 20), drag=1,
              accel=(0, 4, 0), lifetime=(0.8, 1.4), size=twinkle(0.55), color=GLINT, light_emission=1.0,
-             brightness=1.9, rotation=(0, 45), radial=False, ring_emit=zscatter(g, 120, (0.1, T_RUP), (0.03, 1.0),
-                                                                                 (0.5, 3.0))),
+             brightness=1.9, rotation=(0, 45), radial=False,
+             ring_emit=[(round(min(T_RUP, t + g.uniform(0.1, 0.6)), 3), 1, *polar(x, z), round(g.uniform(0.5, 2.0), 2))
+                        for (x, z, t, lvl) in g.sample(CRACK_VERTS, 110)]),
         dict(name="ChargeDust", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Top", spread=(40, 40),
              speed=(2, 6), drag=1, lifetime=(1.0, 1.4), size=[(0, 6, 1), (1, 14, 2)],
              transparency=[(0, 0.55), (0.4, 0.68), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-20, 20),
              radial=False, ring_emit=zscatter(g, 40, (0.2, T_RUP), (0.1, 1.0), 5.0)),
+        dict(name="CenterGlow", texture="fx_glow", lifetime=(1.1, 1.1), size=[(0, 30), (0.5, 60), (1, 40)],
+             transparency=[(0, 0.6), (0.5, 0.35), (1, 1)], color=TURQ, light_emission=1.0, ring_emit=zc(0.05, 0.3),
+             **DECAL),
 
         # ================= la ruptura: el frente que sale del centro, las placas y los géiseres =================
         dict(name="RuptureFlash", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 40), (0.2, 1.5 * TR),
@@ -1036,8 +1158,27 @@ def tectonic_layers(g):
              size=[(0, 0.04 * DC), (round(SW_RUP / (SW_RUP + 0.1), 4), DC), (1, 1.03 * DC)],
              transparency=[(0, 0.0), (0.85, 0.4), (1, 1)], color=GLINT, light_emission=1.0,
              ring_emit=zc(T_RUP, 0.22), **DECAL),
-        # cada géiser: un chorro de fuego cian de unos 50 studs que sale varias veces seguidas (una columna, no una
-        # bola), con lenguas y rayas que suben rápido, fuego en la base, destello, rocas y polvo
+        # cada géiser: AVISA (la grieta brilla, chisporrotea y saltan piedritas), REVIENTA (destello, anillo de choque,
+        # rocas en llamas y rocas con venas), sale el CHORRO de fuego cian de unos 50 studs (varias ráfagas seguidas:
+        # una columna, con una garganta blanca y lenguas que suben rápido) que ABRE ARRIBA COMO UNA FUENTE y cae en
+        # gotas de fuego; DESPUÉS la boca queda ardiendo y humeando
+        dict(name="VentGlow", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 4), (1, 18)],
+             transparency=[(0, 0.75), (0.8, 0.1), (1, 1)], color=TURQ, light_emission=1.0, radial=False,
+             ring_emit=[(max(0.0, round(t - 0.27, 3)), 1, a, r, 0.27) for (t, a, r, k) in G], **DECAL),
+        dict(name="VentHiss", texture="fx_spark002", direction="Top", spread=(20, 20), speed=(12, 30), drag=1,
+             lifetime=(0.3, 0.5), size=twinkle(0.45), color=GLINT, light_emission=1.0, brightness=1.9, rotation=(0, 45),
+             radial=False, ring_emit=[(max(0.0, round(t - 0.22, 3)), max(1, round(3 * k)), a, r, 0.4)
+                                      for (t, a, r, k) in G]),
+        dict(name="VentPop", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(25, 25),
+             speed=(8, 18), accel=(0, -150, 0), lifetime=(0.3, 0.5), size=[(0, 1.0, 0.3), (1, 0.8, 0.2)], color=EARTH,
+             rotation=(0, 360), rot_speed=(-400, 400), radial=False,
+             ring_emit=[(max(0.0, round(t - 0.18, 3)), 3, a, r, 0.4) for (t, a, r, k) in G if k >= 0.7]),
+        dict(name="GeyserFlash", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 6), (0.25, 28), (1, 32)],
+             transparency=[(0, 0.25), (0.5, 0.6), (1, 1)], color=TURQ, light_emission=1.0, zoffset=2, radial=False,
+             ring_emit=gev(G, 1, 2.0)),
+        dict(name="GeyserRing", texture="kk_circle_02", lifetime=(0.32, 0.32), size=[(0, 4), (1, 36)],
+             transparency=[(0, 0.15), (0.6, 0.5), (1, 1)], color=TURQ, light_emission=1.0, radial=False,
+             ring_emit=gev(G, 1, 0.28), **DECAL),
         dict(name="GeyserJet", texture="fx_fire_2x2", flipbook=STATIC2x2, direction="Top", spread=(5, 5),
              speed=(100, 150), drag=1.6, accel=(0, 10, 0), lifetime=(0.55, 0.8),
              size=[(0, 6, 1.5), (0.3, 9, 2), (1, 3)], transparency=[(0, 0.1), (0.7, 0.4), (1, 1)], color=FLAME,
@@ -1049,36 +1190,63 @@ def tectonic_layers(g):
              light_emission=1.0, brightness=1.5, radial=False, ring_emit=gev(G, 1, 0.5, subs=GSUB)),
         dict(name="GeyserCore", texture="kk_trace_01", orientation="VelocityParallel", direction="Top", spread=(3, 3),
              speed=(140, 200), drag=2.5, lifetime=(0.3, 0.45), size=[(0, 8), (0.3, 26), (1, 12)], color=GLINT,
-             light_emission=1.0, brightness=1.8, radial=False, ring_emit=gev(G, 1, 0.5, subs=GSUB[:4])),
+             light_emission=1.0, brightness=1.8, radial=False, ring_emit=gev(G, 1, 0.5, subs=GSUB[:3])),
+        dict(name="GeyserThroat", texture="kk_trace_01", orientation="VelocityParallel", direction="Top", spread=(8, 8),
+             speed=(60, 95), drag=3, lifetime=(0.12, 0.2), size=[(0, 3), (0.4, 9), (1, 4)],
+             color=[(0, (255, 255, 255)), (1, (185, 255, 250))], light_emission=1.0, brightness=2.0, radial=False,
+             ring_emit=gev(G, 1, 0.4, subs=GSUB[:3])),
         dict(name="GeyserBase", texture="fx_fire_2x2", flipbook=STATIC2x2, direction="Top", spread=(30, 30),
              speed=(6, 14), drag=2, accel=(0, 6, 0), lifetime=(0.4, 0.6), size=[(0, 6, 1), (0.3, 12, 2), (1, 4)],
              transparency=[(0, 0.15), (0.6, 0.42), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
              rotation=(0, 360), radial=False, ring_emit=gev(G, 1, 1.5, subs=GSUB[::2])),
-        dict(name="GeyserFlash", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 6), (0.25, 26), (1, 30)],
-             transparency=[(0, 0.3), (0.5, 0.6), (1, 1)], color=TURQ, light_emission=1.0, zoffset=2, radial=False,
-             ring_emit=gev(G, 1, 2.0)),
-        dict(name="GeyserRocks", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(30, 30),
-             speed=(40, 80), drag=0.4, accel=(0, -150, 0), lifetime=(0.8, 1.3), size=[(0, 2.2, 0.8), (1, 1.8, 0.6)],
-             color=EARTH, rotation=(0, 360), rot_speed=(-400, 400), radial=False, ring_emit=gev(G, 5, 0.6)),
+        # arriba abre como una fuente: fuego y gotas que suben, se frenan y caen alrededor
+        dict(name="GeyserCrown", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, orientation="VelocityParallel",
+             direction="Top", spread=(18, 18), speed=(90, 125), drag=0.4, accel=(0, -140, 0), lifetime=(1.3, 1.7),
+             size=[(0, 2.5, 0.6), (0.25, 4, 0.8), (1, 1.2)], transparency=[(0, 0.15), (0.75, 0.45), (1, 1)],
+             color=FLAME, light_emission=1.0, brightness=1.5, radial=False, ring_emit=gev(G, 1, 0.6, subs=(0.05, 0.15, 0.25))),
+        dict(name="GeyserDrops", texture="fx_spark002", direction="Top", spread=(22, 22), speed=(80, 120), drag=0.3,
+             accel=(0, -140, 0), lifetime=(1.0, 1.4), size=twinkle(0.6), color=GLINT, light_emission=1.0,
+             brightness=1.9, rotation=(0, 45), radial=False, ring_emit=gev(G, 2, 0.6, subs=(0.08, 0.22))),
+        # rocas: con venas turquesa (partículas) y rocas de verdad en llamas que vuelan y caen (Parts con estela)
+        dict(name="GeyserRocks", texture="pb_rock_2x2", flipbook=STATIC2x2, direction="Top", spread=(35, 35),
+             speed=(40, 85), drag=0.3, accel=(0, -150, 0), lifetime=(0.9, 1.4), size=[(0, 2.6, 0.9), (1, 2.2, 0.7)],
+             transparency=[(0, 0), (0.85, 0), (1, 1)], rotation=(0, 360), rot_speed=(-300, 300), radial=False,
+             ring_emit=gev(G, 3, 0.6)),
+        dict(name="GeyserBoulders", type="meteor", direction="Top", spread=(32, 32), speed=(55, 90),
+             accel=(0, -160, 0), drag=0.1, lifetime=(2.2, 2.2),
+             sprite={"texture": "om_cubes_2x2", "layout": "Grid2x2", "size": (1.8, 3.4), "aspect": (1.0, 0.85, 1.0),
+                     "cube": True, "ground": True, "color": SLAB_RGB, "color_var": (0.8, 1.1),
+                     "rot_speed": (-420, 420), "material": "Slate", "stick": 0.8, "sink": 0.2},
+             trails=geyser_trail(), land=GEYSER_LAND, shatter=ROCK_CRUMBLE, radial=False,
+             ring_emit=gev(G, 1, 1.0, only_big=True)),
         dict(name="GeyserSteam", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Top", spread=(40, 40),
              speed=(10, 20), drag=2, accel=(0, 3, 0), lifetime=(0.8, 1.2), size=[(0, 8, 2), (1, 20, 3)],
              transparency=[(0, 0.45), (0.4, 0.6), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-30, 30),
-             radial=False, ring_emit=gev(G, 2, 6.0)),
+             radial=False, ring_emit=gev(G, 1, 6.0)),
+        # después: la boca queda ardiendo y humeando
+        dict(name="VentFlames", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, direction="Top", spread=(12, 12),
+             speed=(4, 10), accel=(0, 8, 0), lifetime=(0.35, 0.6), size=[(0, 2, 0.6), (0.3, 6, 1.2), (1, 1.5)],
+             transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
+             rotation=(-10, 10), radial=False, ring_emit=gev(G, 1, 0.4, subs=(0.5, 0.75, 1.0))),
+        dict(name="VentSmoke", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Top", spread=(15, 15),
+             speed=(6, 12), drag=0.8, accel=(0, 3, 0), lifetime=(1.6, 2.2), size=[(0, 6, 1), (1, 20, 3)],
+             transparency=[(0, 0.6), (0.3, 0.68), (1, 1)], color=SMOKE_T, rotation=(0, 360), rot_speed=(-20, 20),
+             radial=False, ring_emit=gev(G, 1, 8.0, only_big=True, subs=(0.4, 0.8))),
         dict(name="GeyserScorch", texture="pb_vein_cracks", lifetime=(T_DET + 1.4 - T_RUP, T_DET + 1.4 - T_RUP),
-             rotation=(0, 360), size=[(0, 6), (0.03, 22, 4), (1, 23, 4)],
-             transparency=[(0, 1), (0.02, 0.2), (0.85, 0.35), (1, 1)], color=[(0, (130, 245, 240)), (1, CRYSTAL_MID)],
-             light_emission=0.9, radial=False, ring_emit=gev(G, 1, 0.26, only_big=True), **DECAL),
+             rotation=(0, 360), size=[(0, 5), (0.03, 16, 3), (1, 17, 3)],
+             transparency=[(0, 1), (0.02, 0.4), (0.85, 0.5), (1, 1)], color=[(0, (130, 245, 240)), (1, CRYSTAL_MID)],
+             light_emission=0.7, radial=False, ring_emit=gev(G, 1, 0.26, only_big=True), **DECAL),
         # la tierra arde entre las placas: llamas y brasas por toda la zona hasta que revienta la montaña
         dict(name="CrackFlames", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, zdist={"r": (0.05, 1.0), "h": (0.3, 0.8),
                                                                                          "area": True},
              direction="Top", spread=(10, 10), speed=(4, 10), accel=(0, 8, 0), lifetime=(0.4, 0.7),
              size=[(0, 2.5, 0.8), (0.3, 7, 1.5), (1, 2)], transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=FLAME,
              light_emission=1.0, brightness=1.45, rotation=(-10, 10), radial=False,
-             zstream=[(T_RUP + 0.2, T_RUP + 0.8, 50, 150), (T_RUP + 0.8, T_DET, 150, 150), (T_DET, T_DET + 0.8, 150, 0)]),
+             zstream=[(T_RUP + 0.2, T_RUP + 0.8, 40, 100), (T_RUP + 0.8, T_DET, 100, 100), (T_DET, T_DET + 0.8, 100, 0)]),
         dict(name="ZoneEmbers", texture="fx_spark002", zdist={"r": (0.0, 1.0), "h": (0.5, 6.0), "area": True},
              direction="Top", spread=(25, 25), speed=(8, 18), drag=1, accel=(0, 5, 0), lifetime=(1.0, 1.8),
              size=twinkle(0.55), color=GLINT, light_emission=1.0, brightness=1.9, rotation=(0, 45), radial=False,
-             zstream=[(T_RUP + 0.2, T_DET + 0.5, 100, 100), (T_DET + 0.5, T_DET + 1.4, 100, 0)]),
+             zstream=[(T_RUP + 0.2, T_DET + 0.5, 70, 70), (T_DET + 0.5, T_DET + 1.4, 70, 0)]),
         dict(name="PlateDust", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Top", spread=(60, 60),
              speed=(8, 18), drag=2, accel=(0, 3, 0), lifetime=(1.0, 1.6), size=[(0, 10, 2), (1, 26, 4)],
              transparency=[(0, 0.45), (0.4, 0.6), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-30, 30),
@@ -1089,7 +1257,7 @@ def tectonic_layers(g):
              size=[(0, 14, 3), (1, 38, 5)], transparency=[(0, 0.4), (0.35, 0.58), (1, 1)], color=DUST,
              rotation=(0, 360), rot_speed=(-30, 30), zoffset=-2, ring_emit=zring(tfront(0.95), 40, 0.97, 9.0)),
 
-        # ================= la montaña de cristal brota delante de él (at = MT) =================
+        # ================= la montaña de cristal brota en el epicentro (at = MT) =================
         dict(name="PreGlow", texture="fx_glow", at=MT, lifetime=(0.6, 0.6), size=[(0, 20), (1, 75)],
              transparency=[(0, 0.85), (0.8, 0.2), (1, 1)], color=TURQ, light_emission=1.0,
              ring_emit=zc(T_MOUNT - 0.55, 0.3), **DECAL),
@@ -1221,6 +1389,8 @@ PLATE_BREAK = [dict(name="PlateBreak", texture="om_cubes_2x2", flipbook=STATIC2x
                     shape={"type": "Box", "size": (12, 3, 12)}, direction="Top", spread=(60, 60), speed=(8, 18),
                     drag=2, accel=(0, 3, 0), lifetime=(1.0, 1.4), size=[(0, 10, 2), (1, 24, 3)],
                     transparency=[(0, 0.4), (0.4, 0.58), (1, 1)], color=DUST, rotation=(0, 360))]
+# las venas que brillan en la cara de arriba de las placas (la roca de Pebledon)
+PLATE_VEINS = {"texture": "pb_vein_cracks", "color": CRYSTAL, "light_emission": 1.0, "transparency": 0.2}
 TECTONIC_FIELD = {
     "seed": 47,
     "groups": [
@@ -1229,13 +1399,13 @@ TECTONIC_FIELD = {
          "wid": (16.0, 28.0), "thick": (3.5, 6.5), "len": (16.0, 30.0), "tilt": (12, 34), "yaw": 20, "pitch": 8,
          "show": 0.55, "rise": 0.16, "t": T_RUP + 0.02, "sweep": SW_RUP, "delay": (0.0, 0.06), "sink": 0.9,
          "end_at": (T_DET + 0.7, T_DET + 1.4), "big": {"frac": 0.2, "k": 1.3}, "ground": True,
-         "preview_color": SLAB_RGB},
+         "veins": PLATE_VEINS, "preview_color": SLAB_RGB},
         # las de alrededor de la montaña: la montaña las rompe al brotar
-        {"name": "TectonicPlates", "count": 8, "ring": True, "at": MT, "r": (0.07, 0.13), "lean": "radial",
+        {"name": "TectonicPlates", "count": 8, "ring": True, "at": MT, "r": (0.08, 0.14), "lean": "radial",
          "wid": (12.0, 18.0), "thick": (3.0, 5.0), "len": (12.0, 18.0), "tilt": (16, 32), "yaw": 20, "pitch": 8,
          "show": 0.55, "rise": 0.16, "t": T_RUP + 0.02 + SW_RUP * 0.28, "delay": (0.0, 0.05),
          "end_at": (T_MOUNT, T_MOUNT + 0.04), "end": "shatter", "shatter": PLATE_BREAK, "ground": True,
-         "preview_color": SLAB_RGB},
+         "veins": PLATE_VEINS, "preview_color": SLAB_RGB},
         {"name": "RubbleSlabs", "count": 70, "r": (0.08, 1.0), "lean": "radial",
          "wid": (5.0, 10.0), "thick": (1.2, 2.6), "len": (5.0, 10.0), "tilt": (15, 45), "yaw": 15, "pitch": 10,
          "show": 0.6, "rise": 0.1, "t": T_RUP, "sweep": SW_RUP, "delay": (0.0, 0.08), "sink": 0.6,
@@ -1285,7 +1455,7 @@ TECTONIC_CUBES = {
          "skew": 2.2, "lift": (2.0, 8.0), "release": (T_RUP, T_RUP + SW_RUP), "out": (15, 45), "up": (40, 90),
          "dissolve": 0.3, "neon": 0.15},
         # la ruptura: bloques de tierra que saltan cuando pasa el frente
-        {"name": "Rupture", "mode": "blast", "count": 200, "t": (T_RUP, T_RUP + 0.05), "sweep": SW_RUP,
+        {"name": "Rupture", "mode": "blast", "count": 150, "t": (T_RUP, T_RUP + 0.05), "sweep": SW_RUP,
          "r": (0.05, 1.0), "size": (0.6, 3.6), "skew": 2.4, "out": (15, 55), "up": (45, 110), "dissolve": 0.3,
          "neon": 0.12},
         # la montaña rompe el suelo: pedazos grandes que vuelan
@@ -1301,20 +1471,18 @@ TECTONIC_CUBES = {
 
 TECTONIC_ERUPTION = {
     "name": "TectonicEruption",
-    "doc": ("PEBLEDON ULTIMATE (Erupción tectónica): hunde los puños en el suelo y es el epicentro: las venas turquesa "
-            "se riegan por una zona gigante, el mundo se oscurece y tiembla; el suelo se rompe en placas enormes y "
-            "salen géiseres de fuego cian en cadena del centro hacia afuera; delante de él brota una montaña de "
-            "cristal de más de 100 studs que se carga de luz y revienta en una lluvia de cristales con un pilar de "
-            "energía hasta el cielo. cf = Pebledon en el suelo, mirando hacia adelante (la montaña brota delante). "
-            "Golpes: el frente de la ruptura (TectonicEruptionFrontTime), la montaña a los "
+    "doc": ("PEBLEDON ULTIMATE (Erupción tectónica): ruge y ese punto es el epicentro (él se puede seguir moviendo): "
+            "corren grietas de luz turquesa por una zona gigante, el mundo se oscurece y tiembla; el suelo se rompe en "
+            "placas enormes y salen géiseres de fuego cian en cadena del centro hacia afuera, con rocas en llamas; en "
+            "el centro brota una montaña de cristal de más de 100 studs que se carga de luz y revienta en una lluvia "
+            "de cristales con un pilar de energía hasta el cielo. cf = donde ruge, en el suelo (sus pies). Golpes: el "
+            "frente de la ruptura (TectonicEruptionFrontTime), la montaña a los "
             f"{T_MOUNT:g} s y la explosión a los {T_DET:g} s (ver TectonicEruptionTimes)."),
     "duration": T_END,
     "zone": {"radius": TR, "height": TH, "front": (T_RUP, SW_RUP)},
-    "times": {"Slam": 0.0, "Rupture": T_RUP, "Mountain": T_MOUNT, "Detonation": T_DET, "End": round(T_END, 3)},
+    "times": {"Roar": 0.0, "Rupture": T_RUP, "Mountain": T_MOUNT, "Detonation": T_DET, "End": round(T_END, 3)},
     "exports": {
-        "MountainOffset": (-MT[1] * TR, "a cuántos studs delante del centro brota la montaña (a escala 1; "
-                                        "multiplícalo por la escala)"),
-        "MountainRadius": (MOUNT_R, "hasta dónde golpea la montaña al brotar, alrededor de ella (studs a escala 1; "
+        "MountainRadius": (MOUNT_R, "hasta dónde golpea la montaña al brotar, alrededor del centro (studs a escala 1; "
                                     "multiplícalo por la escala): a quien esté ahí lo manda a volar"),
     },
     "shake_ramp": (0.0, T_DET, 0.12, 1.1, 1.6),
@@ -1344,6 +1512,20 @@ TECTONIC_ERUPTION = {
     "cubes": TECTONIC_CUBES,
     "zbeams": TECTONIC_ZBEAMS,
     "zfield": TECTONIC_FIELD,
+    # las grietas que corren: nacen calientes y se enfrían; destellan cuando el suelo se rompe y cuando revienta la
+    # montaña, laten mientras se carga y se apagan al final
+    "zcracks": {
+        "segs": CRACK_SEGS, "height": 0.16, "thick": 0.14, "color": CRYSTAL, "hot": (225, 255, 252),
+        "material": "Neon", "birth": 0.35,
+        "tr": [(0.0, 0.0), (T_RUP - 0.1, 0.15), (T_RUP, 0.0), (T_MOUNT, 0.15), (T_DET, 0.05), (T_DET + 0.8, 0.45),
+               (T_END - 0.6, 0.7), (T_END - 0.3, 1.0)],
+        "heat": [(0.0, 0.0), (T_RUP - 0.02, 0.0), (T_RUP, 1.0), (T_RUP + 0.35, 0.0)] +
+                [p for i in range(3) for p in ((round(T_MOUNT + 0.5 + 0.38 * i, 3), 0.0),
+                                                (round(T_MOUNT + 0.62 + 0.38 * i, 3), 0.55),
+                                                (round(T_MOUNT + 0.8 + 0.38 * i, 3), 0.0))] +
+                [(T_DET - 0.01, 0.0), (T_DET, 1.0), (T_DET + 0.5, 0.0)],
+        "t_end": T_END - 0.3,
+    },
     "layers": tectonic_layers(random.Random(83)),
 }
 
