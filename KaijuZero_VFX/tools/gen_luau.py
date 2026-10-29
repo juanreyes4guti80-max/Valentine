@@ -38,7 +38,7 @@ def norm_layer(L):
     for k in ("rock_emit", "rock_stream"):
         if k in o:
             o[k] = [[list(e) for e in var] for var in o[k]]
-    for k in ("final_emit", "final_stream", "cone_emit", "ring_emit", "zstream", "points"):
+    for k in ("final_emit", "final_stream", "cone_emit", "ring_emit", "zstream", "points", "path_emit"):
         if k in o:
             o[k] = [list(e) for e in o[k]]
     if "zdist" in o:
@@ -121,6 +121,7 @@ def layer_end(L, jitter=0.0):
     starts += [ev[0] + jitter for ev in L.get("final_emit", [])]
     starts += [ev[0] for ev in L.get("cone_emit", [])]
     starts += [ev[0] for ev in L.get("ring_emit", [])]
+    starts += [ev[0] for ev in L.get("path_emit", [])]
     starts += [ev[0] for ev in L.get("points", [])]
     if L.get("type") == "meteor":
         after = 0.0
@@ -359,7 +360,9 @@ DOC_PEBLEDON = """	PebledonVFX — VFX del kaiju de piedra con venas de energía
 	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
 		local PebledonVFX = require(ReplicatedStorage.PebledonVFX)
 		PebledonVFX.SeismicRoar(boca.WorldCFrame, nil, nil, 1, 1)   -- skill 1 (o la CFrame de la cabeza)
-		local aliento = PebledonVFX.BlueBreath(boca, rival, 1, 1, { pebledon })   -- skill 2 (aliento:AimAt(...))"""
+		local aliento = PebledonVFX.BlueBreath(boca, rival, 1, 1, { pebledon })   -- skill 2 (aliento:AimAt(...))
+		local cristal = PebledonVFX.CrystalSpire(pie.Position, puntoEnElSuelo, 1, 1)   -- skill 3 (el pie y dónde brota)
+		local rayos = PebledonVFX.CrystalRefract(cristal, { rival1, rival2 }, 1)   -- el aliento le pega al cristal"""
 
 DOC_ASTRAL = """	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
 	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
@@ -1175,7 +1178,9 @@ end
 -- modelo de Blender en KaijuFireVFX.Meshes[mesh].
 type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
 	rise: number, sink: number, ice: any, shatter: boolean, mesh: string?, L: any, part: BasePart?, base: CFrame?,
-	gy: number, gone: boolean, tip: number?, tipPart: BasePart? }
+	gy: number, gone: boolean, tip: number?, tipPart: BasePart?, full: Vector3?, extra: { SlabExtra }? }
+-- los otros bloques de un prisma hexagonal (y sus puntas), girados yaw alrededor del eje de la pieza
+type SlabExtra = { part: BasePart, yaw: number, tip: boolean }
 
 -- la punta de un cristal: un cubo parado sobre un vértice (su diagonal (1, 1, 1) hacia arriba) en la cara de arriba
 local TIP_ROT = CFrame.fromAxisAngle(Vector3.new(-1, 0, 1).Unit, math.acos(1 / math.sqrt(3)))
@@ -1211,18 +1216,22 @@ local function makeSlab(SL: any, s: number, x: number, z: number, yaw: number, s
 	local th = rng:NextNumber(P("thick")[1], P("thick")[2]) * s * k
 	local ln = rng:NextNumber(P("len")[1], P("len")[2]) * s * k
 	local a = math.rad(rng:NextNumber(P("tilt")[1], P("tilt")[2]))
-	x += side * w / 2 * math.cos(a) * math.cos(yaw)
-	z += side * w / 2 * math.cos(a) * math.sin(yaw)
+	if not SL.centered then -- (centered: el cristal del medio va justo en su punto)
+		x += side * w / 2 * math.cos(a) * math.cos(yaw)
+		z += side * w / 2 * math.cos(a) * math.sin(yaw)
+	end
 	local rot = CFrame.Angles(0, -yaw + math.rad(rng:NextNumber(-SL.yaw, SL.yaw)), 0)
 		* CFrame.Angles(math.rad(rng:NextNumber(-SL.pitch, SL.pitch)), 0, 0) * CFrame.Angles(0, 0, -side * a)
 	local top = w / 2 * math.sin(a) + th / 2 * math.cos(a)
 	local y0 = top * (2 * SL.show - 1)
+	-- hex: un prisma hexagonal de ancho w (de esquina a esquina) hecho con tres bloques girados 60°
+	local size = if SL.hex then Vector3.new(w * 0.5, th, w * 0.866) else Vector3.new(w, th, ln)
 	return {
-		t = tS, x = x, z = z, size = Vector3.new(w, th, ln), rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
+		t = tS, x = x, z = z, size = size, rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
 		hold = rng:NextNumber(SL.hold[1], SL.hold[2]), rise = SL.rise, sink = SL.sink,
 		ice = if ice then SL.ice else nil, shatter = SL["end"] == "shatter",
 		mesh = if ice and SL.ice.mesh then SL.ice.mesh else SL.mesh, L = SL,
-		part = nil, base = nil, gy = 0, gone = false,
+		part = nil, base = nil, gy = 0, gone = false, full = if SL.hex then Vector3.new(w, th, w) else nil,
 	}
 end
 
@@ -1254,6 +1263,7 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 				p.CanQuery = false
 				p.CanTouch = false
 				p.Parent = holder
+				p.Size = L.full or L.size -- (un modelo de Blender va entero: sin los bloques del hexágono)
 			else
 				p = bladePart("Slab", holder)
 				if L.ice then
@@ -1264,16 +1274,47 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 					p.Material = mat
 					p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
 				end
+				p.Size = L.size
+				local function copy(name: string, size: Vector3): BasePart
+					local c = bladePart(name, holder)
+					c.Material = p.Material
+					c.Color = p.Color
+					c.Transparency = p.Transparency
+					c.Size = size
+					return c
+				end
 				if L.tip then
-					local tp = bladePart("SlabTip", holder)
-					tp.Material = p.Material
-					tp.Color = p.Color
-					tp.Transparency = p.Transparency
-					tp.Size = Vector3.new(L.tip, L.tip, L.tip)
-					L.tipPart = tp
+					L.tipPart = copy("SlabTip", Vector3.new(L.tip, L.tip, L.tip))
+				end
+				if L.L.hex then -- los otros dos bloques del prisma (y sus puntas)
+					local ex = {}
+					for k = 1, 2 do
+						table.insert(ex, { part = copy("SlabHex", L.size), yaw = math.rad(60 * k), tip = false })
+						if L.tip then
+							table.insert(ex, { part = copy("SlabTip", Vector3.new(L.tip, L.tip, L.tip)),
+								yaw = math.rad(60 * k), tip = true })
+						end
+					end
+					L.extra = ex
 				end
 			end
-			p.Size = L.size
+			if L.L.query then -- el rayo lo puede tocar (p. ej. el cristal de Pebledon); sigue sin chocar
+				p.CanQuery = true
+				if L.tipPart then
+					L.tipPart.CanQuery = true
+				end
+				for _, ex in (L.extra or {}) :: { SlabExtra } do
+					ex.part.CanQuery = true
+				end
+			end
+			if L.L.part_name then -- (los bloques; las puntas siguen siendo SlabTip)
+				p.Name = L.L.part_name
+				for _, ex in (L.extra or {}) :: { SlabExtra } do
+					if not ex.tip then
+						ex.part.Name = L.L.part_name
+					end
+				end
+			end
 			L.part = p
 		end
 		local part = L.part :: BasePart
@@ -1288,6 +1329,9 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			if L.tipPart then
 				L.tipPart:Destroy()
 			end
+			for _, ex in (L.extra or {}) :: { SlabExtra } do
+				ex.part:Destroy()
+			end
 			L.gone = true
 			if onShatter then
 				onShatter(L, pos)
@@ -1301,12 +1345,19 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			if L.tipPart then
 				L.tipPart:Destroy()
 			end
+			for _, ex in (L.extra or {}) :: { SlabExtra } do
+				ex.part:Destroy()
+			end
 			L.gone = true
 			continue
 		end
 		part.CFrame = (L.base :: CFrame) + Vector3.new(0, L.gy + y, 0)
 		if L.tipPart then
 			L.tipPart.CFrame = part.CFrame * CFrame.new(0, L.size.Y / 2, 0) * TIP_ROT
+		end
+		for _, ex in (L.extra or {}) :: { SlabExtra } do
+			local cf = part.CFrame * CFrame.Angles(0, ex.yaw, 0)
+			ex.part.CFrame = if ex.tip then cf * CFrame.new(0, L.size.Y / 2, 0) * TIP_ROT else cf
 		end
 	end
 	return alive
@@ -2045,6 +2096,69 @@ local function playBeam(spec: Layer, origin: any, target: any, scale: number?, s
 		ctl.HitPosition = if hitting then P else nil
 		ctl.HitInstance = if hitting and hit then hit.Instance else nil
 	end)
+	return ctl
+end
+
+-- ---------------------------------------------------------------- un rayo que se reparte (refracción)
+-- crystal = de dónde salen (el contenedor que devolvió el efecto del cristal, una Part, un Model, un Vector3 o un
+-- CFrame: salen de refract.h studs × escala sobre él, y no chocan con él). Un rayo por objetivo; :SetTargets cambia
+-- a quiénes (corta los que ya no están y abre los nuevos) y :Stop los corta todos.
+export type RefractControl = {
+	Active: boolean,
+	Rays: { [any]: BeamControl },
+	SetTargets: (RefractControl, targets: { any }) -> (),
+	Stop: (RefractControl) -> (),
+}
+
+local function playRefract(spec: Layer, crystal: any, targets: { any }, scale: number?, shake: number?): RefractControl
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local base = Vector3.zero
+	local ignore: { Instance } = {}
+	if typeof(crystal) == "Instance" then
+		table.insert(ignore, crystal :: Instance)
+		if (crystal :: Instance):IsA("BasePart") then
+			base = (crystal :: BasePart).Position
+		elseif (crystal :: Instance):IsA("Model") then
+			base = (crystal :: Model):GetPivot().Position
+		end
+	elseif typeof(crystal) == "CFrame" then
+		base = (crystal :: CFrame).Position
+	elseif typeof(crystal) == "Vector3" then
+		base = crystal :: Vector3
+	end
+	local origin = base + Vector3.new(0, spec.refract.h * s, 0)
+	local ctl: RefractControl
+	ctl = {
+		Active = true,
+		Rays = {},
+		SetTargets = function(self: RefractControl, list: { any })
+			if not self.Active then
+				return
+			end
+			local keep: { [any]: boolean } = {}
+			for _, tg in list do
+				keep[tg] = true
+				local r = self.Rays[tg]
+				if not (r and r.Active) then
+					self.Rays[tg] = playBeam(spec, origin, tg, scale, shake, ignore)
+				end
+			end
+			for tg, r in self.Rays do
+				if not keep[tg] then
+					r:Stop()
+					self.Rays[tg] = nil
+				end
+			end
+		end,
+		Stop = function(self: RefractControl)
+			self.Active = false
+			for _, r in self.Rays do
+				r:Stop()
+			end
+			table.clear(self.Rays)
+		end,
+	}
+	ctl:SetTargets(targets)
 	return ctl
 end
 
@@ -3019,6 +3133,38 @@ local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?
 	end
 	finish(spec, holder, s, shake, {})
 	return holder
+end
+
+-- un pisotón que hace brotar una zona a la distancia (p. ej. un cristal): la zona va en target, mirando desde el pie,
+-- y las capas "path" van por el suelo del pie (u = 0) al centro (u = 1): path_emit = {t, n, u, lado, alto}, que aquí
+-- se pasan a ring_emit de la zona según la distancia de esta llamada
+local function playStompZone(spec: Layer, foot: any, target: any, scale: number?, shake: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local fp: Vector3 = if typeof(foot) == "CFrame" then (foot :: CFrame).Position else foot :: Vector3
+	local tp: Vector3 = if typeof(target) == "CFrame" then (target :: CFrame).Position else target :: Vector3
+	local flat = Vector3.new(tp.X - fp.X, 0, tp.Z - fp.Z)
+	local dist = flat.Magnitude
+	local dir = if dist > 1e-3 then flat.Unit else Vector3.new(0, 0, -1)
+	local R = spec.zone.radius * s
+	local sp = table.clone(spec)
+	sp.layers = table.create(#spec.layers)
+	for i, L in spec.layers do
+		if L.path_emit then
+			-- en el marco de la zona el pie queda detrás (+Z) a dist studs
+			local c = table.clone(L)
+			local evs = table.create(#L.path_emit)
+			for j, e in L.path_emit do
+				local x, z = e[4] * s, dist * (1 - e[3])
+				evs[j] = { e[1], e[2], (math.atan2(z, x) / (2 * math.pi)) % 1, math.sqrt(x * x + z * z) / R, e[5] }
+			end
+			c.ring_emit = evs
+			c.radial = false
+			sp.layers[i] = c
+		else
+			sp.layers[i] = L
+		end
+	end
+	return playZone(sp, CFrame.lookAt(tp, tp + dir), scale, nil, nil, shake)
 end
 
 -- ---------------------------------------------------------------- proyectil que crece (agujero negro)
@@ -5431,7 +5577,7 @@ def build(specs, name, doc):
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
                 "layers": [norm_layer(L) for L in spec["layers"]]}
         for k in ("shakes", "shake_ramp", "rocks", "scale_mult", "light", "cone", "zone", "lights", "orb", "beam", "hit",
-                  "aura", "cataclysm", "line", "times", "screen"):
+                  "aura", "cataclysm", "line", "times", "screen", "refract"):
             if spec.get(k):
                 data[k] = [list(x) for x in spec[k]] if k == "shakes" else spec[k]
         if spec.get("cubes"):
@@ -5513,6 +5659,15 @@ def build(specs, name, doc):
                 f"\treturn playBeam(SPEC_{key}, origin, target, scale, shake, ignore)\nend\n" \
                 "-- segundos (desde la llamada) en que llega a su largo máximo y en que se corta solo\n" \
                 f"KaijuFireVFX.{key}Start = {hit:g}\nKaijuFireVFX.{key}Stop = {b['stop']:g}\n\n"
+            if spec.get("refract"):
+                rf = spec["refract"]
+                out += f"-- {key} repartido: un rayo desde crystal (lo que devolvió el efecto del cristal, una Part, un Model,\n" \
+                    f"-- un Vector3 o un CFrame; salen de {rf['h']:g} studs × escala sobre él) hacia cada objetivo (Models, Parts o\n" \
+                    "-- Vector3: los siguen si se mueven). Devuelve un control:\n" \
+                    "--   r:SetTargets(lista)   cambia a quiénes (corta los que ya no están y abre los nuevos)\n" \
+                    "--   r:Stop()              los corta todos;  r.Active = true mientras dura;  r.Rays = el rayo de cada uno\n" + \
+                    f"function KaijuFireVFX.{rf['name']}(crystal: any, targets: {{ any }}, scale: number?, shake: number?): " \
+                    f"RefractControl\n\treturn playRefract(SPEC_{key}, crystal, targets, scale, shake or 0)\nend\n\n"
         elif spec.get("cataclysm"):
             c = spec["cataclysm"]
             T = c["t"]
@@ -5588,6 +5743,24 @@ def build(specs, name, doc):
                 f"\treturn playOrb(SPEC_{key}, mouth, targets, scale, shake, radius)\nend\n" \
                 f"-- segundo (desde la llamada) en que detona: para sincronizar el daño\n" \
                 f"KaijuFireVFX.{key}Impact = {o['collapse'][1]:g}\n\n"
+        elif spec.get("zone") and spec.get("stomp"):
+            z = spec["zone"]
+            out += head + \
+                "-- foot = el pie que pisa (Vector3 o CFrame; llámalo cuando el pie toca el suelo). target = dónde brota\n" \
+                "-- (Vector3 o CFrame, en el suelo). La grieta corre del pie hasta ahí y ahí brota todo.\n" + \
+                f"function KaijuFireVFX.{key}(foot: any, target: any, scale: number?, shake: number?): Part\n" \
+                f"\treturn playStompZone(SPEC_{key}, foot, target, scale, shake)\nend\n"
+            if spec.get("times"):
+                out += "-- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la mejora\n" + \
+                    f"KaijuFireVFX.{key}Times = " + lua(spec["times"]) + "\n"
+            out += "-- radio alrededor del centro (studs a escala 1; multiplícalo por la escala): " \
+                f"{spec['stomp'].get('radius_doc', 'el área del efecto')}\n" \
+                f"KaijuFireVFX.{key}Radius = {z['radius']:g}\n"
+            if spec["stomp"].get("hit_radius"):
+                out += "-- hasta dónde golpea al brotar (studs a escala 1; multiplícalo por la escala): " \
+                    "a quien esté ahí lo empuja y lo manda a volar (eso lo hace el servidor)\n" \
+                    f"KaijuFireVFX.{key}HitRadius = {spec['stomp']['hit_radius']:g}\n"
+            out += "\n"
         elif spec.get("zone"):
             z = spec["zone"]
             out += head + \

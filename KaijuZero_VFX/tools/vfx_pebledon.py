@@ -7,6 +7,9 @@ el suelo se parte, las rocas vuelan y por las grietas brota fuego cian. Paleta s
   SKILL 1   SeismicRoar "Rugido sísmico": un rugido hacia adelante; la onda parte el suelo, arrastra rocas y por
             las grietas brota fuego cian (expone, ralentiza y empuja un poco: eso lo hace el servidor)
   SKILL 2   BlueBreath "Aliento azul": como el de Godzilla, fuego azul concentrado que sale recto de la boca 3 s (se apunta)
+  SKILL 3   CrystalSpire "Pilar de cristal": un pisotón; a la distancia brota duro un pilar de cristal con su círculo de
+            mejora, fuego cian y rocas (golpea al brotar: lo hace el servidor)
+  COMBO     CrystalRefract: si el aliento le pega al cristal, del cristal salen rayos delgados a cada enemigo del área
 Las skills se escalan con `scale` (1 = Pebledon de unos 25 studs de alto, con la boca a unos 21 studs del suelo).
 """
 import math
@@ -481,7 +484,347 @@ BLUE_BREATH = {
     "shakes": [(B_HIT, 0.5, 0.35), (B_STOP, 0.25, 0.3)],
 }
 
+# ----------------------------------------------------------------------------- SKILL 3: Pilar de cristal
+# Pebledon pisa fuerte: el suelo se raja bajo su pie y una grieta turquesa corre por el suelo hasta el punto elegido
+# (capas "path": u = 0 en el pie, u = 1 en el centro). Ahí el suelo REVIENTA (destello, fuego cian, rocas, polvo,
+# losas y pedazos) y brota DURO un PILAR DE CRISTAL como los de su espalda (prisma hexagonal turquesa que brilla, de
+# su tamaño y un poco más: unos 33 studs con la punta) con cristales más chicos alrededor: sale golpeando, así que el
+# servidor empuja y manda a volar a quien esté encima (CrystalSpireTimes.Erupt, CrystalSpireHitRadius). Queda un
+# CÍRCULO en el suelo que marca la mejora (CrystalSpireRadius: cerca del cristal, Pebledon gira y corre más rápido),
+# fuego cian en la base y brasas. A los S_END s el cristal revienta en esquirlas.
+# Los cristales son marcadores (Parts de Neon; el del medio, un prisma hexagonal de tres bloques): un modelo de
+# Blender los reemplaza con Meshes.PebledonCrystal (el grande) y Meshes.CrystalShards (los chicos).
+SR, SH = 70.0, 40.0           # radio de la zona (= el radio de la mejora: Pebledon corre adentro) y alto (escala 1)
+CR = 26.0                     # el tamaño del grupo de cristales y del suelo roto (studs): no cambia con SR
+
+
+def cr(*r):
+    """Fracciones de CR (el grupo de cristales) pasadas a fracciones del radio de la zona."""
+    return tuple(round(x * CR / SR, 4) for x in r)
+S_TRAVEL = 0.34               # la grieta tarda en llegar del pie al cristal
+S_ERUPT = 0.38                # el suelo revienta
+S_RISE = 0.4                  # el cristal brota (sube en 0.14 s)
+S_END = 8.0                   # revienta
+S_HIT_R = 12.0                # el golpe al brotar (studs a escala 1): a quien esté a esta distancia del centro
+SPIRE_GLASS = {"color": (94, 229, 224), "material": "Glass", "transparency": 0.3}     # el cristal por fuera
+SPIRE_CORE = {"color": (60, 205, 205), "material": "Neon", "transparency": 0.05}      # la luz de adentro
+SHARD_GLASS = {"color": (110, 236, 232), "material": "Glass", "transparency": 0.25}
+SHARD_NEON = {"color": (94, 229, 224), "material": "Neon", "transparency": 0.15}
+
+
+def zc(t, h, n=1):
+    return [(round(t, 3), n, 0.0, 0.0, h)]
+
+
+def zring(t, count, r, h, n=1, a0=0.0):
+    return [(round(t, 3), n, round((a0 + i / count) % 1.0, 4), r, h) for i in range(count)]
+
+
+def path_line(t0, travel, n, k=1, up=0.2, u0=0.0, u1=1.0, side=0.0):
+    """n eventos a lo largo del camino del pie al centro: (t, k, u, lado, alto), cuando la grieta pasa por u."""
+    out = []
+    for i in range(n):
+        u = u0 + (u1 - u0) * i / max(1, n - 1)
+        out.append((round(t0 + travel * u, 3), k, round(u, 4), side, up))
+    return out
+
+
+def spire_break(box, n_shards, n_glints, n_fire):
+    """Lo que suelta un cristal al reventar (sale de toda su caja)."""
+    return [dict(name="ShardBurst", texture="mf_shard_2x2", flipbook=STATIC2x2, emit=[(0, n_shards)],
+                 shape={"type": "Box", "size": box}, direction="Top", spread=(80, 80), speed=(18, 45), drag=0.5,
+                 accel=(0, -110, 0), lifetime=(0.6, 1.1), size=[(0, 1.8, 0.6), (1, 1.3, 0.4)],
+                 transparency=[(0, 0), (0.85, 0.1), (1, 1)], color=TURQ, light_emission=0.6, brightness=1.5,
+                 rotation=(0, 360), rot_speed=(-500, 500)),
+            dict(name="ShardGlints", texture="kk_star_09", emit=[(0, n_glints)], shape={"type": "Box", "size": box},
+                 direction="Top", spread=(80, 80), speed=(3, 9), drag=2, lifetime=(0.3, 0.55), size=twinkle(1.4),
+                 color=GLINT, light_emission=1.0, brightness=2.0, rotation=(0, 45)),
+            dict(name="ShardFire", texture="fx_fire_2x2", flipbook=STATIC2x2, emit=[(0, n_fire)],
+                 shape={"type": "Box", "size": box}, direction="Top", spread=(40, 40), speed=(6, 14), drag=1.5,
+                 accel=(0, 8, 0), lifetime=(0.35, 0.6), size=[(0, 3, 1), (0.3, 7, 1.5), (1, 2)],
+                 transparency=[(0, 0.15), (0.6, 0.42), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
+                 rotation=(0, 360))]
+
+
+SPIRE_FIELD = {
+    "seed": 31,
+    "groups": [
+        # el pilar: un prisma hexagonal de vidrio turquesa, derecho, en el centro (el rayo lo puede tocar) con un
+        # núcleo de luz (Neon) adentro que lo hace brillar
+        {"name": "PebledonCrystal", "count": 1, "r": (0.0, 0.0), "centered": True, "hex": True, "query": True,
+         "part_name": "PebledonCrystal", "lean": "random", "wid": (9.5, 9.5), "thick": (30.0, 30.0), "len": (9.5, 9.5),
+         "tilt": (0, 0), "yaw": 180, "pitch": 0, "show": 0.93, "rise": 0.14, "t": S_RISE, "delay": (0.0, 0.0),
+         "end_at": (S_END, S_END), "end": "shatter", "shatter": spire_break((8, 26, 8), 40, 14, 18),
+         "ice": SPIRE_GLASS, "tip": 0.85},
+        {"name": "CrystalCore", "count": 1, "r": (0.0, 0.0), "centered": True, "hex": True, "lean": "random",
+         "wid": (5.6, 5.6), "thick": (27.0, 27.0), "len": (5.6, 5.6), "tilt": (0, 0), "yaw": 180, "pitch": 0,
+         "show": 0.93, "rise": 0.14, "t": S_RISE, "delay": (0.0, 0.0), "end_at": (S_END, S_END), "end": "shatter",
+         "ice": SPIRE_CORE, "tip": 0.85},
+        # los cristales que lo acompañan, inclinados hacia afuera (como las placas de su espalda)
+        {"name": "CrystalShards", "count": 6, "ring": True, "r": cr(0.15, 0.22), "hex": True, "lean": "radial",
+         "wid": (4.0, 5.6), "thick": (11.0, 18.0), "len": (4.0, 5.6), "tilt": (18, 32), "yaw": 10, "pitch": 6,
+         "show": 0.86, "rise": 0.13, "t": S_RISE + 0.05, "delay": (0.0, 0.07),
+         "end_at": (S_END - 0.04, S_END + 0.04), "end": "shatter", "shatter": spire_break((4, 12, 4), 10, 4, 5),
+         "ice": SHARD_GLASS, "tip": 0.85, "mesh": "CrystalShards"},
+        {"name": "CrystalShards", "count": 12, "r": cr(0.24, 0.5), "hex": True, "lean": "radial",
+         "wid": (1.8, 3.0), "thick": (4.0, 8.0), "len": (1.8, 3.0), "tilt": (14, 40), "yaw": 15, "pitch": 8,
+         "show": 0.82, "rise": 0.12, "t": S_RISE + 0.08, "sweep": 0.15 * SR / CR, "delay": (0.0, 0.08),
+         "end_at": (S_END - 0.02, S_END + 0.08), "end": "shatter", "shatter": spire_break((2, 6, 2), 5, 2, 2),
+         "ice": SHARD_NEON, "tip": 0.85, "mesh": "CrystalShards"},
+        # losas del suelo que saltan alrededor (color y material del suelo) y se hunden después de que revienta
+        {"name": "SpireSlabs", "count": 36, "r": cr(0.16, 1.0), "lean": "radial",
+         "wid": (2.6, 5.2), "thick": (0.7, 1.4), "len": (2.6, 5.2), "tilt": (18, 46), "yaw": 14, "pitch": 10,
+         "show": 0.6, "rise": 0.08, "t": S_ERUPT, "sweep": 0.12 * SR / CR, "delay": (0.0, 0.04), "sink": 0.5,
+         "end_at": (S_END + 0.3, S_END + 0.7), "ground": True, "preview_color": SLAB_RGB},
+    ],
+}
+
+SPIRE_CUBES = {
+    "gravity": 170, "bounce": 0.3, "friction": 0.55, "spin": (240, 820),
+    "rest": (0.4, 1.0), "fade": 0.35, "settle": 0.12, "shrink": (0.16, 0.26), "dissolve_time": (0.2, 0.5),
+    "color_var": (0.75, 1.08), "dark": 0.12,
+    # algunos pedazos son cristal turquesa; el resto, del color del suelo
+    "neon_colors": [CRYSTAL, CRYSTAL_MID, (150, 245, 240)],
+    "preview_color": SLAB_RGB,
+    "fx": dict(name="CubeDissolve", texture="fx_spark002", direction="Top", spread=(180, 180), speed=(4, 12),
+               lifetime=(0.25, 0.4), size=[(0, 0), (0.2, 2.0), (1, 0)], color=GLINT, light_emission=1.0,
+               brightness=1.7, rotation=(0, 45), emit_n=2),
+    "groups": [
+        {"name": "Erupt", "mode": "blast", "count": 60, "t": (S_ERUPT, S_ERUPT + 0.05), "r": cr(0.02, 0.4),
+         "size": (0.5, 2.8), "skew": 2.4, "out": (18, 55), "up": (45, 100), "dissolve": 0.35, "neon": 0.2},
+        {"name": "Shatter", "mode": "blast", "count": 40, "t": (S_END, S_END + 0.05), "r": cr(0.0, 0.2),
+         "size": (0.5, 2.2), "skew": 2.2, "out": (25, 70), "up": (25, 70), "dissolve": 0.45, "neon": 0.7},
+    ],
+}
+
+
+def spire_layers(g):
+    D = 2 * SR / 0.995                      # pb_buff_ring: el anillo queda en el radio de la mejora
+    LIVE = S_END - S_RISE                   # lo que dura el cristal
+    PATH = path_line(0.02, S_TRAVEL, 12, up=0.15, u0=0.06, u1=0.9)
+    L = [
+        # ================ el pisotón (en el pie: u = 0) ================
+        dict(name="StompFlash", texture="fx_glow", lifetime=(0.2, 0.2), size=[(0, 4), (0.3, 14), (1, 16)],
+             transparency=[(0, 0.45), (1, 1)], color=TURQ, light_emission=1.0, brightness=1.0, zoffset=2,
+             path_emit=[(0.0, 1, 0.0, 0.0, 1.0)]),
+        dict(name="StompCracks", texture="pb_vein_cracks", lifetime=(1.6, 1.6), rotation=(0, 360),
+             size=[(0, 5), (0.08, 20), (1, 21)], transparency=[(0, 1), (0.06, 0.3), (0.7, 0.45), (1, 1)],
+             color=[(0, (110, 236, 232)), (1, CRYSTAL_MID)], light_emission=0.8,
+             path_emit=[(0.0, 1, 0.0, 0.0, 0.15)], **DECAL),
+        dict(name="StompDark", texture="pb_vein_cracks", lifetime=(2.0, 2.0), rotation=(0, 360),
+             size=[(0, 6), (0.08, 24), (1, 25)], transparency=[(0, 1), (0.06, 0.25), (0.75, 0.42), (1, 1)],
+             color=CRACK_DARK, path_emit=[(0.0, 1, 0.0, 0.0, 0.1)], **DECAL),
+        dict(name="StompDust", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Top", spread=(85, 85),
+             speed=(14, 28), drag=3, accel=(0, 2, 0), lifetime=(0.7, 1.1), size=[(0, 5, 1), (1, 15, 3)],
+             transparency=[(0, 0.4), (0.4, 0.58), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-30, 30),
+             path_emit=[(0.0, 18, 0.0, 0.0, 1.0)]),
+        dict(name="StompChips", texture="om_cubes_2x2", flipbook=STATIC2x2, direction="Top", spread=(50, 50),
+             speed=(18, 36), accel=(0, -150, 0), lifetime=(0.4, 0.7), size=[(0, 0.8, 0.3), (1, 0.6, 0.2)],
+             color=[(0, (124, 116, 104)), (1, (96, 88, 78))], rotation=(0, 360), rot_speed=(-400, 400),
+             path_emit=[(0.0, 16, 0.0, 0.0, 0.5)]),
+        # ================ la grieta que corre hasta el cristal ================
+        dict(name="PathGlow", texture="fx_glow", lifetime=(0.9, 1.2), size=[(0, 3), (0.1, 9, 1), (1, 7)],
+             transparency=[(0, 1), (0.08, 0.35), (0.6, 0.6), (1, 1)], color=TURQ, light_emission=1.0,
+             path_emit=[(t, n, u, sd, 0.18) for (t, n, u, sd, _) in PATH], **DECAL),
+        dict(name="PathCracks", texture="pb_vein_cracks", lifetime=(1.5, 1.9), rotation=(0, 360),
+             size=[(0, 5), (0.08, 17, 2), (1, 18, 2)], transparency=[(0, 1), (0.06, 0.2), (0.7, 0.4), (1, 1)],
+             color=[(0, (110, 236, 232)), (1, CRYSTAL_MID)], light_emission=0.9, path_emit=PATH, **DECAL),
+        dict(name="PathDark", texture="pb_vein_cracks", lifetime=(2.0, 2.4), rotation=(0, 360),
+             size=[(0, 5), (0.08, 16, 2), (1, 17, 2)], transparency=[(0, 1), (0.06, 0.25), (0.75, 0.42), (1, 1)],
+             color=CRACK_DARK, path_emit=[(t, n, u, sd, 0.1) for (t, n, u, sd, _) in PATH], **DECAL),
+        dict(name="PathFlames", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, direction="Top", spread=(15, 15),
+             speed=(5, 10), accel=(0, 8, 0), lifetime=(0.3, 0.5), size=[(0, 2, 0.6), (0.3, 5, 1), (1, 1.2)],
+             transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
+             rotation=(-10, 10), path_emit=path_line(0.02, S_TRAVEL, 14, k=2, up=0.6, u0=0.05, u1=0.92)),
+        dict(name="PathSparks", texture="fx_spark002", direction="Top", spread=(35, 35), speed=(8, 18), drag=1.5,
+             accel=(0, 6, 0), lifetime=(0.4, 0.8), size=twinkle(0.45), color=GLINT, light_emission=1.0,
+             brightness=1.9, rotation=(0, 45), path_emit=path_line(0.02, S_TRAVEL, 14, k=3, up=0.8, u0=0.05, u1=0.92)),
+        dict(name="PathRocks", texture="pb_rock_2x2", flipbook=STATIC2x2, direction="Top", spread=(40, 40),
+             speed=(10, 22), drag=0.5, accel=(0, -150, 0), lifetime=(0.4, 0.7), size=[(0, 1.1, 0.4), (1, 0.9, 0.3)],
+             transparency=[(0, 0), (0.85, 0), (1, 1)], rotation=(0, 360), rot_speed=(-400, 400),
+             path_emit=path_line(0.02, S_TRAVEL, 12, k=2, up=0.4, u0=0.05, u1=0.92)),
+        # ================ el suelo revienta en el centro y el cristal brota duro ================
+        dict(name="EruptFlash", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 10), (0.25, 44), (1, 48)],
+             transparency=[(0, 0.35), (0.5, 0.65), (1, 1)], color=TURQ, light_emission=1.0, brightness=1.0,
+             zoffset=4, ring_emit=zc(S_ERUPT, 6)),
+        dict(name="EruptStar", texture="kk_star_09", lifetime=(0.25, 0.25), size=[(0, 8), (0.2, 40), (1, 10)],
+             color=GLINT, light_emission=1.0, brightness=1.4, rotation=(0, 90), zoffset=5, ring_emit=zc(S_RISE + 0.1, 18)),
+        dict(name="EruptFire", texture="fx_fire_2x2", flipbook=STATIC2x2, direction="Top", spread=(55, 55),
+             speed=(20, 48), drag=2.5, accel=(0, 10, 0), lifetime=(0.4, 0.7), size=[(0, 4, 1), (0.3, 10, 2), (1, 4)],
+             transparency=[(0, 0.12), (0.6, 0.4), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
+             rotation=(0, 360), rot_speed=(-60, 60), radial=False, ring_emit=zc(S_ERUPT, 1.5, 20)),
+        dict(name="EruptTongues", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, orientation="VelocityParallel",
+             direction="Top", spread=(55, 55), speed=(25, 50), drag=3, lifetime=(0.3, 0.5),
+             size=[(0, 4, 1), (0.4, 10, 2), (1, 3)], transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=FLAME,
+             light_emission=1.0, brightness=1.4, radial=False, ring_emit=zc(S_ERUPT + 0.02, 2, 16)),
+        dict(name="EruptRocks", texture="pb_rock_2x2", flipbook=STATIC2x2, direction="Top", spread=(65, 65),
+             speed=(35, 75), drag=0.4, accel=(0, -150, 0), lifetime=(0.8, 1.3), size=[(0, 2.6, 1.0), (1, 2.2, 0.8)],
+             transparency=[(0, 0), (0.85, 0), (1, 1)], rotation=(0, 360), rot_speed=(-400, 400), radial=False,
+             ring_emit=zc(S_ERUPT, 2, 28)),
+        dict(name="EruptDust", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Front", pitch=12, spread=(12, 8),
+             speed=(28, 50), drag=2.5, accel=(0, 2, 0), lifetime=(1.0, 1.5), size=[(0, 6, 1.5), (1, 18, 3)],
+             transparency=[(0, 0.35), (0.4, 0.55), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-30, 30),
+             ring_emit=zring(S_ERUPT + 0.02, 14, cr(0.12)[0], 2.0)),
+        dict(name="EruptCracks", texture="pb_vein_cracks", lifetime=(LIVE + 1.0, LIVE + 1.0), rotation=(0, 360),
+             size=[(0, 10), (0.02, 52), (1, 54)], transparency=[(0, 1), (0.01, 0.3), (0.9, 0.42), (1, 1)],
+             color=[(0, (110, 236, 232)), (1, CRYSTAL_MID)], light_emission=0.9, ring_emit=zc(S_ERUPT + 0.01, 0.2),
+             **DECAL),
+        dict(name="EruptDark", texture="pb_vein_cracks", lifetime=(LIVE + 1.2, LIVE + 1.2), rotation=(0, 360),
+             size=[(0, 12), (0.02, 60), (1, 62)], transparency=[(0, 1), (0.01, 0.2), (0.9, 0.4), (1, 1)],
+             color=CRACK_DARK, ring_emit=zc(S_ERUPT + 0.01, 0.12), **DECAL),
+        # ================ el círculo de la mejora (aparece al brotar y dura lo que dura el cristal) ================
+        dict(name="BuffRing", texture="pb_buff_ring", lifetime=(LIVE, LIVE),
+             size=[(0, 0.3 * D), (0.03, 1.04 * D), (0.05, D), (1, D)],
+             transparency=[(0, 1), (0.02, 0.05), (0.06, 0.25), (0.3, 0.38), (0.5, 0.28), (0.7, 0.38), (0.97, 0.3), (1, 1)],
+             color=[(0, (150, 250, 245)), (1, (110, 236, 232))], light_emission=1.0, ring_emit=zc(S_RISE + 0.05, 0.25),
+             **DECAL),
+        dict(name="BuffGlow", texture="fx_glow", lifetime=(LIVE, LIVE), size=[(0, 0.5 * D), (0.03, 0.95 * D), (1, 0.95 * D)],
+             transparency=[(0, 1), (0.03, 0.82), (0.97, 0.86), (1, 1)], color=TURQ, light_emission=1.0,
+             ring_emit=zc(S_RISE + 0.05, 0.2), **DECAL),
+        # llamitas y brasas que suben por el borde del círculo
+        dict(name="RingFlames", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, zdist={"r": (0.97, 1.0), "h": (0.2, 0.4)},
+             direction="Top", spread=(8, 8), speed=(3, 7), accel=(0, 6, 0), lifetime=(0.35, 0.6),
+             size=[(0, 1.5, 0.5), (0.3, 3.8, 0.8), (1, 1)], transparency=[(0, 0.25), (0.6, 0.5), (1, 1)], color=FLAME,
+             light_emission=1.0, brightness=1.4, rotation=(-10, 10), radial=False, zstream=[(S_RISE + 0.1, S_END, 80, 80)]),
+        dict(name="RingEmbers", texture="fx_spark002", zdist={"r": (0.95, 1.0), "h": (0.3, 1.0)}, direction="Top",
+             spread=(20, 20), speed=(4, 9), drag=1, accel=(0, 4, 0), lifetime=(0.7, 1.3), size=twinkle(0.4), color=GLINT,
+             light_emission=1.0, brightness=1.9, rotation=(0, 45), radial=False, zstream=[(S_RISE + 0.1, S_END, 45, 45)]),
+        # ================ el cristal mientras está: brillo, fuego en la base, brasas y destellos ================
+        dict(name="CrystalGlow", texture="fx_glow", zdist={"r": cr(0.0, 0.04), "h": (8.0, 26.0)}, lifetime=(0.5, 0.8),
+             size=[(0, 16, 3), (1, 20, 3)], transparency=[(0, 0.86), (0.5, 0.76), (1, 1)], color=TURQ,
+             light_emission=1.0, brightness=1.0, radial=False, zstream=[(S_RISE + 0.12, S_END, 8, 8)]),
+        dict(name="BaseFlames", texture="fx_fire_2x2", flipbook=STATIC2x2, zdist={"r": cr(0.15, 0.36), "h": (0.2, 0.6)},
+             direction="Top", spread=(12, 12), speed=(6, 12), accel=(0, 9, 0), lifetime=(0.45, 0.75),
+             size=[(0, 3, 0.8), (0.3, 8, 1.6), (1, 2)], transparency=[(0, 0.12), (0.6, 0.4), (1, 1)],
+             color=FLAME, light_emission=1.0, brightness=1.45, rotation=(-15, 15), radial=False,
+             zstream=[(S_RISE + 0.1, S_RISE + 0.6, 80, 40), (S_RISE + 0.6, S_END, 40, 40)]),
+        dict(name="BaseTongues", texture="fx_aura_tongue_2x2", flipbook=STATIC2x2, zdist={"r": cr(0.15, 0.4), "h": (0.2, 0.5)},
+             direction="Top", spread=(10, 10), speed=(4, 9), accel=(0, 8, 0), lifetime=(0.35, 0.6),
+             size=[(0, 2, 0.6), (0.3, 6, 1.2), (1, 1.5)], transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=FLAME,
+             light_emission=1.0, brightness=1.45, rotation=(-10, 10), radial=False, zstream=[(S_RISE + 0.1, S_END, 16, 16)]),
+        dict(name="CrystalEmbers", texture="fx_spark002", zdist={"r": cr(0.0, 0.35), "h": (0.5, 3.0)}, direction="Top",
+             spread=(25, 25), speed=(6, 14), drag=1, accel=(0, 4, 0), lifetime=(0.8, 1.6), size=twinkle(0.5),
+             color=GLINT, light_emission=1.0, brightness=1.9, rotation=(0, 45), radial=False,
+             zstream=[(S_RISE + 0.2, S_END, 18, 18)]),
+        dict(name="CrystalGlints", texture="kk_star_09", zdist={"r": cr(0.0, 0.14), "h": (3.0, 28.0)}, lifetime=(0.3, 0.5),
+             size=twinkle(1.2), color=GLINT, light_emission=1.0, brightness=1.8, rotation=(0, 45), zoffset=6,
+             radial=False, zstream=[(S_RISE + 0.3, S_END, 4, 4)]),
+        # ================ revienta ================
+        dict(name="ShatterFlash", texture="fx_glow", lifetime=(0.3, 0.3), size=[(0, 10), (0.25, 38), (1, 42)],
+             transparency=[(0, 0.5), (0.5, 0.72), (1, 1)], color=TURQ, light_emission=1.0, brightness=0.9, zoffset=4,
+             ring_emit=zc(S_END, 14)),
+        dict(name="ShatterDust", texture="fx_smoke_2x2", flipbook=STATIC2x2, direction="Front", pitch=20, spread=(15, 10),
+             speed=(18, 36), drag=2.5, accel=(0, 3, 0), lifetime=(0.9, 1.3), size=[(0, 5, 1), (1, 15, 3)],
+             transparency=[(0, 0.4), (0.4, 0.58), (1, 1)], color=DUST, rotation=(0, 360), rot_speed=(-30, 30),
+             ring_emit=zring(S_END + 0.02, 10, cr(0.1)[0], 3.0)),
+    ]
+    return L
+
+
+CRYSTAL_SPIRE = {
+    "name": "CrystalSpire",
+    "doc": ("PEBLEDON SKILL 3 (Pilar de cristal): pisa fuerte y una grieta turquesa corre por el suelo hasta el punto "
+            "elegido; ahí el suelo revienta y brota duro un pilar de cristal como los de su espalda (unos 33 studs), "
+            "con cristales más chicos, fuego cian, rocas y losas. Queda un círculo que marca la mejora y el cristal "
+            "brilla hasta que revienta en esquirlas (CrystalSpireTimes). El golpe al brotar llega a CrystalSpireHitRadius "
+            "studs × escala; la mejora, a CrystalSpireRadius studs × escala."),
+    "duration": S_END + 1.2,
+    "zone": {"radius": SR, "height": SH},
+    "stomp": {"radius_doc": "el círculo de la mejora (cerca del cristal, Pebledon gira y corre más rápido)",
+              "hit_radius": S_HIT_R},
+    "times": {"Stomp": 0.0, "Erupt": S_ERUPT, "Crystal": round(S_RISE + 0.14, 3), "Shatter": S_END},
+    "zfield": SPIRE_FIELD,
+    "cubes": SPIRE_CUBES,
+    "lights": [
+        {"t": S_ERUPT, "h": 6, "color": CRYSTAL, "brightness": 7, "range": 50, "rise": 0.03, "hold": 0.1, "fall": 0.5},
+        {"t": S_RISE, "h": 18, "color": CRYSTAL, "brightness": 2.5, "range": 45, "rise": 0.25,
+         "hold": S_END - S_RISE - 0.25, "fall": 0.3},
+        {"t": S_END, "h": 14, "color": CRYSTAL, "brightness": 6, "range": 50, "rise": 0.03, "hold": 0.08, "fall": 0.5},
+    ],
+    "shakes": [(0.0, 0.6, 0.3), (S_ERUPT, 1.0, 0.55), (S_END, 0.6, 0.4)],
+}
+CRYSTAL_SPIRE["layers"] = spire_layers(random.Random(71))
+
+# ----------------------------------------------------------------------------- el aliento en el cristal: refracción
+# Si el aliento le pega al pilar de cristal, el cristal lo reparte: de su parte alta salen RAYOS MÁS DELGADOS (el
+# mismo fuego azul concentrado, sin aros) hacia cada enemigo del área mientras le sigan pegando. CrystalRefract(
+# cristal, enemigos) los dibuja (y :SetTargets / :Stop); el servidor decide cuándo y a quién, y reparte el daño.
+# CrystalRay es uno de esos rayos (sale sin carga y dura hasta que lo cortan, como mucho R_STOP s).
+R_GROW, R_FADE = 0.1, 0.22
+R_STOP = 3.4
+R_H = 20.0                      # de qué altura del cristal salen (escala 1)
+R_JET = 0.16                    # lo que tarda una llama en ir del cristal al enemigo
+
+
+def crystal_ray(stop=R_STOP):
+    """El rayo que sale del cristal (stop = cuándo se corta solo; en el juego lo corta CrystalRefract:Stop)."""
+    on = stop - 0.02
+    width_t = [(0, 0), (0.04, 1.4), (0.18, 1.0), (stop - 0.05, 1.0), (stop, 0.75), (stop + R_FADE, 0)]
+    alpha_t = [(0, 0), (stop, 0), (stop + R_FADE, 1)]
+
+    def rbeam(name, texture, width, color, transparency, le, bright, tex_len, speed, pulse, hz, z):
+        return {"name": name, "texture": texture, "mode": "Wrap", "tex_len": tex_len, "speed": speed,
+                "light_emission": le, "brightness": bright, "color": color, "transparency": transparency,
+                "width": width, "w0": 1.0, "w1": 1.0, "width_t": width_t, "alpha_t": alpha_t,
+                "pulse": pulse, "pulse_hz": hz, "zoffset": z}
+    imp = dict(line_u=1.0, offset=(0, 0, 2.0), impact=True)
+    beams = [
+        rbeam("Glow", "kz_beam_glow", 13, [(0, CRYSTAL), (1, CRYSTAL_MID)], [(0, 0.84), (0.03, 0.78), (1, 0.8)],
+              1.0, 0.85, 40, 0.4, 0.06, 5, 0.0),
+        rbeam("FireOuter", "pb_breath_fire", 9, BLUE_FIRE_OUT, [(0, 0.45), (0.04, 0.22), (1, 0.3)],
+              0.5, 1.4, 22, 5.0, 0.08, 9, 0.1),
+        rbeam("FireInner", "pb_breath_fire", 4.8, BLUE_FIRE, [(0, 0.35), (0.04, 0.1), (1, 0.15)],
+              1.0, 1.6, 14, 7.0, 0.08, 13, 0.2),
+        rbeam("Core", "kz_beam_core", 1.9, BREATH_CORE, [(0, 0.2), (0.03, 0.0), (1, 0.0)], 1.0, 2.2, 12, 3.5, 0.08, 15, 0.3),
+    ]
+    layers = [
+        # donde sale, en el cristal: un brillo y llamas
+        dict(name="RSourceGlow", texture="fx_glow", lifetime=(0.14, 0.2), size=[(0, 8, 1), (1, 10, 1)],
+             transparency=[(0, 0.6), (1, 0.85)], color=TURQ, light_emission=1.0, brightness=1.0, zoffset=2,
+             stream=[(0.0, on, 10, 10)]),
+        dict(name="RSourceFire", texture="fx_fire_2x2", flipbook=STATIC2x2, direction="Front", spread=(35, 35),
+             speed=(10, 24), drag=4, accel=(0, 4, 0), lifetime=(0.16, 0.26), size=[(0, 1.4, 0.4), (0.4, 3.6, 0.8), (1, 2)],
+             transparency=[(0, 0.2), (0.6, 0.45), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
+             rotation=(0, 360), stream=[(0.0, on, 26, 26)]),
+        # el chorro: llamas pegadas al rayo, del cristal al enemigo
+        dict(name="RFireJet", texture="fx_fire_2x2", flipbook=STATIC2x2, direction="Front", spread=(3, 3),
+             speed_len=(1 / R_JET, 1.08 / R_JET), lifetime=(R_JET * 0.92, R_JET), size=[(0, 1.6, 0.4), (0.5, 4, 1), (1, 5.5, 1.2)],
+             transparency=[(0, 0.25), (0.5, 0.35), (0.85, 0.55), (1, 1)], color=JET_FLAME, light_emission=0.7,
+             brightness=1.5, rotation=(0, 360), rot_speed=(-240, 240), locked=True, stream=[(0.0, on, 90, 90)]),
+        # el enemigo: el fuego le salpica encima mientras le pega
+        dict(name="RImpactBurst", texture="fx_fire_2x2", flipbook=STATIC2x2, emit=[(0, 8)], on_hit=True,
+             direction="Back", spread=(80, 80), speed=(18, 40), drag=3, accel=(0, 10, 0), lifetime=(0.3, 0.5),
+             size=[(0, 2.4, 0.8), (0.3, 6, 1.4), (1, 2)], transparency=[(0, 0.12), (0.6, 0.4), (1, 1)], color=FLAME,
+             light_emission=1.0, brightness=1.45, rotation=(0, 360), **imp),
+        dict(name="RImpactGlow", texture="fx_glow", lifetime=(0.14, 0.2), size=[(0, 9, 1.5), (1, 11, 1.5)],
+             transparency=[(0, 0.6), (1, 0.85)], color=TURQ, light_emission=1.0, brightness=1.0, zoffset=2,
+             stream=[(0.0, on, 12, 12)], **imp),
+        dict(name="RImpactFlames", texture="fx_fire_2x2", flipbook=STATIC2x2, direction="Back", spread=(75, 75),
+             speed=(10, 24), drag=2.5, accel=(0, 12, 0), lifetime=(0.25, 0.45), size=[(0, 2, 0.6), (0.3, 5, 1.2), (1, 1.2)],
+             transparency=[(0, 0.12), (0.6, 0.4), (1, 1)], color=FLAME, light_emission=1.0, brightness=1.45,
+             rotation=(0, 360), rot_speed=(-60, 60), stream=[(0.0, on, 30, 30)], **imp),
+        dict(name="RImpactSparks", texture="fx_spark002", direction="Back", spread=(80, 80), speed=(16, 40), drag=2,
+             accel=(0, 8, 0), lifetime=(0.35, 0.7), size=twinkle(0.45), color=GLINT, light_emission=1.0, brightness=1.9,
+             rotation=(0, 45), stream=[(0.0, on, 22, 22)], **imp),
+    ]
+    return {
+        "name": "CrystalRay",
+        "doc": ("PEBLEDON: un rayo de la refracción: fuego azul concentrado y delgado que sale del cristal hacia un "
+                "enemigo (sin carga; dura hasta que lo cortan, como mucho 3.4 s). Normalmente lo usa CrystalRefract."),
+        "duration": stop + R_FADE,
+        "beam": {"start": 0.0, "grow": R_GROW, "stop": stop, "fade": R_FADE, "max_len": 80, "trail_every": 0.1,
+                 "trail_move": 4, "rehit": 0.3, "light_color": CRYSTAL, "light_brightness": 2, "light_range": 24},
+        "refract": {"name": "CrystalRefract", "h": R_H},
+        "beams": beams,
+        "layers": layers,
+    }
+
+
+CRYSTAL_RAY = crystal_ray()
+
 SPECS = {
     "SeismicRoar": SEISMIC_ROAR,
     "BlueBreath": BLUE_BREATH,
+    "CrystalSpire": CRYSTAL_SPIRE,
+    "CrystalRay": CRYSTAL_RAY,
 }

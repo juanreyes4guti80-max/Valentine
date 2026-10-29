@@ -560,16 +560,19 @@ def make_slab(rng, SL, s, x, z, across_yaw, side, t_s):
     th = rng.uniform(*P["thick"]) * s * k
     ln = rng.uniform(*P["len"]) * s * k
     a = math.radians(rng.uniform(*P["tilt"]))
-    x += side * w / 2 * math.cos(a) * math.cos(across_yaw)
-    z += side * w / 2 * math.cos(a) * math.sin(across_yaw)
+    if not SL.get("centered"):        # (centered: el cristal del medio va justo en su punto)
+        x += side * w / 2 * math.cos(a) * math.cos(across_yaw)
+        z += side * w / 2 * math.cos(a) * math.sin(across_yaw)
     R3 = rot_y(-across_yaw + math.radians(rng.uniform(-SL["yaw"], SL["yaw"]))) @ \
         rot_x(math.radians(rng.uniform(-SL["pitch"], SL["pitch"]))) @ rot_z(-side * a)
     top = w / 2 * math.sin(a) + th / 2 * math.cos(a)            # del centro a la esquina más alta
     y0 = top * (2 * SL["show"] - 1)                              # show = qué fracción asoma del suelo
-    return {"t": t_s, "x": x, "z": z, "size": (w, th, ln), "R3": R3, "y0": y0, "drop": y0 + top + 0.3 * s,
+    # hex: un prisma hexagonal de ancho w (de esquina a esquina) hecho con tres bloques girados 60°
+    size = (w * 0.5, th, w * 0.866) if SL.get("hex") else (w, th, ln)
+    return {"t": t_s, "x": x, "z": z, "size": size, "R3": R3, "y0": y0, "drop": y0 + top + 0.3 * s,
             "hold": rng.uniform(*SL["hold"]), "rise": SL["rise"], "sink": SL["sink"],
             "ice": SL["ice"] if ice else None, "shatter": SL.get("end") == "shatter", "L": SL,
-            "tip_s": SL["tip"] * min(w, ln) if SL.get("tip") else 0.0}
+            "tip_s": SL["tip"] * min(size[0], size[2]) if SL.get("tip") else 0.0}
 
 
 # la punta de un cristal: un cubo parado sobre un vértice (su diagonal (1, 1, 1) hacia arriba) en la cara de arriba
@@ -603,10 +606,12 @@ def slab_poses(slabs, t, o0, Rf, ground_y):
         P = o0 + Rf @ np.array([L["x"], 0.0, L["z"]])
         P[1] = ground_y + y
         R3 = Rf @ L["R3"]
-        out.append((P, R3, L["size"], L))
-        if L.get("tip_s"):
-            ts = L["tip_s"]
-            out.append((P + R3 @ np.array([0.0, L["size"][1] / 2, 0.0]), R3 @ tip_rot(), (ts, ts, ts), L))
+        for k in (range(3) if L["L"].get("hex") else range(1)):
+            Rk = R3 @ rot_y(math.radians(60 * k))
+            out.append((P, Rk, L["size"], L))
+            if L.get("tip_s"):
+                ts = L["tip_s"]
+                out.append((P + Rk @ np.array([0.0, L["size"][1] / 2, 0.0]), Rk @ tip_rot(), (ts, ts, ts), L))
     return out
 
 
@@ -885,7 +890,7 @@ def axis_angle(axis, ang):
     return np.eye(3) + math.sin(ang) * K + (1 - math.cos(ang)) * (K @ K)
 
 
-def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0):
+def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0, glow=None):
     """Una Part (bloque) girada: caras sombreadas con el sol, como los cubos de la zona."""
     from PIL import ImageDraw
     half = np.asarray(size3, float) * 0.5
@@ -902,7 +907,7 @@ def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0):
     H, W = buf.shape[:2]
     x0, y0 = int(math.floor(min(xs))) - 1, int(math.floor(min(ys))) - 1
     x1, y1 = int(math.ceil(max(xs))) + 1, int(math.ceil(max(ys))) + 1
-    if x1 <= 0 or y1 <= 0 or x0 >= W or y0 >= H or (x1 - x0) * (y1 - y0) > 250000:
+    if x1 <= 0 or y1 <= 0 or x0 >= W or y0 >= H or (x1 - x0) * (y1 - y0) > 900000:
         return
     ss = 4 if (x1 - x0) < 60 else 2
     pw, ph = x1 - x0, y1 - y0
@@ -915,6 +920,8 @@ def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0):
         if n @ (cam.C - fc) <= 0:
             continue
         shade = 0.42 + 0.58 * max(0.0, float(n @ CubeSim.SUN))
+        if glow:
+            shade = glow * (0.8 + 0.2 * shade)
         m = Image.new("L", (pw * ss, ph * ss), 0)
         ImageDraw.Draw(m).polygon([((corners[q][0] - x0) * ss, (corners[q][1] - y0) * ss) for q in f], fill=255)
         mm = np.asarray(m.resize((pw, ph), Image.BOX), np.float32)[..., None] / 255
@@ -1031,13 +1038,15 @@ def draw_gash(buf, cam, tb, geo, t, o0, Rf, ground_y):
 
 def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration=None, seed=7,
            ground_y=0.0, background=None, extra_draw=None, frame_rot=None, length=0.0, bloom=None,
-           only_frames=None, cone_angle=60.0, zone=None, orb=None, props=None):
+           only_frames=None, cone_angle=60.0, zone=None, orb=None, props=None, beams=None):
     """frame_rot: rotación del contenedor (local->mundo). Emisiones (t, n, u, side, up):
     u = fracción a lo largo de la línea (adelante = -Z local), side = +X local, up = +Y.
     zone = {"R": radio, "H": altura} para los efectos en una zona circular (pilar).
     orb = {"mouth": (x, y, z), "targets": [(x, y, z), ...], "radius": opcional} para el proyectil que crece
     (agujero negro): la detonación va en la zona que cubre a los enemigos.
-    props = [{"pos", "size", "color"}]: cajas de referencia (p. ej. los enemigos) en la escena."""
+    props = [{"pos", "size", "color"}]: cajas de referencia (p. ej. los enemigos) en la escena; una función
+    props(t) si se mueven; "hidden" = no se dibuja (solo corta los rayos).
+    beams = [{"spec", "path", "t0", "scale"}]: rayos que se apuntan en la misma escena (BeamSim; path(t) desde t0)."""
     rng = random.Random(seed)
     tb = TexBank(tex_folder)
     duration = duration or spec["duration"] + 0.15
@@ -1061,6 +1070,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         o0 = np.array([c[0], ground_y, c[2]])
         orbst = OrbSim(spec, A, np.array([c[0], ground_y + O["height"] * scale, c[2]]), scale, cam, ground_y)
     meteors = []
+    beam_sims = [BeamSim(B["spec"], B["path"], random.Random(seed * 7919 + i + 1), B.get("scale", scale), ground_y,
+                         props, B.get("t0", 0.0)) for i, B in enumerate(beams or [])]
     blade_geo = BladeGeo(spec["blade"], length, scale) if spec.get("blade") else None
     blade_acc = {}
     field = ConeField(spec["field"], length, cone_angle, scale) if spec.get("field") else None
@@ -1242,6 +1253,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                             m.stuck_until = t + stick
                             continue
                     m.dead = True
+        # los rayos que se apuntan (BeamSim)
+        for bs in beam_sims:
+            np_, nm_ = bs.step(t, parts)
+            parts += np_
+            meteors += nm_
         # integrar (el primer frame de cada partícula se dibuja en su origen)
         alive = []
         for p in parts:
@@ -1276,10 +1292,13 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             lz = orbst.lens(cam)
             if lz is not None:
                 items.append((cam.to_cam(lz[0])[2], 2, lz, None, None))
-        for pr_ in (props or []) if draw else []:
+        for pr_ in ((props(t) if callable(props) else props) or []) if draw else []:   # props(t): cajas que se mueven
             d = cam.to_cam(np.asarray(pr_["pos"], float) + np.array([0.0, pr_["size"][1] / 2, 0.0]))
-            if d[2] > 0.5:
+            if d[2] > 0.5 and not pr_.get("hidden"):
                 items.append((d[2], 3, pr_, d, None))
+        for bs in (beam_sims if draw else []):
+            for dz, _, obj in bs.items(cam, t):
+                items.append((dz, 7, obj, None, None))
         if draw and spec.get("beams"):
             Bq = spec["beam"]          # el rayo sale a los `start` s y en `grow` s llega al impacto
             kg = min(max((t - Bq["start"]) / max(Bq["grow"], 1e-3), 0.0), 1.0)
@@ -1345,13 +1364,19 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             if kind == 4:
                 draw_beam(buf, tb, cam, *obj, t, scale)
                 continue
+            if kind == 7:                    # (el rayo trae su propio segundo)
+                draw_beam(buf, tb, cam, *obj, scale)
+                continue
             if kind == 5:
                 asp = obj.L["sprite"].get("aspect", (1, 0.8, 0.9))
                 draw_solid_box(buf, cam, obj.pos, obj.R3, np.asarray(asp, float) * obj.size, obj.col)
                 continue
             if kind == 6:
                 P, R3, size3, SLb = obj
-                if SLb["ice"]:
+                if SLb["ice"] and SLb["ice"].get("material") == "Neon":     # brilla solo (Neon): casi sin sombra
+                    draw_solid_box(buf, cam, P, R3, size3, np.array(SLb["ice"]["color"], float) / 255 * 1.3,
+                                   1 - SLb["ice"]["transparency"], glow=1.0)
+                elif SLb["ice"]:
                     draw_solid_box(buf, cam, P, R3, size3, np.array(SLb["ice"]["color"], float) / 255 * 1.15,
                                    1 - SLb["ice"]["transparency"])
                 else:
@@ -1405,17 +1430,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 m.R3 = axis_angle(m.axis, m.spin * dt) @ m.R3
             m.age += dt
         for p in parts:
-            L = p.L
-            drag = L.get("drag", 0.0)
-            acc = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
-            p.vel = p.vel * (2.0 ** (-drag * dt)) + acc * dt
-            if p.lock is not None:
-                p.lofs = p.lofs + p.vel * dt
-                p.pos = p.lock.pos + p.lofs
-            else:
-                p.pos = p.pos + p.vel * dt
-            p.rot += p.rots * dt
-            p.age += dt
+            move_particle(p, dt)
     return stats
 
 
@@ -2104,98 +2119,106 @@ def ray_scene(A, d, max_len, ground_y, props):
     return best
 
 
-def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, seed=7, ground_y=0.0,
-                background=None, bloom=None, only_frames=None, props=None, info=None):
-    """El rayo que se apunta (como playBeam en el módulo): path(t) -> (origen, dirección) en cada cuadro. Lanza el
+class BeamSim:
+    """Un rayo que se apunta (como playBeam en el módulo): path(t) -> (origen, dirección) en cada cuadro. Lanza el
     rayo contra el suelo y los props, se corta en la primera superficie (o en max_len × escala) y mueve con él el
     impacto (capas impact / on_hit), la punta (line_u = 1), lo que va a lo largo (cajas len_k) y el suelo de
-    debajo (at_ground); deja marcas (trail) al barrer el suelo. info: lista donde se anota (t, largo, pega)."""
-    rng = random.Random(seed)
-    tb = TexBank(tex_folder)
-    Bq = spec["beam"]
-    duration = duration or spec["duration"] + 0.15
-    nframes = int(round(duration * FPS))
-    os.makedirs(out_dir, exist_ok=True)
-    bg = background if background is not None else make_background(cam, ground_y)
-    max_len = Bq["max_len"] * scale
-    parts, meteors, pending = [], [], []        # pending: (t, fn) ráfagas programadas
-    streams = [L for L in spec["layers"] if L.get("stream") and not L.get("decal")]
-    acc = {id(L): 0.0 for L in streams}
-    trails = [L for L in spec["layers"] if L.get("trail")]
-    onhit = [L for L in spec["layers"] if L.get("on_hit")]
-    st = {"len": 0.05, "hit": False, "was": False, "last_end": -1e9, "ground": None, "trail_t": -1e9,
-          "trail_p": None, "A": None, "R": np.eye(3)}
+    debajo (at_ground); deja marcas (trail) al barrer el suelo. t0 = segundo de la escena en que empieza: sus
+    tiempos (y los de path) son desde ese momento. step() devuelve las partículas y rocas nuevas del cuadro."""
 
-    def tip_origin(L):
+    def __init__(self, spec, path, rng, scale=1.0, ground_y=0.0, props=None, t0=0.0):
+        self.spec, self.path, self.rng, self.scale, self.ground_y, self.props, self.t0 = \
+            spec, path, rng, scale, ground_y, props, t0
+        self.Bq = spec["beam"]
+        self.max_len = self.Bq["max_len"] * scale
+        self.pending = []                  # (t, fn): ráfagas programadas
+        self.streams = [L for L in spec["layers"] if L.get("stream") and not L.get("decal")]
+        self.acc = {id(L): 0.0 for L in self.streams}
+        self.trails = [L for L in spec["layers"] if L.get("trail")]
+        self.onhit = [L for L in spec["layers"] if L.get("on_hit")]
+        self.st = {"len": 0.05, "hit": False, "was": False, "last_end": -1e9, "ground": None, "trail_t": -1e9,
+                   "trail_p": None, "A": None, "R": np.eye(3), "d": None}
+        self.new_p, self.new_m = [], []
+        for L in spec["layers"]:
+            if L.get("on_hit") or L.get("trail"):
+                continue
+            for ev in L.get("emit", []):
+                def fire(L=L, n=ev[1]):
+                    if self.gate(L):
+                        self.emit_layer(L, n)
+                self.pending.append((ev[0], fire))
+
+    def tip_origin(self, L):
+        st = self.st
         return st["A"] + st["R"] @ np.array([0.0, 0.0, -L.get("line_u", 0.0) * st["len"]])
 
-    def gate(L):
+    def gate(self, L):
+        st = self.st
         if L.get("at_ground"):
             return st["hit"] and st["ground"] is not None
         if L.get("impact"):
             return st["hit"]
         return True
 
-    def emit_layer(L, n):
+    def emit_layer(self, L, n):
+        st, rng, scale = self.st, self.rng, self.scale
         if L.get("at_ground"):
             g = st["ground"]
             if g is None:
                 return
             for _ in range(n):
-                parts.append(spawn(L, g, rng, scale, np.eye(3), st["len"]))
+                self.new_p.append(spawn(L, g, rng, scale, np.eye(3), st["len"]))
         elif L.get("type") == "meteor":
             for _ in range(n):
-                meteors.append(spawn_meteor(L, tip_origin(L), rng, scale, st["R"]))
+                self.new_m.append(spawn_meteor(L, self.tip_origin(L), rng, scale, st["R"]))
         else:
             for _ in range(n):
-                p = spawn(L, tip_origin(L), rng, scale, st["R"], st["len"])
+                p = spawn(L, self.tip_origin(L), rng, scale, st["R"], st["len"])
                 if L.get("locked"):        # LockedToPart: la partícula va pegada al rayo y gira con él
                     p.bloc = st["R"].T @ (p.pos - st["A"])
                     p.bvl = st["R"].T @ p.vel
-                parts.append(p)
+                    p.lock = self
+                self.new_p.append(p)
 
-    for L in spec["layers"]:
-        if L.get("on_hit") or L.get("trail"):
-            continue
-        for ev in L.get("emit", []):
-            def fire(L=L, n=ev[1]):
-                if gate(L):
-                    emit_layer(L, n)
-            pending.append((ev[0], fire))
-    dt = 1.0 / FPS
-    stats = []
-    for fi in range(nframes):
-        t = fi * dt
-        A, d = path(t)
+    def step(self, ts, parts, info=None):
+        """Avanza al segundo ts de la escena: apunta, corta el rayo, mueve las partículas pegadas a él y suelta lo de
+        este cuadro. Devuelve (partículas nuevas, rocas nuevas)."""
+        st, Bq, rng, scale, dt = self.st, self.Bq, self.rng, self.scale, 1.0 / FPS
+        self.new_p, self.new_m = [], []
+        t = ts - self.t0
+        if t < 0:
+            return self.new_p, self.new_m
+        A, d = self.path(t)
         A, d = np.asarray(A, float), np.asarray(d, float) / np.linalg.norm(d)
-        head = min(max((t - Bq["start"]) / max(Bq["grow"], 1e-3), 0.0), 1.0) * max_len
-        th = ray_scene(A, d, max_len, ground_y, props)
-        ray_len = th if th is not None else max_len
+        head = min(max((t - Bq["start"]) / max(Bq["grow"], 1e-3), 0.0), 1.0) * self.max_len
+        props = self.props(ts) if callable(self.props) else self.props
+        th = ray_scene(A, d, self.max_len, self.ground_y, props)
+        ray_len = th if th is not None else self.max_len
         st["len"] = max(min(ray_len, head), 0.05)
         st["hit"] = th is not None and head >= ray_len and t < Bq["stop"]
-        st["A"], st["R"] = A, look_frame(d)
+        st["A"], st["R"], st["d"] = A, look_frame(d), d
         for p in parts:                    # las pegadas al rayo siguen su origen y su dirección de ahora
-            if p.bloc is not None:
+            if p.bloc is not None and p.lock is self:
                 p.pos = A + st["R"] @ p.bloc
         P = A + d * st["len"]
         st["ground"] = None
         if st["hit"]:
             Q = P - d * 2 * scale
-            st["ground"] = np.array([Q[0], ground_y, Q[2]])
+            st["ground"] = np.array([Q[0], self.ground_y, Q[2]])
         if info is not None:
             info.append((t, st["len"], st["hit"]))
         # cada vez que empieza a pegar: las capas on_hit (sus emit son relativos a ese momento)
         if st["hit"] and not st["was"] and t - st["last_end"] >= Bq["rehit"]:
-            for L in onhit:
+            for L in self.onhit:
                 for ev in L.get("emit", []):
                     def fire(L=L, n=ev[1]):
                         if L.get("decal"):
                             if st["ground"] is not None:
                                 for _ in range(n):
-                                    parts.append(spawn(L, st["ground"], rng, scale, np.eye(3), st["len"]))
-                        elif gate(L) or not L.get("impact"):
-                            emit_layer(L, n)
-                    pending.append((t + ev[0], fire))
+                                    self.new_p.append(spawn(L, st["ground"], rng, scale, np.eye(3), st["len"]))
+                        elif self.gate(L) or not L.get("impact"):
+                            self.emit_layer(L, n)
+                    self.pending.append((t + ev[0], fire))
         if st["was"] and not st["hit"]:
             st["last_end"] = t
         st["was"] = st["hit"]
@@ -2204,28 +2227,91 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
         if g is not None and t - st["trail_t"] >= Bq["trail_every"] and (
                 st["trail_p"] is None or np.linalg.norm(g - st["trail_p"]) >= Bq["trail_move"] * scale):
             st["trail_t"], st["trail_p"] = t, g
-            for L in trails:
-                parts.append(spawn(L, g, rng, scale, np.eye(3), st["len"]))
+            for L in self.trails:
+                self.new_p.append(spawn(L, g, rng, scale, np.eye(3), st["len"]))
         # ráfagas en su tiempo
         keep = []
-        for (te, fn) in pending:
+        for (te, fn) in self.pending:
             if te <= t + 1e-9:
                 fn()
             else:
                 keep.append((te, fn))
-        pending = keep
+        self.pending = keep
         # emisión continua (en la posición de ahora)
-        for L in streams:
+        for L in self.streams:
             rate = 0.0
             for (a0, a1, r0, r1) in L["stream"]:
                 if a0 <= t <= a1:
                     rate += r0 + (r1 - r0) * (t - a0) / max(a1 - a0, 1e-6)
-            if not gate(L):
+            if not self.gate(L):
                 rate = 0.0
-            acc[id(L)] += rate * dt
-            while acc[id(L)] >= 1.0:
-                acc[id(L)] -= 1.0
-                emit_layer(L, 1)
+            self.acc[id(L)] += rate * dt
+            while self.acc[id(L)] >= 1.0:
+                self.acc[id(L)] -= 1.0
+                self.emit_layer(L, 1)
+        return self.new_p, self.new_m
+
+    def items(self, cam, ts):
+        """Los Beams del rayo para dibujar en ts: (profundidad, 4, (Bm, A, B, ancho, desvanecido))."""
+        st, Bq, t = self.st, self.Bq, ts - self.t0
+        out = []
+        if t < Bq["start"] or st["A"] is None:
+            return out
+        B0, B1 = st["A"], st["A"] + st["d"] * st["len"]
+        for bi, Bm in enumerate(self.spec["beams"]):
+            w = Bm["width"] * self.scale * eval_seq(Bm["width_t"], t) * \
+                (1 + Bm["pulse"] * smooth_noise(bi * 7.1, t * Bm["pulse_hz"]))
+            bfade = eval_seq(Bm["alpha_t"], t)
+            if w > 0.02 and bfade < 0.999:
+                if not st["hit"]:          # sin superficie: la punta se esfuma (igual que el módulo)
+                    kp = [k for k in Bm["transparency"] if k[0] < 0.8]
+                    v = float(np.interp(0.8, [k[0] for k in Bm["transparency"]],
+                                        [k[1] for k in Bm["transparency"]]))
+                    Bm = dict(Bm, transparency=kp + [(0.8, v), (1.0, 1.0)])
+                dz = cam.to_cam((B0 + B1) * 0.5)[2] - Bm.get("zoffset", 0.0) * self.scale
+                out.append((dz, 4, (Bm, B0, B1, w, bfade, t)))
+        return out
+
+
+def move_particle(p, dt):
+    """Integra una partícula un cuadro (las pegadas a un rayo, LockedToPart, se mueven en el marco del rayo)."""
+    L = p.L
+    accp = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
+    p.vel = p.vel * (2.0 ** (-L.get("drag", 0.0) * dt)) + accp * dt
+    if p.bloc is not None:
+        st = p.lock.st
+        p.bvl = p.bvl * (2.0 ** (-L.get("drag", 0.0) * dt)) + (st["R"].T @ accp) * dt
+        p.bloc = p.bloc + p.bvl * dt
+        p.pos = st["A"] + st["R"] @ p.bloc
+        p.vel = st["R"] @ p.bvl            # (para orientar las que van a lo largo de la velocidad)
+    elif p.lock is not None:
+        p.lofs = p.lofs + p.vel * dt
+        p.pos = p.lock.pos + p.lofs
+    else:
+        p.pos = p.pos + p.vel * dt
+    p.rot += p.rots * dt
+    p.age += dt
+
+
+def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, seed=7, ground_y=0.0,
+                background=None, bloom=None, only_frames=None, props=None, info=None):
+    """El rayo que se apunta (BeamSim) solo en la escena, con sus rocas. info: lista donde se anota (t, largo,
+    pega). props = cajas de la escena (el rayo se corta en ellas; "hidden" = no se dibujan)."""
+    rng = random.Random(seed)
+    tb = TexBank(tex_folder)
+    duration = duration or spec["duration"] + 0.15
+    nframes = int(round(duration * FPS))
+    os.makedirs(out_dir, exist_ok=True)
+    bg = background if background is not None else make_background(cam, ground_y)
+    bs = BeamSim(spec, path, rng, scale, ground_y, props)
+    parts, meteors = [], []
+    dt = 1.0 / FPS
+    stats = []
+    for fi in range(nframes):
+        t = fi * dt
+        np_, nm_ = bs.step(t, parts, info)
+        parts += np_
+        meteors += nm_
         # meteoros: estelas y aterrizaje
         for m in meteors:
             if m.dead:
@@ -2235,7 +2321,7 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
                     m.acc[k] += TL["rate"] * dt
                     while m.acc[k] >= 1.0:
                         m.acc[k] -= 1.0
-                        p = spawn(TL, m.pos, rng, scale, st["R"])
+                        p = spawn(TL, m.pos, rng, scale, bs.st["R"])
                         if TL.get("locked"):
                             p.lock, p.lofs = m, p.pos - m.pos
                         parts.append(p)
@@ -2262,28 +2348,15 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
                     items.append((dd[2] - p.L.get("zoffset", 0.0) * p.ks, 0, p, dd))
             for pr_ in props or []:
                 dd = cam.to_cam(np.asarray(pr_["pos"], float))
-                if dd[2] > 0.5:
+                if dd[2] > 0.5 and not pr_.get("hidden"):
                     items.append((dd[2], 3, pr_, dd))
-            if t >= Bq["start"]:
-                B0, B1 = A, A + d * st["len"]
-                for bi, Bm in enumerate(spec["beams"]):
-                    w = Bm["width"] * scale * eval_seq(Bm["width_t"], t) * \
-                        (1 + Bm["pulse"] * smooth_noise(bi * 7.1, t * Bm["pulse_hz"]))
-                    bfade = eval_seq(Bm["alpha_t"], t)
-                    if w > 0.02 and bfade < 0.999:
-                        if not st["hit"]:          # sin superficie: la punta se esfuma (igual que el módulo)
-                            kp = [k for k in Bm["transparency"] if k[0] < 0.8]
-                            v = float(np.interp(0.8, [k[0] for k in Bm["transparency"]],
-                                                [k[1] for k in Bm["transparency"]]))
-                            Bm = dict(Bm, transparency=kp + [(0.8, v), (1.0, 1.0)])
-                        dz = cam.to_cam((B0 + B1) * 0.5)[2] - Bm.get("zoffset", 0.0) * scale
-                        items.append((dz, 4, (Bm, B0, B1, w, bfade), None))
+            items += [(dz, k, obj, None) for dz, k, obj in bs.items(cam, t)]
             items.sort(key=lambda x: -x[0])
             for _, kind, obj, dd in items:
                 if kind == 3:
                     draw_box(buf, cam, obj)
                 elif kind == 4:
-                    draw_beam(buf, tb, cam, *obj, t, scale)
+                    draw_beam(buf, tb, cam, *obj, scale)
                 else:
                     draw_particle(buf, tb, cam, obj, dd, scale, ground_y, 1.0)
             for m in meteors:
@@ -2317,21 +2390,7 @@ def render_beam(spec, tex_folder, out_dir, cam, path, scale=1.0, duration=None, 
             m.rot += m.rots * dt
             m.age += dt
         for p in parts:
-            L = p.L
-            accp = np.asarray(L.get("accel", (0, 0, 0)), float) * p.ks
-            p.vel = p.vel * (2.0 ** (-L.get("drag", 0.0) * dt)) + accp * dt
-            if p.bloc is not None:
-                p.bvl = p.bvl * (2.0 ** (-L.get("drag", 0.0) * dt)) + (st["R"].T @ accp) * dt
-                p.bloc = p.bloc + p.bvl * dt
-                p.pos = st["A"] + st["R"] @ p.bloc
-                p.vel = st["R"] @ p.bvl            # (para orientar las que van a lo largo de la velocidad)
-            elif p.lock is not None:
-                p.lofs = p.lofs + p.vel * dt
-                p.pos = p.lock.pos + p.lofs
-            else:
-                p.pos = p.pos + p.vel * dt
-            p.rot += p.rots * dt
-            p.age += dt
+            move_particle(p, dt)
     return stats
 
 

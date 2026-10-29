@@ -3,6 +3,7 @@
   pb_sonic_ring      onda de sonido: un anillo nítido con ondas detrás (blanco con alfa: el color lo pone la capa)
   pb_vein_cracks     grietas del suelo con venas de energía (blanco con alfa: oscuras = suelo roto, turquesa = venas)
   pb_breath_fire     Beam del aliento: fuego concentrado en vetas que corre a lo largo (se repite a lo largo del rayo)
+  pb_buff_ring       el círculo de la mejora alrededor del cristal: un anillo nítido con marcas de cristal (Decal)
 uso: python gen_pebledon_textures.py <carpeta textures de Pebledon>"""
 import math
 import os
@@ -215,6 +216,30 @@ def breath_fire(w, h):
     return im.resize((w, h), Image.LANCZOS)
 
 
+# ----------------------------------------------------------------------------- el círculo de la mejora
+def buff_ring(n):
+    """Anillo nítido en el borde (r = 0.95) con un halo, una segunda línea fina por dentro, seis marcas de cristal
+    (rombos) que apuntan hacia afuera y un velo muy suave hacia el centro."""
+    x, y = grid(n)
+    r = np.sqrt(x * x + y * y)
+    th = np.arctan2(y, x)
+    a = np.exp(-((r - 0.95) / 0.012) ** 2) + 0.5 * np.exp(-((r - 0.95) / 0.04) ** 2)
+    a += 0.55 * np.exp(-((r - 0.86) / 0.006) ** 2)
+    # seis rombos de cristal sobre el anillo (y seis chicos entre ellos)
+    for k in range(12):
+        ang = k * math.pi / 6
+        big = k % 2 == 0
+        L, W = (0.15, 0.05) if big else (0.07, 0.024)
+        dth = np.angle(np.exp(1j * (th - ang)))
+        u = (r - 0.905) / L                       # a lo largo (radial)
+        v = dth * r / W                           # a lo ancho
+        a = np.maximum(a, np.clip(1 - (np.abs(u) + np.abs(v)), 0, 1) ** 0.5 * (1.0 if big else 0.8))
+    a += 0.16 * np.clip((r - 0.35) / 0.6, 0, 1) ** 2 * (r < 0.95)
+    a *= np.clip((0.995 - r) / 0.02, 0, 1)
+    v = np.clip(0.8 + 0.2 * np.exp(-((r - 0.95) / 0.02) ** 2), 0, 1)
+    return v, np.clip(a, 0, 1)
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
     n = 256 * SS
@@ -225,6 +250,8 @@ def main(out):
     v, a = vein_cracks(512 * SS)
     save(v, a, os.path.join(out, "pb_vein_cracks.png"), 512)
     breath_fire(512, 128).save(os.path.join(out, "pb_breath_fire.png"))
+    v, a = buff_ring(1024 * SS)
+    save(v, a, os.path.join(out, "pb_buff_ring.png"), 1024)
     print("OK texturas de Pebledon ->", out)
 
 

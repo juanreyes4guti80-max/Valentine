@@ -11,6 +11,8 @@
 		local PebledonVFX = require(ReplicatedStorage.PebledonVFX)
 		PebledonVFX.SeismicRoar(boca.WorldCFrame, nil, nil, 1, 1)   -- skill 1 (o la CFrame de la cabeza)
 		local aliento = PebledonVFX.BlueBreath(boca, rival, 1, 1, { pebledon })   -- skill 2 (aliento:AimAt(...))
+		local cristal = PebledonVFX.CrystalSpire(pie.Position, puntoEnElSuelo, 1, 1)   -- skill 3 (el pie y dónde brota)
+		local rayos = PebledonVFX.CrystalRefract(cristal, { rival1, rival2 }, 1)   -- el aliento le pega al cristal
 
 	ANTES DE USARLO:
 	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
@@ -44,8 +46,10 @@ PebledonVFX.TEXTURES = {
 	kz_beam_core = "rbxassetid://0",
 	kz_beam_glow = "rbxassetid://0",
 	kz_beam_ring = "rbxassetid://0",
+	mf_shard_2x2 = "rbxassetid://0",
 	om_cubes_2x2 = "rbxassetid://0",
 	pb_breath_fire = "rbxassetid://0",
+	pb_buff_ring = "rbxassetid://0",
 	pb_rock_2x2 = "rbxassetid://0",
 	pb_sonic_ring = "rbxassetid://0",
 	pb_vein_cracks = "rbxassetid://0",
@@ -57,6 +61,9 @@ PebledonVFX.Parent = workspace :: Instance
 PebledonVFX.Quality = 1
 -- Luz breve en el impacto (del color del efecto)
 PebledonVFX.UseLight = true
+-- Color y material de los cubos de destrucción (nil = los del suelo donde sale el efecto)
+PebledonVFX.CubeColor = nil :: Color3?
+PebledonVFX.CubeMaterial = nil :: Enum.Material?
 -- Modelos (MeshPart) para las piezas sólidas, por nombre de capa: si pones uno, el módulo lo clona en vez de
 -- un bloque. Por ejemplo: MoonfangVFX.Meshes.IceChunks = ReplicatedStorage.MoonfangMeshes.IceChunk
 PebledonVFX.Meshes = {} :: { [string]: Instance }
@@ -831,7 +838,9 @@ end
 -- modelo de Blender en PebledonVFX.Meshes[mesh].
 type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
 	rise: number, sink: number, ice: any, shatter: boolean, mesh: string?, L: any, part: BasePart?, base: CFrame?,
-	gy: number, gone: boolean, tip: number?, tipPart: BasePart? }
+	gy: number, gone: boolean, tip: number?, tipPart: BasePart?, full: Vector3?, extra: { SlabExtra }? }
+-- los otros bloques de un prisma hexagonal (y sus puntas), girados yaw alrededor del eje de la pieza
+type SlabExtra = { part: BasePart, yaw: number, tip: boolean }
 
 -- la punta de un cristal: un cubo parado sobre un vértice (su diagonal (1, 1, 1) hacia arriba) en la cara de arriba
 local TIP_ROT = CFrame.fromAxisAngle(Vector3.new(-1, 0, 1).Unit, math.acos(1 / math.sqrt(3)))
@@ -867,18 +876,22 @@ local function makeSlab(SL: any, s: number, x: number, z: number, yaw: number, s
 	local th = rng:NextNumber(P("thick")[1], P("thick")[2]) * s * k
 	local ln = rng:NextNumber(P("len")[1], P("len")[2]) * s * k
 	local a = math.rad(rng:NextNumber(P("tilt")[1], P("tilt")[2]))
-	x += side * w / 2 * math.cos(a) * math.cos(yaw)
-	z += side * w / 2 * math.cos(a) * math.sin(yaw)
+	if not SL.centered then -- (centered: el cristal del medio va justo en su punto)
+		x += side * w / 2 * math.cos(a) * math.cos(yaw)
+		z += side * w / 2 * math.cos(a) * math.sin(yaw)
+	end
 	local rot = CFrame.Angles(0, -yaw + math.rad(rng:NextNumber(-SL.yaw, SL.yaw)), 0)
 		* CFrame.Angles(math.rad(rng:NextNumber(-SL.pitch, SL.pitch)), 0, 0) * CFrame.Angles(0, 0, -side * a)
 	local top = w / 2 * math.sin(a) + th / 2 * math.cos(a)
 	local y0 = top * (2 * SL.show - 1)
+	-- hex: un prisma hexagonal de ancho w (de esquina a esquina) hecho con tres bloques girados 60°
+	local size = if SL.hex then Vector3.new(w * 0.5, th, w * 0.866) else Vector3.new(w, th, ln)
 	return {
-		t = tS, x = x, z = z, size = Vector3.new(w, th, ln), rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
+		t = tS, x = x, z = z, size = size, rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
 		hold = rng:NextNumber(SL.hold[1], SL.hold[2]), rise = SL.rise, sink = SL.sink,
 		ice = if ice then SL.ice else nil, shatter = SL["end"] == "shatter",
 		mesh = if ice and SL.ice.mesh then SL.ice.mesh else SL.mesh, L = SL,
-		part = nil, base = nil, gy = 0, gone = false,
+		part = nil, base = nil, gy = 0, gone = false, full = if SL.hex then Vector3.new(w, th, w) else nil,
 	}
 end
 
@@ -910,6 +923,7 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 				p.CanQuery = false
 				p.CanTouch = false
 				p.Parent = holder
+				p.Size = L.full or L.size -- (un modelo de Blender va entero: sin los bloques del hexágono)
 			else
 				p = bladePart("Slab", holder)
 				if L.ice then
@@ -920,16 +934,47 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 					p.Material = mat
 					p.Color = col:Lerp(Color3.new(0, 0, 0), rng:NextNumber(0, 0.2))
 				end
+				p.Size = L.size
+				local function copy(name: string, size: Vector3): BasePart
+					local c = bladePart(name, holder)
+					c.Material = p.Material
+					c.Color = p.Color
+					c.Transparency = p.Transparency
+					c.Size = size
+					return c
+				end
 				if L.tip then
-					local tp = bladePart("SlabTip", holder)
-					tp.Material = p.Material
-					tp.Color = p.Color
-					tp.Transparency = p.Transparency
-					tp.Size = Vector3.new(L.tip, L.tip, L.tip)
-					L.tipPart = tp
+					L.tipPart = copy("SlabTip", Vector3.new(L.tip, L.tip, L.tip))
+				end
+				if L.L.hex then -- los otros dos bloques del prisma (y sus puntas)
+					local ex = {}
+					for k = 1, 2 do
+						table.insert(ex, { part = copy("SlabHex", L.size), yaw = math.rad(60 * k), tip = false })
+						if L.tip then
+							table.insert(ex, { part = copy("SlabTip", Vector3.new(L.tip, L.tip, L.tip)),
+								yaw = math.rad(60 * k), tip = true })
+						end
+					end
+					L.extra = ex
 				end
 			end
-			p.Size = L.size
+			if L.L.query then -- el rayo lo puede tocar (p. ej. el cristal de Pebledon); sigue sin chocar
+				p.CanQuery = true
+				if L.tipPart then
+					L.tipPart.CanQuery = true
+				end
+				for _, ex in (L.extra or {}) :: { SlabExtra } do
+					ex.part.CanQuery = true
+				end
+			end
+			if L.L.part_name then -- (los bloques; las puntas siguen siendo SlabTip)
+				p.Name = L.L.part_name
+				for _, ex in (L.extra or {}) :: { SlabExtra } do
+					if not ex.tip then
+						ex.part.Name = L.L.part_name
+					end
+				end
+			end
 			L.part = p
 		end
 		local part = L.part :: BasePart
@@ -944,6 +989,9 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			if L.tipPart then
 				L.tipPart:Destroy()
 			end
+			for _, ex in (L.extra or {}) :: { SlabExtra } do
+				ex.part:Destroy()
+			end
 			L.gone = true
 			if onShatter then
 				onShatter(L, pos)
@@ -957,12 +1005,19 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			if L.tipPart then
 				L.tipPart:Destroy()
 			end
+			for _, ex in (L.extra or {}) :: { SlabExtra } do
+				ex.part:Destroy()
+			end
 			L.gone = true
 			continue
 		end
 		part.CFrame = (L.base :: CFrame) + Vector3.new(0, L.gy + y, 0)
 		if L.tipPart then
 			L.tipPart.CFrame = part.CFrame * CFrame.new(0, L.size.Y / 2, 0) * TIP_ROT
+		end
+		for _, ex in (L.extra or {}) :: { SlabExtra } do
+			local cf = part.CFrame * CFrame.Angles(0, ex.yaw, 0)
+			ex.part.CFrame = if ex.tip then cf * CFrame.new(0, L.size.Y / 2, 0) * TIP_ROT else cf
 		end
 	end
 	return alive
@@ -1701,6 +1756,69 @@ local function playBeam(spec: Layer, origin: any, target: any, scale: number?, s
 		ctl.HitPosition = if hitting then P else nil
 		ctl.HitInstance = if hitting and hit then hit.Instance else nil
 	end)
+	return ctl
+end
+
+-- ---------------------------------------------------------------- un rayo que se reparte (refracción)
+-- crystal = de dónde salen (el contenedor que devolvió el efecto del cristal, una Part, un Model, un Vector3 o un
+-- CFrame: salen de refract.h studs × escala sobre él, y no chocan con él). Un rayo por objetivo; :SetTargets cambia
+-- a quiénes (corta los que ya no están y abre los nuevos) y :Stop los corta todos.
+export type RefractControl = {
+	Active: boolean,
+	Rays: { [any]: BeamControl },
+	SetTargets: (RefractControl, targets: { any }) -> (),
+	Stop: (RefractControl) -> (),
+}
+
+local function playRefract(spec: Layer, crystal: any, targets: { any }, scale: number?, shake: number?): RefractControl
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local base = Vector3.zero
+	local ignore: { Instance } = {}
+	if typeof(crystal) == "Instance" then
+		table.insert(ignore, crystal :: Instance)
+		if (crystal :: Instance):IsA("BasePart") then
+			base = (crystal :: BasePart).Position
+		elseif (crystal :: Instance):IsA("Model") then
+			base = (crystal :: Model):GetPivot().Position
+		end
+	elseif typeof(crystal) == "CFrame" then
+		base = (crystal :: CFrame).Position
+	elseif typeof(crystal) == "Vector3" then
+		base = crystal :: Vector3
+	end
+	local origin = base + Vector3.new(0, spec.refract.h * s, 0)
+	local ctl: RefractControl
+	ctl = {
+		Active = true,
+		Rays = {},
+		SetTargets = function(self: RefractControl, list: { any })
+			if not self.Active then
+				return
+			end
+			local keep: { [any]: boolean } = {}
+			for _, tg in list do
+				keep[tg] = true
+				local r = self.Rays[tg]
+				if not (r and r.Active) then
+					self.Rays[tg] = playBeam(spec, origin, tg, scale, shake, ignore)
+				end
+			end
+			for tg, r in self.Rays do
+				if not keep[tg] then
+					r:Stop()
+					self.Rays[tg] = nil
+				end
+			end
+		end,
+		Stop = function(self: RefractControl)
+			self.Active = false
+			for _, r in self.Rays do
+				r:Stop()
+			end
+			table.clear(self.Rays)
+		end,
+	}
+	ctl:SetTargets(targets)
 	return ctl
 end
 
@@ -2667,7 +2785,7 @@ local function runScreen(spec: Layer, Z: Zone)
 end
 
 -- efecto en una zona circular: carga, erupción, pilar y colapso (+ cubos de destrucción)
-local function _playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
+local function playZone(spec: Layer, cf: CFrame, scale: number?, radius: number?, height: number?, shake: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
 	local holder, Z = startZone(spec, cf, s, radius or spec.zone.radius * s, height or spec.zone.height * s, 8)
 	if spec.screen then
@@ -2675,6 +2793,38 @@ local function _playZone(spec: Layer, cf: CFrame, scale: number?, radius: number
 	end
 	finish(spec, holder, s, shake, {})
 	return holder
+end
+
+-- un pisotón que hace brotar una zona a la distancia (p. ej. un cristal): la zona va en target, mirando desde el pie,
+-- y las capas "path" van por el suelo del pie (u = 0) al centro (u = 1): path_emit = {t, n, u, lado, alto}, que aquí
+-- se pasan a ring_emit de la zona según la distancia de esta llamada
+local function playStompZone(spec: Layer, foot: any, target: any, scale: number?, shake: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local fp: Vector3 = if typeof(foot) == "CFrame" then (foot :: CFrame).Position else foot :: Vector3
+	local tp: Vector3 = if typeof(target) == "CFrame" then (target :: CFrame).Position else target :: Vector3
+	local flat = Vector3.new(tp.X - fp.X, 0, tp.Z - fp.Z)
+	local dist = flat.Magnitude
+	local dir = if dist > 1e-3 then flat.Unit else Vector3.new(0, 0, -1)
+	local R = spec.zone.radius * s
+	local sp = table.clone(spec)
+	sp.layers = table.create(#spec.layers)
+	for i, L in spec.layers do
+		if L.path_emit then
+			-- en el marco de la zona el pie queda detrás (+Z) a dist studs
+			local c = table.clone(L)
+			local evs = table.create(#L.path_emit)
+			for j, e in L.path_emit do
+				local x, z = e[4] * s, dist * (1 - e[3])
+				evs[j] = { e[1], e[2], (math.atan2(z, x) / (2 * math.pi)) % 1, math.sqrt(x * x + z * z) / R, e[5] }
+			end
+			c.ring_emit = evs
+			c.radial = false
+			sp.layers[i] = c
+		else
+			sp.layers[i] = L
+		end
+	end
+	return playZone(sp, CFrame.lookAt(tp, tp + dir), scale, nil, nil, shake)
 end
 
 -- ---------------------------------------------------------------- proyectil que crece (agujero negro)
@@ -9594,6 +9744,3027 @@ end
 -- segundos (desde la llamada) en que llega a su largo máximo y en que se corta solo
 PebledonVFX.BlueBreathStart = 0.69
 PebledonVFX.BlueBreathStop = 3.55
+
+local SPEC_CrystalSpire = {
+	name = "CrystalSpire",
+	duration = 9.2,
+	cleanup = 11.04,
+	layers = {
+		{
+			name = "StompFlash",
+			texture = "fx_glow",
+			lifetime = {0.2, 0.2},
+			size = {
+				{0, 4, 0},
+				{0.3, 14, 0},
+				{1, 16, 0},
+			},
+			transparency = {
+				{0, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 2,
+			path_emit = {
+				{0, 1, 0, 0, 1},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StompCracks",
+			texture = "pb_vein_cracks",
+			lifetime = {1.6, 1.6},
+			rotation = {0, 360},
+			size = {
+				{0, 5, 0},
+				{0.08, 20, 0},
+				{1, 21, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.06, 0.3, 0},
+				{0.7, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 236, 232},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 0.8,
+			path_emit = {
+				{0, 1, 0, 0, 0.15},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StompDark",
+			texture = "pb_vein_cracks",
+			lifetime = {2, 2},
+			rotation = {0, 360},
+			size = {
+				{0, 6, 0},
+				{0.08, 24, 0},
+				{1, 25, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.06, 0.25, 0},
+				{0.75, 0.42, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{34, 30, 27},
+				},
+				{
+					1,
+					{40, 36, 32},
+				},
+			},
+			path_emit = {
+				{0, 1, 0, 0, 0.1},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StompDust",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {85, 85},
+			speed = {14, 28},
+			drag = 3,
+			accel = {0, 2, 0},
+			lifetime = {0.7, 1.1},
+			size = {
+				{0, 5, 1},
+				{1, 15, 3},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.4, 0.58, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{160, 150, 136},
+				},
+				{
+					0.5,
+					{138, 128, 116},
+				},
+				{
+					1,
+					{112, 104, 94},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			path_emit = {
+				{0, 18, 0, 0, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "StompChips",
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {50, 50},
+			speed = {18, 36},
+			accel = {0, -150, 0},
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 0.8, 0.3},
+				{1, 0.6, 0.2},
+			},
+			color = {
+				{
+					0,
+					{124, 116, 104},
+				},
+				{
+					1,
+					{96, 88, 78},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			path_emit = {
+				{0, 16, 0, 0, 0.5},
+			},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathGlow",
+			texture = "fx_glow",
+			lifetime = {0.9, 1.2},
+			size = {
+				{0, 3, 0},
+				{0.1, 9, 1},
+				{1, 7, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.08, 0.35, 0},
+				{0.6, 0.6, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			path_emit = {
+				{0.04, 1, 0.06, 0, 0.18},
+				{0.066, 1, 0.1364, 0, 0.18},
+				{0.092, 1, 0.2127, 0, 0.18},
+				{0.118, 1, 0.2891, 0, 0.18},
+				{0.144, 1, 0.3655, 0, 0.18},
+				{0.17, 1, 0.4418, 0, 0.18},
+				{0.196, 1, 0.5182, 0, 0.18},
+				{0.222, 1, 0.5945, 0, 0.18},
+				{0.248, 1, 0.6709, 0, 0.18},
+				{0.274, 1, 0.7473, 0, 0.18},
+				{0.3, 1, 0.8236, 0, 0.18},
+				{0.326, 1, 0.9, 0, 0.18},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathCracks",
+			texture = "pb_vein_cracks",
+			lifetime = {1.5, 1.9},
+			rotation = {0, 360},
+			size = {
+				{0, 5, 0},
+				{0.08, 17, 2},
+				{1, 18, 2},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.06, 0.2, 0},
+				{0.7, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 236, 232},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 0.9,
+			path_emit = {
+				{0.04, 1, 0.06, 0, 0.15},
+				{0.066, 1, 0.1364, 0, 0.15},
+				{0.092, 1, 0.2127, 0, 0.15},
+				{0.118, 1, 0.2891, 0, 0.15},
+				{0.144, 1, 0.3655, 0, 0.15},
+				{0.17, 1, 0.4418, 0, 0.15},
+				{0.196, 1, 0.5182, 0, 0.15},
+				{0.222, 1, 0.5945, 0, 0.15},
+				{0.248, 1, 0.6709, 0, 0.15},
+				{0.274, 1, 0.7473, 0, 0.15},
+				{0.3, 1, 0.8236, 0, 0.15},
+				{0.326, 1, 0.9, 0, 0.15},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathDark",
+			texture = "pb_vein_cracks",
+			lifetime = {2, 2.4},
+			rotation = {0, 360},
+			size = {
+				{0, 5, 0},
+				{0.08, 16, 2},
+				{1, 17, 2},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.06, 0.25, 0},
+				{0.75, 0.42, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{34, 30, 27},
+				},
+				{
+					1,
+					{40, 36, 32},
+				},
+			},
+			path_emit = {
+				{0.04, 1, 0.06, 0, 0.1},
+				{0.066, 1, 0.1364, 0, 0.1},
+				{0.092, 1, 0.2127, 0, 0.1},
+				{0.118, 1, 0.2891, 0, 0.1},
+				{0.144, 1, 0.3655, 0, 0.1},
+				{0.17, 1, 0.4418, 0, 0.1},
+				{0.196, 1, 0.5182, 0, 0.1},
+				{0.222, 1, 0.5945, 0, 0.1},
+				{0.248, 1, 0.6709, 0, 0.1},
+				{0.274, 1, 0.7473, 0, 0.1},
+				{0.3, 1, 0.8236, 0, 0.1},
+				{0.326, 1, 0.9, 0, 0.1},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathFlames",
+			texture = "fx_aura_tongue_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {15, 15},
+			speed = {5, 10},
+			accel = {0, 8, 0},
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 2, 0.6},
+				{0.3, 5, 1},
+				{1, 1.2, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.45,
+			rotation = {-10, 10},
+			path_emit = {
+				{0.037, 2, 0.05, 0, 0.6},
+				{0.06, 2, 0.1169, 0, 0.6},
+				{0.083, 2, 0.1838, 0, 0.6},
+				{0.105, 2, 0.2508, 0, 0.6},
+				{0.128, 2, 0.3177, 0, 0.6},
+				{0.151, 2, 0.3846, 0, 0.6},
+				{0.174, 2, 0.4515, 0, 0.6},
+				{0.196, 2, 0.5185, 0, 0.6},
+				{0.219, 2, 0.5854, 0, 0.6},
+				{0.242, 2, 0.6523, 0, 0.6},
+				{0.265, 2, 0.7192, 0, 0.6},
+				{0.287, 2, 0.7862, 0, 0.6},
+				{0.31, 2, 0.8531, 0, 0.6},
+				{0.333, 2, 0.92, 0, 0.6},
+			},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathSparks",
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {35, 35},
+			speed = {8, 18},
+			drag = 1.5,
+			accel = {0, 6, 0},
+			lifetime = {0.4, 0.8},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.44, 0},
+				{0.22, 0.63, 0},
+				{0.38, 1.53, 0},
+				{0.55, 0.54, 0},
+				{0.72, 1.26, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			rotation = {0, 45},
+			path_emit = {
+				{0.037, 3, 0.05, 0, 0.8},
+				{0.06, 3, 0.1169, 0, 0.8},
+				{0.083, 3, 0.1838, 0, 0.8},
+				{0.105, 3, 0.2508, 0, 0.8},
+				{0.128, 3, 0.3177, 0, 0.8},
+				{0.151, 3, 0.3846, 0, 0.8},
+				{0.174, 3, 0.4515, 0, 0.8},
+				{0.196, 3, 0.5185, 0, 0.8},
+				{0.219, 3, 0.5854, 0, 0.8},
+				{0.242, 3, 0.6523, 0, 0.8},
+				{0.265, 3, 0.7192, 0, 0.8},
+				{0.287, 3, 0.7862, 0, 0.8},
+				{0.31, 3, 0.8531, 0, 0.8},
+				{0.333, 3, 0.92, 0, 0.8},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathRocks",
+			texture = "pb_rock_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {40, 40},
+			speed = {10, 22},
+			drag = 0.5,
+			accel = {0, -150, 0},
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 1.1, 0.4},
+				{1, 0.9, 0.3},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			path_emit = {
+				{0.037, 2, 0.05, 0, 0.4},
+				{0.064, 2, 0.1291, 0, 0.4},
+				{0.091, 2, 0.2082, 0, 0.4},
+				{0.118, 2, 0.2873, 0, 0.4},
+				{0.145, 2, 0.3664, 0, 0.4},
+				{0.171, 2, 0.4455, 0, 0.4},
+				{0.198, 2, 0.5245, 0, 0.4},
+				{0.225, 2, 0.6036, 0, 0.4},
+				{0.252, 2, 0.6827, 0, 0.4},
+				{0.279, 2, 0.7618, 0, 0.4},
+				{0.306, 2, 0.8409, 0, 0.4},
+				{0.333, 2, 0.92, 0, 0.4},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptFlash",
+			texture = "fx_glow",
+			lifetime = {0.3, 0.3},
+			size = {
+				{0, 10, 0},
+				{0.25, 44, 0},
+				{1, 48, 0},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.5, 0.65, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 4,
+			ring_emit = {
+				{0.38, 1, 0, 0, 6},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptStar",
+			texture = "kk_star_09",
+			lifetime = {0.25, 0.25},
+			size = {
+				{0, 8, 0},
+				{0.2, 40, 0},
+				{1, 10, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {0, 90},
+			zoffset = 5,
+			ring_emit = {
+				{0.5, 1, 0, 0, 18},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptFire",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {55, 55},
+			speed = {20, 48},
+			drag = 2.5,
+			accel = {0, 10, 0},
+			lifetime = {0.4, 0.7},
+			size = {
+				{0, 4, 1},
+				{0.3, 10, 2},
+				{1, 4, 0},
+			},
+			transparency = {
+				{0, 0.12, 0},
+				{0.6, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.45,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			radial = false,
+			ring_emit = {
+				{0.38, 20, 0, 0, 1.5},
+			},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptTongues",
+			texture = "fx_aura_tongue_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			orientation = "VelocityParallel",
+			direction = "Top",
+			spread = {55, 55},
+			speed = {25, 50},
+			drag = 3,
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 4, 1},
+				{0.4, 10, 2},
+				{1, 3, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			radial = false,
+			ring_emit = {
+				{0.4, 16, 0, 0, 2},
+			},
+			accel = {0, 0, 0},
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptRocks",
+			texture = "pb_rock_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {65, 65},
+			speed = {35, 75},
+			drag = 0.4,
+			accel = {0, -150, 0},
+			lifetime = {0.8, 1.3},
+			size = {
+				{0, 2.6, 1},
+				{1, 2.2, 0.8},
+			},
+			transparency = {
+				{0, 0, 0},
+				{0.85, 0, 0},
+				{1, 1, 0},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			radial = false,
+			ring_emit = {
+				{0.38, 28, 0, 0, 2},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					1,
+					{255, 255, 255},
+				},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptDust",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Front",
+			pitch = 12,
+			spread = {12, 8},
+			speed = {28, 50},
+			drag = 2.5,
+			accel = {0, 2, 0},
+			lifetime = {1, 1.5},
+			size = {
+				{0, 6, 1.5},
+				{1, 18, 3},
+			},
+			transparency = {
+				{0, 0.35, 0},
+				{0.4, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{160, 150, 136},
+				},
+				{
+					0.5,
+					{138, 128, 116},
+				},
+				{
+					1,
+					{112, 104, 94},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			ring_emit = {
+				{0.4, 1, 0, 0.0446, 2},
+				{0.4, 1, 0.0714, 0.0446, 2},
+				{0.4, 1, 0.1429, 0.0446, 2},
+				{0.4, 1, 0.2143, 0.0446, 2},
+				{0.4, 1, 0.2857, 0.0446, 2},
+				{0.4, 1, 0.3571, 0.0446, 2},
+				{0.4, 1, 0.4286, 0.0446, 2},
+				{0.4, 1, 0.5, 0.0446, 2},
+				{0.4, 1, 0.5714, 0.0446, 2},
+				{0.4, 1, 0.6429, 0.0446, 2},
+				{0.4, 1, 0.7143, 0.0446, 2},
+				{0.4, 1, 0.7857, 0.0446, 2},
+				{0.4, 1, 0.8571, 0.0446, 2},
+				{0.4, 1, 0.9286, 0.0446, 2},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptCracks",
+			texture = "pb_vein_cracks",
+			lifetime = {8.6, 8.6},
+			rotation = {0, 360},
+			size = {
+				{0, 10, 0},
+				{0.02, 52, 0},
+				{1, 54, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.01, 0.3, 0},
+				{0.9, 0.42, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{110, 236, 232},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 0.9,
+			ring_emit = {
+				{0.39, 1, 0, 0, 0.2},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "EruptDark",
+			texture = "pb_vein_cracks",
+			lifetime = {8.8, 8.8},
+			rotation = {0, 360},
+			size = {
+				{0, 12, 0},
+				{0.02, 60, 0},
+				{1, 62, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.01, 0.2, 0},
+				{0.9, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{34, 30, 27},
+				},
+				{
+					1,
+					{40, 36, 32},
+				},
+			},
+			ring_emit = {
+				{0.39, 1, 0, 0, 0.12},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			light_emission = 0,
+			brightness = 1,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BuffRing",
+			texture = "pb_buff_ring",
+			lifetime = {7.6, 7.6},
+			size = {
+				{0, 42.2111, 0},
+				{0.03, 146.3317, 0},
+				{0.05, 140.7035, 0},
+				{1, 140.7035, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.02, 0.05, 0},
+				{0.06, 0.25, 0},
+				{0.3, 0.38, 0},
+				{0.5, 0.28, 0},
+				{0.7, 0.38, 0},
+				{0.97, 0.3, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{150, 250, 245},
+				},
+				{
+					1,
+					{110, 236, 232},
+				},
+			},
+			light_emission = 1,
+			ring_emit = {
+				{0.45, 1, 0, 0, 0.25},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BuffGlow",
+			texture = "fx_glow",
+			lifetime = {7.6, 7.6},
+			size = {
+				{0, 70.3518, 0},
+				{0.03, 133.6683, 0},
+				{1, 133.6683, 0},
+			},
+			transparency = {
+				{0, 1, 0},
+				{0.03, 0.82, 0},
+				{0.97, 0.86, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			ring_emit = {
+				{0.45, 1, 0, 0, 0.2},
+			},
+			decal = true,
+			orientation = "VelocityPerpendicular",
+			direction = "Top",
+			speed = {0.01, 0.01},
+			spread = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			brightness = 1,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RingFlames",
+			texture = "fx_aura_tongue_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			zdist = {
+				r = {0.97, 1},
+				h = {0.2, 0.4},
+				area = false,
+			},
+			direction = "Top",
+			spread = {8, 8},
+			speed = {3, 7},
+			accel = {0, 6, 0},
+			lifetime = {0.35, 0.6},
+			size = {
+				{0, 1.5, 0.5},
+				{0.3, 3.8, 0.8},
+				{1, 1, 0},
+			},
+			transparency = {
+				{0, 0.25, 0},
+				{0.6, 0.5, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.4,
+			rotation = {-10, 10},
+			radial = false,
+			zstream = {
+				{0.5, 8, 80, 80},
+			},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RingEmbers",
+			texture = "fx_spark002",
+			zdist = {
+				r = {0.95, 1},
+				h = {0.3, 1},
+				area = false,
+			},
+			direction = "Top",
+			spread = {20, 20},
+			speed = {4, 9},
+			drag = 1,
+			accel = {0, 4, 0},
+			lifetime = {0.7, 1.3},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.28, 0},
+				{0.22, 0.56, 0},
+				{0.38, 1.36, 0},
+				{0.55, 0.48, 0},
+				{0.72, 1.12, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			rotation = {0, 45},
+			radial = false,
+			zstream = {
+				{0.5, 8, 45, 45},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CrystalGlow",
+			texture = "fx_glow",
+			zdist = {
+				r = {0, 0.0149},
+				h = {8, 26},
+				area = false,
+			},
+			lifetime = {0.5, 0.8},
+			size = {
+				{0, 16, 3},
+				{1, 20, 3},
+			},
+			transparency = {
+				{0, 0.86, 0},
+				{0.5, 0.76, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			radial = false,
+			zstream = {
+				{0.52, 8, 8, 8},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BaseFlames",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			zdist = {
+				r = {0.0557, 0.1337},
+				h = {0.2, 0.6},
+				area = false,
+			},
+			direction = "Top",
+			spread = {12, 12},
+			speed = {6, 12},
+			accel = {0, 9, 0},
+			lifetime = {0.45, 0.75},
+			size = {
+				{0, 3, 0.8},
+				{0.3, 8, 1.6},
+				{1, 2, 0},
+			},
+			transparency = {
+				{0, 0.12, 0},
+				{0.6, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.45,
+			rotation = {-15, 15},
+			radial = false,
+			zstream = {
+				{0.5, 1, 80, 40},
+				{1, 8, 40, 40},
+			},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "BaseTongues",
+			texture = "fx_aura_tongue_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			zdist = {
+				r = {0.0557, 0.1486},
+				h = {0.2, 0.5},
+				area = false,
+			},
+			direction = "Top",
+			spread = {10, 10},
+			speed = {4, 9},
+			accel = {0, 8, 0},
+			lifetime = {0.35, 0.6},
+			size = {
+				{0, 2, 0.6},
+				{0.3, 6, 1.2},
+				{1, 1.5, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.45,
+			rotation = {-10, 10},
+			radial = false,
+			zstream = {
+				{0.5, 8, 16, 16},
+			},
+			drag = 0,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CrystalEmbers",
+			texture = "fx_spark002",
+			zdist = {
+				r = {0, 0.13},
+				h = {0.5, 3},
+				area = false,
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {6, 14},
+			drag = 1,
+			accel = {0, 4, 0},
+			lifetime = {0.8, 1.6},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.6, 0},
+				{0.22, 0.7, 0},
+				{0.38, 1.7, 0},
+				{0.55, 0.6, 0},
+				{0.72, 1.4, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			rotation = {0, 45},
+			radial = false,
+			zstream = {
+				{0.6, 8, 18, 18},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CrystalGlints",
+			texture = "kk_star_09",
+			zdist = {
+				r = {0, 0.052},
+				h = {3, 28},
+				area = false,
+			},
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 0, 0},
+				{0.08, 3.84, 0},
+				{0.22, 1.68, 0},
+				{0.38, 4.08, 0},
+				{0.55, 1.44, 0},
+				{0.72, 3.36, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 45},
+			zoffset = 6,
+			radial = false,
+			zstream = {
+				{0.7, 8, 4, 4},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ShatterFlash",
+			texture = "fx_glow",
+			lifetime = {0.3, 0.3},
+			size = {
+				{0, 10, 0},
+				{0.25, 38, 0},
+				{1, 42, 0},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.5, 0.72, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			brightness = 0.9,
+			zoffset = 4,
+			ring_emit = {
+				{8, 1, 0, 0, 14},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "ShatterDust",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Front",
+			pitch = 20,
+			spread = {15, 10},
+			speed = {18, 36},
+			drag = 2.5,
+			accel = {0, 3, 0},
+			lifetime = {0.9, 1.3},
+			size = {
+				{0, 5, 1},
+				{1, 15, 3},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.4, 0.58, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{160, 150, 136},
+				},
+				{
+					0.5,
+					{138, 128, 116},
+				},
+				{
+					1,
+					{112, 104, 94},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			ring_emit = {
+				{8.02, 1, 0, 0.0371, 3},
+				{8.02, 1, 0.1, 0.0371, 3},
+				{8.02, 1, 0.2, 0.0371, 3},
+				{8.02, 1, 0.3, 0.0371, 3},
+				{8.02, 1, 0.4, 0.0371, 3},
+				{8.02, 1, 0.5, 0.0371, 3},
+				{8.02, 1, 0.6, 0.0371, 3},
+				{8.02, 1, 0.7, 0.0371, 3},
+				{8.02, 1, 0.8, 0.0371, 3},
+				{8.02, 1, 0.9, 0.0371, 3},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+	},
+	shakes = {
+		{0, 0.6, 0.3},
+		{0.38, 1, 0.55},
+		{8, 0.6, 0.4},
+	},
+	zone = {
+		radius = 70,
+		height = 40,
+	},
+	lights = {
+		{
+			t = 0.38,
+			h = 6,
+			color = {94, 229, 224},
+			brightness = 7,
+			range = 50,
+			rise = 0.03,
+			hold = 0.1,
+			fall = 0.5,
+		},
+		{
+			t = 0.4,
+			h = 18,
+			color = {94, 229, 224},
+			brightness = 2.5,
+			range = 45,
+			rise = 0.25,
+			hold = 7.35,
+			fall = 0.3,
+		},
+		{
+			t = 8,
+			h = 14,
+			color = {94, 229, 224},
+			brightness = 6,
+			range = 50,
+			rise = 0.03,
+			hold = 0.08,
+			fall = 0.5,
+		},
+	},
+	times = {
+		Stomp = 0,
+		Erupt = 0.38,
+		Crystal = 0.54,
+		Shatter = 8,
+	},
+	cubes = {
+		gravity = 170,
+		bounce = 0.3,
+		friction = 0.55,
+		spin = {240, 820},
+		rest = {0.4, 1},
+		fade = 0.35,
+		settle = 0.12,
+		shrink = {0.16, 0.26},
+		dissolve_time = {0.2, 0.5},
+		color_var = {0.75, 1.08},
+		dark = 0.12,
+		neon_colors = {
+			{94, 229, 224},
+			{52, 147, 152},
+			{150, 245, 240},
+		},
+		groups = {
+			{
+				name = "Erupt",
+				mode = "blast",
+				count = 60,
+				t = {0.38, 0.43},
+				r = {0.0074, 0.1486},
+				size = {0.5, 2.8},
+				skew = 2.4,
+				out = {18, 55},
+				up = {45, 100},
+				dissolve = 0.35,
+				neon = 0.2,
+			},
+			{
+				name = "Shatter",
+				mode = "blast",
+				count = 40,
+				t = {8, 8.05},
+				r = {0, 0.0743},
+				size = {0.5, 2.2},
+				skew = 2.2,
+				out = {25, 70},
+				up = {25, 70},
+				dissolve = 0.45,
+				neon = 0.7,
+			},
+		},
+		fx = {
+			name = "CubeDissolve",
+			texture = "fx_spark002",
+			direction = "Top",
+			spread = {180, 180},
+			speed = {4, 12},
+			lifetime = {0.25, 0.4},
+			size = {
+				{0, 0, 0},
+				{0.2, 2, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.7,
+			rotation = {0, 45},
+			emit_n = 2,
+			accel = {0, 0, 0},
+			drag = 0,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+	},
+	zfield = {
+		groups = {
+			{
+				hold = {1, 1},
+				sink = 0.4,
+				name = "PebledonCrystal",
+				count = 1,
+				r = {0, 0},
+				centered = true,
+				hex = true,
+				query = true,
+				part_name = "PebledonCrystal",
+				lean = "random",
+				wid = {9.5, 9.5},
+				thick = {30, 30},
+				len = {9.5, 9.5},
+				tilt = {0, 0},
+				yaw = 180,
+				pitch = 0,
+				show = 0.93,
+				rise = 0.14,
+				t = 0.4,
+				delay = {0, 0},
+				end_at = {8, 8},
+				["end"] = "shatter",
+				ice = {
+					color = {94, 229, 224},
+					material = "Glass",
+					transparency = 0.3,
+				},
+				tip = 0.85,
+				mesh = "PebledonCrystal",
+				shatter = {
+					{
+						name = "ShardBurst",
+						texture = "mf_shard_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 40},
+						},
+						shape = {
+							type = "Box",
+							size = {8, 26, 8},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {18, 45},
+						drag = 0.5,
+						accel = {0, -110, 0},
+						lifetime = {0.6, 1.1},
+						size = {
+							{0, 1.8, 0.6},
+							{1, 1.3, 0.4},
+						},
+						transparency = {
+							{0, 0, 0},
+							{0.85, 0.1, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{215, 255, 252},
+							},
+							{
+								0.4,
+								{94, 229, 224},
+							},
+							{
+								1,
+								{52, 147, 152},
+							},
+						},
+						light_emission = 0.6,
+						brightness = 1.5,
+						rotation = {0, 360},
+						rot_speed = {-500, 500},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "ShardGlints",
+						texture = "kk_star_09",
+						emit = {
+							{0, 14},
+						},
+						shape = {
+							type = "Box",
+							size = {8, 26, 8},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {3, 9},
+						drag = 2,
+						lifetime = {0.3, 0.55},
+						size = {
+							{0, 0, 0},
+							{0.08, 4.48, 0},
+							{0.22, 1.96, 0},
+							{0.38, 4.76, 0},
+							{0.55, 1.68, 0},
+							{0.72, 3.92, 0},
+							{1, 0, 0},
+						},
+						color = {
+							{
+								0,
+								{255, 255, 255},
+							},
+							{
+								0.5,
+								{205, 255, 250},
+							},
+							{
+								1,
+								{120, 235, 228},
+							},
+						},
+						light_emission = 1,
+						brightness = 2,
+						rotation = {0, 45},
+						accel = {0, 0, 0},
+						transparency = {
+							{0, 0, 0},
+							{1, 0, 0},
+						},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "ShardFire",
+						texture = "fx_fire_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 18},
+						},
+						shape = {
+							type = "Box",
+							size = {8, 26, 8},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {40, 40},
+						speed = {6, 14},
+						drag = 1.5,
+						accel = {0, 8, 0},
+						lifetime = {0.35, 0.6},
+						size = {
+							{0, 3, 1},
+							{0.3, 7, 1.5},
+							{1, 2, 0},
+						},
+						transparency = {
+							{0, 0.15, 0},
+							{0.6, 0.42, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{175, 255, 250},
+							},
+							{
+								0.3,
+								{100, 236, 230},
+							},
+							{
+								0.65,
+								{60, 185, 186},
+							},
+							{
+								1,
+								{39, 121, 127},
+							},
+						},
+						light_emission = 1,
+						brightness = 1.45,
+						rotation = {0, 360},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+				},
+			},
+			{
+				hold = {1, 1},
+				sink = 0.4,
+				name = "CrystalCore",
+				count = 1,
+				r = {0, 0},
+				centered = true,
+				hex = true,
+				lean = "random",
+				wid = {5.6, 5.6},
+				thick = {27, 27},
+				len = {5.6, 5.6},
+				tilt = {0, 0},
+				yaw = 180,
+				pitch = 0,
+				show = 0.93,
+				rise = 0.14,
+				t = 0.4,
+				delay = {0, 0},
+				end_at = {8, 8},
+				["end"] = "shatter",
+				ice = {
+					color = {60, 205, 205},
+					material = "Neon",
+					transparency = 0.05,
+				},
+				tip = 0.85,
+				mesh = "CrystalCore",
+			},
+			{
+				hold = {1, 1},
+				sink = 0.4,
+				name = "CrystalShards",
+				count = 6,
+				ring = true,
+				r = {0.0557, 0.0817},
+				hex = true,
+				lean = "radial",
+				wid = {4, 5.6},
+				thick = {11, 18},
+				len = {4, 5.6},
+				tilt = {18, 32},
+				yaw = 10,
+				pitch = 6,
+				show = 0.86,
+				rise = 0.13,
+				t = 0.45,
+				delay = {0, 0.07},
+				end_at = {7.96, 8.04},
+				["end"] = "shatter",
+				ice = {
+					color = {110, 236, 232},
+					material = "Glass",
+					transparency = 0.25,
+				},
+				tip = 0.85,
+				mesh = "CrystalShards",
+				shatter = {
+					{
+						name = "ShardBurst",
+						texture = "mf_shard_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 10},
+						},
+						shape = {
+							type = "Box",
+							size = {4, 12, 4},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {18, 45},
+						drag = 0.5,
+						accel = {0, -110, 0},
+						lifetime = {0.6, 1.1},
+						size = {
+							{0, 1.8, 0.6},
+							{1, 1.3, 0.4},
+						},
+						transparency = {
+							{0, 0, 0},
+							{0.85, 0.1, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{215, 255, 252},
+							},
+							{
+								0.4,
+								{94, 229, 224},
+							},
+							{
+								1,
+								{52, 147, 152},
+							},
+						},
+						light_emission = 0.6,
+						brightness = 1.5,
+						rotation = {0, 360},
+						rot_speed = {-500, 500},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "ShardGlints",
+						texture = "kk_star_09",
+						emit = {
+							{0, 4},
+						},
+						shape = {
+							type = "Box",
+							size = {4, 12, 4},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {3, 9},
+						drag = 2,
+						lifetime = {0.3, 0.55},
+						size = {
+							{0, 0, 0},
+							{0.08, 4.48, 0},
+							{0.22, 1.96, 0},
+							{0.38, 4.76, 0},
+							{0.55, 1.68, 0},
+							{0.72, 3.92, 0},
+							{1, 0, 0},
+						},
+						color = {
+							{
+								0,
+								{255, 255, 255},
+							},
+							{
+								0.5,
+								{205, 255, 250},
+							},
+							{
+								1,
+								{120, 235, 228},
+							},
+						},
+						light_emission = 1,
+						brightness = 2,
+						rotation = {0, 45},
+						accel = {0, 0, 0},
+						transparency = {
+							{0, 0, 0},
+							{1, 0, 0},
+						},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "ShardFire",
+						texture = "fx_fire_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 5},
+						},
+						shape = {
+							type = "Box",
+							size = {4, 12, 4},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {40, 40},
+						speed = {6, 14},
+						drag = 1.5,
+						accel = {0, 8, 0},
+						lifetime = {0.35, 0.6},
+						size = {
+							{0, 3, 1},
+							{0.3, 7, 1.5},
+							{1, 2, 0},
+						},
+						transparency = {
+							{0, 0.15, 0},
+							{0.6, 0.42, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{175, 255, 250},
+							},
+							{
+								0.3,
+								{100, 236, 230},
+							},
+							{
+								0.65,
+								{60, 185, 186},
+							},
+							{
+								1,
+								{39, 121, 127},
+							},
+						},
+						light_emission = 1,
+						brightness = 1.45,
+						rotation = {0, 360},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+				},
+			},
+			{
+				hold = {1, 1},
+				sink = 0.4,
+				name = "CrystalShards",
+				count = 12,
+				r = {0.0891, 0.1857},
+				hex = true,
+				lean = "radial",
+				wid = {1.8, 3},
+				thick = {4, 8},
+				len = {1.8, 3},
+				tilt = {14, 40},
+				yaw = 15,
+				pitch = 8,
+				show = 0.82,
+				rise = 0.12,
+				t = 0.48,
+				sweep = 0.4038,
+				delay = {0, 0.08},
+				end_at = {7.98, 8.08},
+				["end"] = "shatter",
+				ice = {
+					color = {94, 229, 224},
+					material = "Neon",
+					transparency = 0.15,
+				},
+				tip = 0.85,
+				mesh = "CrystalShards",
+				shatter = {
+					{
+						name = "ShardBurst",
+						texture = "mf_shard_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 5},
+						},
+						shape = {
+							type = "Box",
+							size = {2, 6, 2},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {18, 45},
+						drag = 0.5,
+						accel = {0, -110, 0},
+						lifetime = {0.6, 1.1},
+						size = {
+							{0, 1.8, 0.6},
+							{1, 1.3, 0.4},
+						},
+						transparency = {
+							{0, 0, 0},
+							{0.85, 0.1, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{215, 255, 252},
+							},
+							{
+								0.4,
+								{94, 229, 224},
+							},
+							{
+								1,
+								{52, 147, 152},
+							},
+						},
+						light_emission = 0.6,
+						brightness = 1.5,
+						rotation = {0, 360},
+						rot_speed = {-500, 500},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "ShardGlints",
+						texture = "kk_star_09",
+						emit = {
+							{0, 2},
+						},
+						shape = {
+							type = "Box",
+							size = {2, 6, 2},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {80, 80},
+						speed = {3, 9},
+						drag = 2,
+						lifetime = {0.3, 0.55},
+						size = {
+							{0, 0, 0},
+							{0.08, 4.48, 0},
+							{0.22, 1.96, 0},
+							{0.38, 4.76, 0},
+							{0.55, 1.68, 0},
+							{0.72, 3.92, 0},
+							{1, 0, 0},
+						},
+						color = {
+							{
+								0,
+								{255, 255, 255},
+							},
+							{
+								0.5,
+								{205, 255, 250},
+							},
+							{
+								1,
+								{120, 235, 228},
+							},
+						},
+						light_emission = 1,
+						brightness = 2,
+						rotation = {0, 45},
+						accel = {0, 0, 0},
+						transparency = {
+							{0, 0, 0},
+							{1, 0, 0},
+						},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+					{
+						name = "ShardFire",
+						texture = "fx_fire_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 2},
+						},
+						shape = {
+							type = "Box",
+							size = {2, 6, 2},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {40, 40},
+						speed = {6, 14},
+						drag = 1.5,
+						accel = {0, 8, 0},
+						lifetime = {0.35, 0.6},
+						size = {
+							{0, 3, 1},
+							{0.3, 7, 1.5},
+							{1, 2, 0},
+						},
+						transparency = {
+							{0, 0.15, 0},
+							{0.6, 0.42, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{175, 255, 250},
+							},
+							{
+								0.3,
+								{100, 236, 230},
+							},
+							{
+								0.65,
+								{60, 185, 186},
+							},
+							{
+								1,
+								{39, 121, 127},
+							},
+						},
+						light_emission = 1,
+						brightness = 1.45,
+						rotation = {0, 360},
+						rot_speed = {0, 0},
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
+				},
+			},
+			{
+				hold = {1, 1},
+				sink = 0.5,
+				name = "SpireSlabs",
+				count = 36,
+				r = {0.0594, 0.3714},
+				lean = "radial",
+				wid = {2.6, 5.2},
+				thick = {0.7, 1.4},
+				len = {2.6, 5.2},
+				tilt = {18, 46},
+				yaw = 14,
+				pitch = 10,
+				show = 0.6,
+				rise = 0.08,
+				t = 0.38,
+				sweep = 0.3231,
+				delay = {0, 0.04},
+				end_at = {8.3, 8.7},
+				ground = true,
+				mesh = "SpireSlabs",
+			},
+		},
+	},
+}
+
+-- PEBLEDON SKILL 3 (Pilar de cristal): pisa fuerte y una grieta turquesa corre por el suelo hasta el punto elegido; ahí el suelo revienta y brota duro un pilar de cristal como los de su espalda (unos 33 studs), con cristales más chicos, fuego cian, rocas y losas. Queda un círculo que marca la mejora y el cristal brilla hasta que revienta en esquirlas (CrystalSpireTimes). El golpe al brotar llega a CrystalSpireHitRadius studs × escala; la mejora, a CrystalSpireRadius studs × escala.
+-- foot = el pie que pisa (Vector3 o CFrame; llámalo cuando el pie toca el suelo). target = dónde brota
+-- (Vector3 o CFrame, en el suelo). La grieta corre del pie hasta ahí y ahí brota todo.
+function PebledonVFX.CrystalSpire(foot: any, target: any, scale: number?, shake: number?): Part
+	return playStompZone(SPEC_CrystalSpire, foot, target, scale, shake)
+end
+-- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la mejora
+PebledonVFX.CrystalSpireTimes = {
+	Stomp = 0,
+	Erupt = 0.38,
+	Crystal = 0.54,
+	Shatter = 8,
+}
+-- radio alrededor del centro (studs a escala 1; multiplícalo por la escala): el círculo de la mejora (cerca del cristal, Pebledon gira y corre más rápido)
+PebledonVFX.CrystalSpireRadius = 70
+-- hasta dónde golpea al brotar (studs a escala 1; multiplícalo por la escala): a quien esté ahí lo empuja y lo manda a volar (eso lo hace el servidor)
+PebledonVFX.CrystalSpireHitRadius = 12
+
+local SPEC_CrystalRay = {
+	name = "CrystalRay",
+	duration = 3.62,
+	cleanup = 4.38,
+	layers = {
+		{
+			name = "RSourceGlow",
+			texture = "fx_glow",
+			lifetime = {0.14, 0.2},
+			size = {
+				{0, 8, 1},
+				{1, 10, 1},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{1, 0.85, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 2,
+			stream = {
+				{0, 3.38, 10, 10},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RSourceFire",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Front",
+			spread = {35, 35},
+			speed = {10, 24},
+			drag = 4,
+			accel = {0, 4, 0},
+			lifetime = {0.16, 0.26},
+			size = {
+				{0, 1.4, 0.4},
+				{0.4, 3.6, 0.8},
+				{1, 2, 0},
+			},
+			transparency = {
+				{0, 0.2, 0},
+				{0.6, 0.45, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.45,
+			rotation = {0, 360},
+			stream = {
+				{0, 3.38, 26, 26},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RFireJet",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Front",
+			spread = {3, 3},
+			speed_len = {6.25, 6.75},
+			lifetime = {0.1472, 0.16},
+			size = {
+				{0, 1.6, 0.4},
+				{0.5, 4, 1},
+				{1, 5.5, 1.2},
+			},
+			transparency = {
+				{0, 0.25, 0},
+				{0.5, 0.35, 0},
+				{0.85, 0.55, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{170, 252, 250},
+				},
+				{
+					0.3,
+					{90, 225, 235},
+				},
+				{
+					0.7,
+					{45, 165, 210},
+				},
+				{
+					1,
+					{30, 110, 170},
+				},
+			},
+			light_emission = 0.7,
+			brightness = 1.5,
+			rotation = {0, 360},
+			rot_speed = {-240, 240},
+			locked = true,
+			stream = {
+				{0, 3.38, 90, 90},
+			},
+			speed = {0, 0},
+			accel = {0, 0, 0},
+			drag = 0,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "RImpactBurst",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			emit = {
+				{0, 8},
+			},
+			on_hit = true,
+			direction = "Back",
+			spread = {80, 80},
+			speed = {18, 40},
+			drag = 3,
+			accel = {0, 10, 0},
+			lifetime = {0.3, 0.5},
+			size = {
+				{0, 2.4, 0.8},
+				{0.3, 6, 1.4},
+				{1, 2, 0},
+			},
+			transparency = {
+				{0, 0.12, 0},
+				{0.6, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.45,
+			rotation = {0, 360},
+			line_u = 1,
+			offset = {0, 0, 2},
+			impact = true,
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+		},
+		{
+			name = "RImpactGlow",
+			texture = "fx_glow",
+			lifetime = {0.14, 0.2},
+			size = {
+				{0, 9, 1.5},
+				{1, 11, 1.5},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{1, 0.85, 0},
+			},
+			color = {
+				{
+					0,
+					{215, 255, 252},
+				},
+				{
+					0.4,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			light_emission = 1,
+			brightness = 1,
+			zoffset = 2,
+			stream = {
+				{0, 3.38, 12, 12},
+			},
+			line_u = 1,
+			offset = {0, 0, 2},
+			impact = true,
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rotation = {0, 0},
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "RImpactFlames",
+			texture = "fx_fire_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Back",
+			spread = {75, 75},
+			speed = {10, 24},
+			drag = 2.5,
+			accel = {0, 12, 0},
+			lifetime = {0.25, 0.45},
+			size = {
+				{0, 2, 0.6},
+				{0.3, 5, 1.2},
+				{1, 1.2, 0},
+			},
+			transparency = {
+				{0, 0.12, 0},
+				{0.6, 0.4, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{175, 255, 250},
+				},
+				{
+					0.3,
+					{100, 236, 230},
+				},
+				{
+					0.65,
+					{60, 185, 186},
+				},
+				{
+					1,
+					{39, 121, 127},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.45,
+			rotation = {0, 360},
+			rot_speed = {-60, 60},
+			stream = {
+				{0, 3.38, 30, 30},
+			},
+			line_u = 1,
+			offset = {0, 0, 2},
+			impact = true,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+		{
+			name = "RImpactSparks",
+			texture = "fx_spark002",
+			direction = "Back",
+			spread = {80, 80},
+			speed = {16, 40},
+			drag = 2,
+			accel = {0, 8, 0},
+			lifetime = {0.35, 0.7},
+			size = {
+				{0, 0, 0},
+				{0.08, 1.44, 0},
+				{0.22, 0.63, 0},
+				{0.38, 1.53, 0},
+				{0.55, 0.54, 0},
+				{0.72, 1.26, 0},
+				{1, 0, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.9,
+			rotation = {0, 45},
+			stream = {
+				{0, 3.38, 22, 22},
+			},
+			line_u = 1,
+			offset = {0, 0, 2},
+			impact = true,
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			rot_speed = {0, 0},
+			zoffset = 0,
+			orientation = "FacingCamera",
+			emit = {},
+		},
+	},
+	beam = {
+		start = 0,
+		grow = 0.1,
+		stop = 3.4,
+		fade = 0.22,
+		max_len = 80,
+		trail_every = 0.1,
+		trail_move = 4,
+		rehit = 0.3,
+		light_color = {94, 229, 224},
+		light_brightness = 2,
+		light_range = 24,
+	},
+	refract = {
+		name = "CrystalRefract",
+		h = 20,
+	},
+	beams = {
+		{
+			name = "Glow",
+			texture = "kz_beam_glow",
+			mode = "Wrap",
+			tex_len = 40,
+			speed = 0.4,
+			light_emission = 1,
+			brightness = 0.85,
+			color = {
+				{
+					0,
+					{94, 229, 224},
+				},
+				{
+					1,
+					{52, 147, 152},
+				},
+			},
+			transparency = {
+				{0, 0.84},
+				{0.03, 0.78},
+				{1, 0.8},
+			},
+			width = 13,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.04, 1.4},
+				{0.18, 1},
+				{3.35, 1},
+				{3.4, 0.75},
+				{3.62, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.4, 0},
+				{3.62, 1},
+			},
+			pulse = 0.06,
+			pulse_hz = 5,
+			zoffset = 0,
+		},
+		{
+			name = "FireOuter",
+			texture = "pb_breath_fire",
+			mode = "Wrap",
+			tex_len = 22,
+			speed = 5,
+			light_emission = 0.5,
+			brightness = 1.4,
+			color = {
+				{
+					0,
+					{50, 185, 215},
+				},
+				{
+					1,
+					{35, 140, 185},
+				},
+			},
+			transparency = {
+				{0, 0.45},
+				{0.04, 0.22},
+				{1, 0.3},
+			},
+			width = 9,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.04, 1.4},
+				{0.18, 1},
+				{3.35, 1},
+				{3.4, 0.75},
+				{3.62, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.4, 0},
+				{3.62, 1},
+			},
+			pulse = 0.08,
+			pulse_hz = 9,
+			zoffset = 0.1,
+		},
+		{
+			name = "FireInner",
+			texture = "pb_breath_fire",
+			mode = "Wrap",
+			tex_len = 14,
+			speed = 7,
+			light_emission = 1,
+			brightness = 1.6,
+			color = {
+				{
+					0,
+					{120, 245, 240},
+				},
+				{
+					1,
+					{70, 210, 210},
+				},
+			},
+			transparency = {
+				{0, 0.35},
+				{0.04, 0.1},
+				{1, 0.15},
+			},
+			width = 4.8,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.04, 1.4},
+				{0.18, 1},
+				{3.35, 1},
+				{3.4, 0.75},
+				{3.62, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.4, 0},
+				{3.62, 1},
+			},
+			pulse = 0.08,
+			pulse_hz = 13,
+			zoffset = 0.2,
+		},
+		{
+			name = "Core",
+			texture = "kz_beam_core",
+			mode = "Wrap",
+			tex_len = 12,
+			speed = 3.5,
+			light_emission = 1,
+			brightness = 2.2,
+			color = {
+				{
+					0,
+					{240, 255, 254},
+				},
+				{
+					1,
+					{210, 255, 251},
+				},
+			},
+			transparency = {
+				{0, 0.2},
+				{0.03, 0},
+				{1, 0},
+			},
+			width = 1.9,
+			w0 = 1,
+			w1 = 1,
+			width_t = {
+				{0, 0},
+				{0.04, 1.4},
+				{0.18, 1},
+				{3.35, 1},
+				{3.4, 0.75},
+				{3.62, 0},
+			},
+			alpha_t = {
+				{0, 0},
+				{3.4, 0},
+				{3.62, 1},
+			},
+			pulse = 0.08,
+			pulse_hz = 15,
+			zoffset = 0.3,
+		},
+	},
+}
+
+-- PEBLEDON: un rayo de la refracción: fuego azul concentrado y delgado que sale del cristal hacia un enemigo (sin carga; dura hasta que lo cortan, como mucho 3.4 s). Normalmente lo usa CrystalRefract.
+-- origin = de dónde sale: un Attachment en la boca (lo sigue solo), una Part, un Vector3 o un CFrame.
+-- target = hacia dónde apunta: el rival (Model o Part: lo sigue solo) o un punto (Vector3 o CFrame).
+-- ignore = lo que el rayo atraviesa (el modelo de quien lo lanza). Se corta en la primera superficie
+-- que toca y nunca pasa de su largo máximo (80 studs × escala). Devuelve un control:
+--   rayo:AimAt(objetivo)     apunta a otro lado (Model, Part, Vector3 o CFrame; si se mueve, lo sigue)
+--   rayo:SetDirection(dir)   apunta en una dirección (Vector3)
+--   rayo:SetOrigin(origen)   cambia de dónde sale
+--   rayo:Stop()              lo corta antes de tiempo
+--   rayo.MaxLength           largo máximo (lo puedes cambiar); rayo.Length = largo de ahora
+--   rayo.HitPosition, rayo.HitInstance = dónde y qué está tocando (nil si no toca nada)
+--   rayo.Active = true mientras se ve; rayo.Holder = la Part que lo contiene
+function PebledonVFX.CrystalRay(origin: any, target: any, scale: number?, shake: number?, ignore: { Instance }?): BeamControl
+	return playBeam(SPEC_CrystalRay, origin, target, scale, shake, ignore)
+end
+-- segundos (desde la llamada) en que llega a su largo máximo y en que se corta solo
+PebledonVFX.CrystalRayStart = 0.1
+PebledonVFX.CrystalRayStop = 3.4
+
+-- CrystalRay repartido: un rayo desde crystal (lo que devolvió el efecto del cristal, una Part, un Model,
+-- un Vector3 o un CFrame; salen de 20 studs × escala sobre él) hacia cada objetivo (Models, Parts o
+-- Vector3: los siguen si se mueven). Devuelve un control:
+--   r:SetTargets(lista)   cambia a quiénes (corta los que ya no están y abre los nuevos)
+--   r:Stop()              los corta todos;  r.Active = true mientras dura;  r.Rays = el rayo de cada uno
+function PebledonVFX.CrystalRefract(crystal: any, targets: { any }, scale: number?, shake: number?): RefractControl
+	return playRefract(SPEC_CrystalRay, crystal, targets, scale, shake or 0)
+end
 
 return PebledonVFX
 ]]></ProtectedString>

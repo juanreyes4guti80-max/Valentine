@@ -12,8 +12,10 @@ kk_trace_01.png
 kz_beam_core.png
 kz_beam_glow.png
 kz_beam_ring.png
+mf_shard_2x2.png
 om_cubes_2x2.png
 pb_breath_fire.png
+pb_buff_ring.png
 pb_rock_2x2.png
 pb_sonic_ring.png
 pb_vein_cracks.png
