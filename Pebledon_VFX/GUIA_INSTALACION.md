@@ -43,7 +43,7 @@ El plugin que sube las texturas está en la carpeta `Plugin_Studio` del reposito
 |---|---|---|---|
 | **Skill 1: Rugido sísmico** | `SeismicRoar(boca, largo, apertura, escala, sacudida)` | **Carga:** la energía turquesa se junta en la boca, le salen llamitas cian y el suelo tiembla bajo él (saltan piedritas). **Rugido:** destello en la boca, **ondas de sonido turquesa** que avanzan y se abren, líneas de grito y un chorro de aire cargado con **fuego cian** y brasas. Bajo él se abre un anillo con grietas que brillan y llamas alrededor de sus pies. **La onda del suelo** avanza en triángulo hacia adelante y se va frenando. A su paso parte el suelo y levanta losas. **Arrastra rocas**: saltan delante del frente, dan vueltas y caen más allá, levantando polvo. Algunas piedras flotan un momento por la vibración. Deja **grietas con venas turquesa** de las que **brota fuego cian** un rato. Al final, lo que arrastraba se amontona y revienta en polvo, rocas y llamas. | ruge a los **0.36 s**; la onda sale a los **0.39 s** y llega al final a los **1.24 s** (`SeismicRoarTimes`) |
 | **Skill 2: Aliento azul** | `BlueBreath(boca, objetivo, escala, sacudida, ignorar)` | Como el aliento de Godzilla. **Carga:** la energía se junta en la boca y le salen llamas azules. **Disparo:** escupe **fuego azul concentrado que sale recto**: un núcleo casi blanco, fuego turquesa en vetas que corre muy rápido hacia adelante y llamas azules pegadas al rayo, de la boca a la punta. No lleva aros ni espirales. Es más delgado que los rayos de Kaiju Zero y Omnívora. **Se puede apuntar** los 3 s que dura: se corta en lo primero que toca y llega hasta **126 studs × escala** (3 veces su largo). **Donde pega**, el fuego salpica hacia afuera, saltan rocas con venas y chispas, y el suelo queda con grietas turquesa que arden. Si barre el suelo, deja una estela. | sale a los **0.69 s** (`BlueBreathStart`) y se corta a los **3.55 s** (`BlueBreathStop`) |
-| **Skill 3: Pilar de cristal** | `CrystalSpire(pie, dónde, escala, sacudida)` | **Pisotón:** el suelo se raja bajo su pie y una **grieta turquesa corre por el suelo** hasta el punto elegido, con llamitas, chispas y piedras. **Ahí revienta:** destello, fuego cian, rocas y pedazos que vuelan, losas que saltan, polvo y grietas. **Brota duro un pilar de cristal** como los de su espalda: un prisma hexagonal de vidrio turquesa con un núcleo de luz adentro y punta, de unos **33 studs** (un poco más que Pebledon), con cristales más chicos alrededor inclinados hacia afuera. Sale golpeando: el servidor empuja y manda a volar a quien esté encima. **Queda un círculo** en el suelo que marca el área de la mejora, con llamitas y brasas por el borde. El cristal brilla, con fuego cian en la base, y **a los 8 s revienta** en esquirlas. | revienta el suelo a los **0.38 s** (`CrystalSpireTimes.Erupt`) y el cristal revienta a los **8 s** (`CrystalSpireTimes.Shatter`); golpea hasta **12 studs** (`CrystalSpireHitRadius`) y la mejora llega a **70 studs** (`CrystalSpireRadius`: un círculo de 140 studs de lado a lado, para que Pebledon corra adentro), los dos × escala |
+| **Skill 3: Pilar de cristal** | `CrystalSpire(pie, dónde, escala, sacudida)` | **Pisotón:** el suelo se raja bajo su pie y **algo avanza bajo tierra** hasta el punto elegido: por donde pasa se levantan **losas y bloques de roca a los dos lados**, saltan pedazos y sube polvo, con una grieta turquesa, llamitas y chispas. **Ahí revienta:** destello, fuego cian, muchos **bloques de roca** que vuelan, bloques grandes y losas que se levantan alrededor, polvo y grietas. **Brota duro un pilar de cristal** como los de su espalda: un prisma hexagonal de vidrio turquesa con un núcleo de luz adentro y punta, de unos **33 studs** (un poco más que Pebledon), con cristales más chicos alrededor inclinados hacia afuera. Sale golpeando: el servidor empuja y manda a volar a quien esté encima. **Queda un círculo grande** en el suelo que marca el área de la mejora, con llamitas y brasas por el borde. El cristal brilla, con fuego cian en la base. **Dura 10 s.** Al final **avisa** (titila, se raja con grietas de luz y el círculo parpadea), **el círculo se encoge hasta el cristal** y **el pilar se desmorona**: se hunde en el suelo entre esquirlas, pedazos de cristal que se le caen y polvo. | revienta el suelo a los **0.44 s** (`CrystalSpireTimes.Erupt`); avisa desde los **8.8 s** (`Warning`) y se desmorona a los **10 s** (`End`). Golpea hasta **12 studs** (`CrystalSpireHitRadius`) y la mejora llega a **100 studs** (`CrystalSpireRadius`: un círculo de 200 studs de lado a lado), los dos × escala |
 | **Combo: el aliento en el cristal** | `CrystalRefract(cristal, enemigos, escala)` | Mientras el **aliento le pega al pilar**, el cristal lo reparte: de su parte alta salen **rayos más delgados** del mismo fuego azul (sin aros), uno hacia **cada enemigo dentro del círculo**, y les pegan mientras el aliento siga en el cristal. Donde pegan, el fuego salpica sobre el enemigo. `refr:SetTargets(lista)` cambia a quiénes y `refr:Stop()` los corta. El aliento del cliente ya se corta en el cristal (el pilar tiene `CanQuery`). | salen al instante (`CrystalRayStart` = 0.1 s para llegar) y duran como mucho **3.4 s** (`CrystalRayStop`) |
 
 `PebledonVFX.SeismicRoarTimes` tiene tres momentos:
@@ -180,9 +180,11 @@ Si cambias a dónde apunta (por ejemplo, para que siga la cámara del jugador), 
 
 ### El pilar de cristal: el golpe y la mejora (servidor)
 
+La mejora es para **todo el equipo**: Pebledon y sus compañeros giran y corren más rápido **mientras estén dentro del círculo** (si salen, la pierden; si vuelven a entrar, la recuperan). Dura lo que el cristal: 10 s.
+
 ```lua
-local function pilar(pebledon: Model, escala: number, donde: Vector3, rivales: { Model })
-	local pie = pebledon.RightFoot.Position                  -- el pie que pisa
+-- equipo: los kaijus del equipo de Pebledon (él incluido); rivales: los del otro equipo
+local function pilar(pie: Vector3, escala: number, donde: Vector3, rivales: { Model }, equipo: { Model })
 	evento:FireAllClients("Cristal", { pie = pie, donde = donde, escala = escala })
 	local T = PebledonVFX.CrystalSpireTimes
 	-- el golpe al brotar: empuja y manda a volar a los que estén encima
@@ -198,20 +200,47 @@ local function pilar(pebledon: Model, escala: number, donde: Vector3, rivales: {
 			end
 		end
 	end)
-	-- la mejora: mientras el cristal está, si Pebledon está cerca gira y corre más rápido
-	local humanoide = pebledon:FindFirstChildOfClass("Humanoid") :: Humanoid
-	local base = humanoide.WalkSpeed
-	local fin = os.clock() + T.Shatter
+	-- la mejora: mientras el cristal está, los del equipo que estén dentro del círculo giran y corren más rápido
+	local radio = PebledonVFX.CrystalSpireRadius * escala
+	local fin = os.clock() + T.End
+	local base: { [Humanoid]: number } = {}
 	task.spawn(function()
 		while os.clock() < fin do
-			local cerca = (pebledon:GetPivot().Position - donde).Magnitude <= PebledonVFX.CrystalSpireRadius * escala
-			humanoide.WalkSpeed = if cerca then base * 1.25 else base   -- y el giro, en tu sistema de movimiento
+			for _, aliado in equipo do
+				local hum = aliado:FindFirstChildOfClass("Humanoid")
+				if hum and hum.Health > 0 then
+					base[hum] = base[hum] or hum.WalkSpeed
+					local dentro = (aliado:GetPivot().Position - donde).Magnitude <= radio
+					hum.WalkSpeed = if dentro then base[hum] * 1.25 else base[hum]   -- y el giro, en tu sistema de movimiento
+				end
+			end
 			task.wait(0.1)
 		end
-		humanoide.WalkSpeed = base
+		for hum, v in base do
+			hum.WalkSpeed = v
+		end
 	end)
 end
 ```
+
+Si ya tienes un sistema de modificadores de velocidad (por ejemplo, para la lentitud del rugido), suma ahí la mejora en vez de tocar `WalkSpeed` directo.
+
+### La asistencia por equipos: el pilar como habilidad insignia
+
+El pilar no depende de que Pebledon se quede: el efecto vive en `workspace` y la mejora la lleva el servidor. Así que sirve para la asistencia: el jugador oprime la tecla, **aparece Pebledon, pisa y se va**, y **el pilar se queda sus 10 s** con la mejora para el equipo del que lo llamó.
+
+```lua
+-- tus funciones: equipoDe (los kaijus del equipo del jugador, él incluido), rivalesDe, aparecerPebledon e irse
+local function asistenciaPebledon(jugador: Player, donde: Vector3, escala: number)
+	local pebledon = aparecerPebledon(jugador)       -- clona el modelo y pone la animación del pisotón
+	task.wait(0.35)                                  -- cuando el pie toca el suelo en tu animación
+	pilar(pebledon.RightFoot.Position, escala, donde, rivalesDe(jugador), equipoDe(jugador))
+	task.wait(0.6)
+	irse(pebledon)                                   -- su animación de irse; el pilar y la mejora siguen solos
+end
+```
+
+Si Pebledon lo usa como su propia skill, llama a `pilar(pebledon.RightFoot.Position, ...)` igual, con su equipo. El combo del aliento también funciona con un pilar de asistencia: si en el equipo hay un Pebledon jugando, su aliento se reparte desde ese cristal.
 
 ### El combo: el aliento en el cristal (servidor)
 
@@ -273,7 +302,7 @@ Cuando el aliento se corta, manda también `"RefraccionFin"`.
 - Las losas y las rocas que arrastra la onda miran con un Raycast **el color y el material del suelo** donde salen. En el video son grises porque el suelo de prueba es oscuro.
 - Las grietas, los anillos y las marcas del suelo son Decals pensados para suelo plano.
 - **Aliento:** el rayo son **Beams** (el núcleo y dos capas de fuego en vetas que corren hacia adelante) más llamas que van **pegadas al rayo** (`LockedToPart`): si lo barres, el fuego se queda recto con él. Se corta en lo primero que toca con un Raycast cada cuadro.
-- **Pilar de cristal:** el cristal es un **marcador** hecho con Parts. El pilar es un prisma hexagonal de tres bloques de `Glass` girados 60°, con punta y un núcleo de `Neon` adentro. Los chicos son de `Glass` y `Neon`. El pilar se llama `PebledonCrystal` y tiene `CanQuery` activado (sin colisión), así que el aliento se corta en él. El círculo es un Decal (`pb_buff_ring`) del radio de la mejora. Los pedazos que vuelan rebotan en el suelo y se deshacen.
+- **Pilar de cristal:** el cristal es un **marcador** hecho con Parts. El pilar es un prisma hexagonal de tres bloques de `Glass` girados 60°, con punta y un núcleo de `Neon` adentro. Los chicos son de `Glass` y `Neon`. El pilar se llama `PebledonCrystal` y tiene `CanQuery` activado (sin colisión), así que el aliento se corta en él. El círculo es un Decal (`pb_buff_ring`) del radio de la mejora. Los pedazos que vuelan rebotan en el suelo y se deshacen. Al final los cristales se hunden en el suelo: el suelo tapa la parte enterrada (sobre agua o un suelo transparente se verían bajar).
 - Para que el fuego cian brille como en el video, pon un `BloomEffect` en `Lighting`: *Intensity* 0.6–1, *Size* 24, *Threshold* 1.5–2.
 
 ## Rendimiento
@@ -282,7 +311,7 @@ Cuando el aliento se corta, manda también `"RefraccionFin"`.
 |---|---|---|
 | Rugido sísmico | unas 1200 | unas 58 losas y 68 rocas (Parts ancladas, sin colisión) y 70 Decals de grietas; todo se limpia solo a los 5.5 s |
 | Aliento azul | unas 220 | 4 Beams y Decals en el suelo (más si lo barre) |
-| Pilar de cristal | unas 400 | 20 cristales (60 Parts con sus puntas), 36 losas, 100 pedazos, unas 42 Decals y 3 PointLights; se limpia solo a los 10.8 s |
+| Pilar de cristal | unas 450 | 20 cristales (Parts con sus puntas), unas 100 rocas y losas (48 losas y 16 bloques alrededor del pilar, 38 por el camino), 144 pedazos, unas 48 Decals y 3 PointLights; se limpia solo a los 12.7 s |
 | Combo (por rayo) | unas 60 | 4 Beams y una PointLight |
 
 `PebledonVFX.Quality = 0.6` baja las partículas, las losas y las rocas (por ejemplo, en celulares).
@@ -299,6 +328,10 @@ PebledonVFX.Meshes.PlowRocks = modelos.Rock             -- las rocas que arrastr
 PebledonVFX.Meshes.PlowBoulders = modelos.Boulder       -- las rocas grandes
 PebledonVFX.Meshes.PebledonCrystal = modelos.Crystal    -- el pilar de cristal de la skill 3 (el grande)
 PebledonVFX.Meshes.CrystalShards = modelos.CrystalSmall -- los cristales chicos de alrededor
+PebledonVFX.Meshes.SpireBlocks = modelos.Boulder        -- los bloques de roca que levanta el pilar
+PebledonVFX.Meshes.SpireSlabs = modelos.Slab            -- las losas de alrededor del pilar
+PebledonVFX.Meshes.PathSlabs = modelos.Slab             -- las losas que se levantan por el camino
+PebledonVFX.Meshes.PathBlocks = modelos.Rock            -- los bloques del camino
 ```
 
 El pilar (`PebledonCrystal`) es **lo más importante para hacer en Blender**: un cristal hexagonal alto con punta, como las placas de su espalda, de proporción 1 × 3.2 × 1 (ancho, alto, fondo). Con un modelo se escala al tamaño del pilar (unos 9.5 × 30 × 9.5 studs a escala 1) y ya no lleva los tres bloques ni el núcleo de Neon. Ponle tú el brillo, por ejemplo con un material de vidrio y una parte de Neon adentro.
@@ -316,7 +349,7 @@ Están en `textures/`. El plugin las sube todas.
 |---|---|---|
 | `pb_rock_2x2` | cuatro rocas facetadas con venas turquesa que brillan (ya coloreada) | Rugido |
 | `pb_sonic_ring` | onda de sonido: un anillo nítido con ondas detrás | Rugido |
-| `pb_vein_cracks` | grietas que salen del centro y se ramifican | Rugido, Aliento |
+| `pb_vein_cracks` | grietas que salen del centro y se ramifican | Rugido, Aliento, Pilar de cristal |
 | `pb_breath_fire` | fuego concentrado en vetas que corre a lo largo (Beams del aliento) | Aliento |
 | `pb_buff_ring` | el círculo de la mejora: un anillo nítido con marcas de cristal | Pilar de cristal |
 
@@ -345,7 +378,7 @@ En `preview/`:
 Todo el kit está en `KaijuZero_VFX/tools/vfx_pebledon.py`:
 
 - arriba están los colores;
-- después cada skill, con sus tiempos y sus capas. Del rugido: `RL` y `RA` (largo y apertura), `T_ROAR`, `T0R`, `TWR` y `EASE_R` (cuándo ruge, cuándo sale la onda, cuánto tarda y cuánto se frena), `ROAR_FRONT` (lo que viaja con el frente) y `ROAR_FIELD` (las losas). Del aliento: `B_START`, `B_STOP` y `B_LEN` (cuándo sale, cuándo se corta y su largo máximo), `BREATH_BEAMS` (el núcleo y el fuego) y `B_JET` (lo que tarda una llama en ir de la boca a la punta). Del pilar: `SR` (el radio de la mejora), `S_ERUPT`, `S_RISE` y `S_END` (cuándo revienta el suelo, cuándo brota y cuándo se rompe), `S_HIT_R` (el radio del golpe) y `SPIRE_FIELD` (los cristales y las losas).
+- después cada skill, con sus tiempos y sus capas. Del rugido: `RL` y `RA` (largo y apertura), `T_ROAR`, `T0R`, `TWR` y `EASE_R` (cuándo ruge, cuándo sale la onda, cuánto tarda y cuánto se frena), `ROAR_FRONT` (lo que viaja con el frente) y `ROAR_FIELD` (las losas). Del aliento: `B_START`, `B_STOP` y `B_LEN` (cuándo sale, cuándo se corta y su largo máximo), `BREATH_BEAMS` (el núcleo y el fuego) y `B_JET` (lo que tarda una llama en ir de la boca a la punta). Del pilar: `SR` (el radio de la mejora), `S_TRAVEL` (lo que tarda en llegar lo que avanza bajo tierra), `S_ERUPT`, `S_RISE`, `S_WARN` y `S_END` (cuándo revienta el suelo, cuándo brota, cuándo empieza a avisar y cuándo se desmorona), `S_HIT_R` (el radio del golpe) y `SPIRE_FIELD` (los cristales, las rocas de alrededor y las del camino).
 
 Sus texturas propias salen de `KaijuZero_VFX/tools/gen_pebledon_textures.py`.
 

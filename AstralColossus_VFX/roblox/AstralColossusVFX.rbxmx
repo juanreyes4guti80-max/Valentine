@@ -834,7 +834,8 @@ end
 -- modelo de Blender en AstralColossusVFX.Meshes[mesh].
 type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
 	rise: number, sink: number, ice: any, shatter: boolean, mesh: string?, L: any, part: BasePart?, base: CFrame?,
-	gy: number, gone: boolean, tip: number?, tipPart: BasePart?, full: Vector3?, extra: { SlabExtra }? }
+	gy: number, gone: boolean, tip: number?, tipPart: BasePart?, full: Vector3?, extra: { SlabExtra }?,
+	crumble: boolean, crumbled: boolean? }
 -- los otros bloques de un prisma hexagonal (y sus puntas), girados yaw alrededor del eje de la pieza
 type SlabExtra = { part: BasePart, yaw: number, tip: boolean }
 
@@ -885,7 +886,7 @@ local function makeSlab(SL: any, s: number, x: number, z: number, yaw: number, s
 	return {
 		t = tS, x = x, z = z, size = size, rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
 		hold = rng:NextNumber(SL.hold[1], SL.hold[2]), rise = SL.rise, sink = SL.sink,
-		ice = if ice then SL.ice else nil, shatter = SL["end"] == "shatter",
+		ice = if ice then SL.ice else nil, shatter = SL["end"] == "shatter", crumble = SL["end"] == "crumble",
 		mesh = if ice and SL.ice.mesh then SL.ice.mesh else SL.mesh, L = SL,
 		part = nil, base = nil, gy = 0, gone = false, full = if SL.hex then Vector3.new(w, th, w) else nil,
 	}
@@ -994,6 +995,12 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			end
 			continue
 		elseif age < L.rise + L.hold + L.sink then
+			if L.crumble and not L.crumbled then -- crumble: se desmorona hundiéndose (suelta sus partículas al empezar)
+				L.crumbled = true
+				if onShatter then
+					onShatter(L, part.Position)
+				end
+			end
 			local p = (age - L.rise - L.hold) / L.sink
 			y = L.y0 - L.drop * p * p
 		else
@@ -2217,8 +2224,8 @@ local function playCubes(spec: Layer, Z: Zone)
 					c.y1 = gy + c.size * 0.5 + rng:NextNumber(G.lift[1], G.lift[2]) * s
 					c.trel = rng:NextNumber(G.release[1], G.release[2])
 					c.pos = Vector3.new(cx, c.y0, cz)
-				elseif G.mode == "blast" then
-					c.pos = Vector3.new(cx, gy + c.size * 0.5, cz)
+				elseif G.mode == "blast" then -- (h: salen a esa altura, p. ej. pedazos que se caen de un cristal)
+					c.pos = Vector3.new(cx, gy + c.size * 0.5 + (if G.h then rng:NextNumber(G.h[1], G.h[2]) * s else 0), cz)
 					launch(c, t)
 				else
 					c.state = "orbit"
@@ -2538,19 +2545,25 @@ local function runZoneField(F: any, Z: Zone)
 	local slabs: { Slab } = {}
 	local shatterFx: { [any]: { { e: ParticleEmitter, c: Instance, n: number } } } = {}
 	for _, G in F.groups do
-		local n = math.floor(G.count * AstralColossusVFX.Quality + 0.5)
+		local n = math.floor((if G.pts then #G.pts else G.count) * AstralColossusVFX.Quality + 0.5)
 		for i = 1, n do
-			local ang: number, r: number
-			if G.ring then
-				ang = 2 * math.pi * (i - 1 + rng:NextNumber(-0.35, 0.35)) / n
-				r = rng:NextNumber(G.r[1], G.r[2])
+			local x: number, z: number, yaw: number, tS: number
+			if G.pts then -- piezas en puntos dados {x, z, yaw, t} (p. ej. a lo largo del camino de un pisotón)
+				local pt = G.pts[math.floor((i - 0.5) * #G.pts / n) + 1] -- (con menos calidad, repartidas igual)
+				x, z, yaw, tS = pt[1], pt[2], pt[3], pt[4] + rng:NextNumber(G.delay[1], G.delay[2])
 			else
-				ang = rng:NextNumber(0, 2 * math.pi)
-				r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2))
+				local ang: number, r: number
+				if G.ring then
+					ang = 2 * math.pi * (i - 1 + rng:NextNumber(-0.35, 0.35)) / n
+					r = rng:NextNumber(G.r[1], G.r[2])
+				else
+					ang = rng:NextNumber(0, 2 * math.pi)
+					r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2))
+				end
+				x, z = math.cos(ang) * r * Z.R, math.sin(ang) * r * Z.R
+				yaw = if G.lean == "radial" then ang else rng:NextNumber(0, 2 * math.pi)
+				tS = G.t + (G.sweep or 0) * r + rng:NextNumber(G.delay[1], G.delay[2])
 			end
-			local x, z = math.cos(ang) * r * Z.R, math.sin(ang) * r * Z.R
-			local yaw = if G.lean == "radial" then ang else rng:NextNumber(0, 2 * math.pi)
-			local tS = G.t + (G.sweep or 0) * r + rng:NextNumber(G.delay[1], G.delay[2])
 			local S = makeSlab(G, k, x, z, yaw, 1, tS)
 			if G.end_at then
 				S.hold = math.max(0.05, rng:NextNumber(G.end_at[1], G.end_at[2]) - tS - S.rise)
@@ -2819,6 +2832,28 @@ local function _playStompZone(spec: Layer, foot: any, target: any, scale: number
 		else
 			sp.layers[i] = L
 		end
+	end
+	if spec.zfield then
+		-- piezas a lo largo del camino (path = {u = {u0, u1}, side = {s0, s1}, t0, travel}): salen a un lado u otro,
+		-- inclinadas hacia afuera, cuando pasa la grieta (como si algo avanzara bajo tierra)
+		local F = table.clone(spec.zfield)
+		F.groups = table.create(#spec.zfield.groups)
+		for i, G in spec.zfield.groups do
+			if G.path then
+				local c = table.clone(G)
+				local pts = table.create(G.count)
+				for j = 1, G.count do
+					local u = G.path.u[1] + (G.path.u[2] - G.path.u[1]) * (j - rng:NextNumber(0.2, 0.8)) / G.count
+					local sd = (if j % 2 == 0 then 1 else -1) * rng:NextNumber(G.path.side[1], G.path.side[2]) * s
+					pts[j] = { sd, dist * (1 - u), if sd > 0 then 0 else math.pi, G.path.t0 + G.path.travel * u }
+				end
+				c.pts = pts
+				F.groups[i] = c
+			else
+				F.groups[i] = G
+			end
+		end
+		sp.zfield = F
 	end
 	return playZone(sp, CFrame.lookAt(tp, tp + dir), scale, nil, nil, shake)
 end

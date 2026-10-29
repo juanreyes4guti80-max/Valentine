@@ -572,6 +572,7 @@ def make_slab(rng, SL, s, x, z, across_yaw, side, t_s):
     return {"t": t_s, "x": x, "z": z, "size": size, "R3": R3, "y0": y0, "drop": y0 + top + 0.3 * s,
             "hold": rng.uniform(*SL["hold"]), "rise": SL["rise"], "sink": SL["sink"],
             "ice": SL["ice"] if ice else None, "shatter": SL.get("end") == "shatter", "L": SL,
+            "crumble": SL.get("end") == "crumble",
             "tip_s": SL["tip"] * min(size[0], size[2]) if SL.get("tip") else 0.0}
 
 
@@ -700,6 +701,14 @@ class ZoneField:
         self.slabs = []
         for G in F["groups"]:
             G = dict({"hold": (1.0, 1.0), "sink": 0.4}, **G)
+            if G.get("pts"):           # piezas en puntos dados (x, z, yaw, t): p. ej. el camino de un pisotón
+                for (x, z, yaw, t_p) in G["pts"]:
+                    t_s = t_p + rng.uniform(*G["delay"])
+                    SL = make_slab(rng, G, k, x, z, yaw, 1, t_s)
+                    if G.get("end_at"):
+                        SL["hold"] = max(0.05, rng.uniform(*G["end_at"]) - t_s - SL["rise"])
+                    self.slabs.append(SL)
+                continue
             n = G["count"]
             for i in range(n):
                 if G.get("ring"):
@@ -890,20 +899,46 @@ def axis_angle(axis, ang):
     return np.eye(3) + math.sin(ang) * K + (1 - math.cos(ang)) * (K @ K)
 
 
-def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0, glow=None):
-    """Una Part (bloque) girada: caras sombreadas con el sol, como los cubos de la zona."""
+def clip_above(poly, g):
+    """Lo de un polígono (puntos 3D) que queda por encima del suelo y = g (Sutherland-Hodgman contra el plano)."""
+    out = []
+    for i, A in enumerate(poly):
+        B = poly[(i + 1) % len(poly)]
+        ina, inb = A[1] >= g, B[1] >= g
+        if ina:
+            out.append(A)
+        if ina != inb:
+            out.append(A + (B - A) * ((g - A[1]) / (B[1] - A[1])))
+    return out
+
+
+def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0, glow=None, ground=None):
+    """Una Part (bloque) girada: caras sombreadas con el sol, como los cubos de la zona. ground = la altura del suelo:
+    lo que queda debajo no se ve (como en Roblox, donde el suelo tapa la parte enterrada)."""
     from PIL import ImageDraw
     half = np.asarray(size3, float) * 0.5
-    corners = {}
-    for f in CubeSim.FACES:
-        for q in f:
-            if q not in corners:
-                pr = cam.project(pos + R3 @ (np.array(q, float) * half))
-                if pr is None:
-                    return
-                corners[q] = (pr[0], pr[1])
-    xs = [v[0] for v in corners.values()]
-    ys = [v[1] for v in corners.values()]
+    world = {q: pos + R3 @ (np.array(q, float) * half) for f in CubeSim.FACES for q in f}
+    if ground is not None and min(v[1] for v in world.values()) >= ground:
+        ground = None                                  # todo por encima del suelo: nada que recortar
+    polys = []
+    for f, nrm in zip(CubeSim.FACES, CubeSim.NORMALS):
+        n = R3 @ np.array(nrm, float)
+        fc = pos + n * float(np.abs(np.array(nrm, float)) @ half)
+        if n @ (cam.C - fc) <= 0:
+            continue
+        pts3 = [world[q] for q in f]
+        if ground is not None:
+            pts3 = clip_above(pts3, ground)
+            if len(pts3) < 3:
+                continue
+        pr = [cam.project(v) for v in pts3]
+        if any(p is None for p in pr):
+            return
+        polys.append(([(p[0], p[1]) for p in pr], n))
+    if not polys:
+        return
+    xs = [v[0] for pl, _ in polys for v in pl]
+    ys = [v[1] for pl, _ in polys for v in pl]
     H, W = buf.shape[:2]
     x0, y0 = int(math.floor(min(xs))) - 1, int(math.floor(min(ys))) - 1
     x1, y1 = int(math.ceil(max(xs))) + 1, int(math.ceil(max(ys))) + 1
@@ -914,16 +949,12 @@ def draw_solid_box(buf, cam, pos, R3, size3, col, alpha=1.0, glow=None):
     rgb = np.zeros((ph, pw, 3), np.float32)
     acc = np.zeros((ph, pw, 1), np.float32)
     col = np.asarray(col, float)
-    for f, nrm in zip(CubeSim.FACES, CubeSim.NORMALS):
-        n = R3 @ np.array(nrm, float)
-        fc = pos + n * float(np.abs(np.array(nrm, float)) @ half)
-        if n @ (cam.C - fc) <= 0:
-            continue
+    for pl, n in polys:
         shade = 0.42 + 0.58 * max(0.0, float(n @ CubeSim.SUN))
         if glow:
             shade = glow * (0.8 + 0.2 * shade)
         m = Image.new("L", (pw * ss, ph * ss), 0)
-        ImageDraw.Draw(m).polygon([((corners[q][0] - x0) * ss, (corners[q][1] - y0) * ss) for q in f], fill=255)
+        ImageDraw.Draw(m).polygon([((x - x0) * ss, (y - y0) * ss) for (x, y) in pl], fill=255)
         mm = np.asarray(m.resize((pw, ph), Image.BOX), np.float32)[..., None] / 255
         mm = np.minimum(mm, 1 - acc)
         rgb += mm * col * shade
@@ -1174,7 +1205,8 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
         # los bloques que revientan al terminar (end = "shatter"): sus partículas salen donde estaban
         if field is not None:
             for k_, SLb in enumerate(field.slabs):
-                if SLb["shatter"] and k_ not in shattered and t >= SLb["t"] + SLb["rise"] + SLb["hold"]:
+                if (SLb["shatter"] or SLb.get("crumble")) and k_ not in shattered and \
+                        t >= SLb["t"] + SLb["rise"] + SLb["hold"]:
                     shattered.add(k_)
                     P = o0 + Rf @ np.array([SLb["x"], 0.0, SLb["z"]])
                     P[1] = ground_y + SLb["y0"]
@@ -1375,12 +1407,12 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 P, R3, size3, SLb = obj
                 if SLb["ice"] and SLb["ice"].get("material") == "Neon":     # brilla solo (Neon): casi sin sombra
                     draw_solid_box(buf, cam, P, R3, size3, np.array(SLb["ice"]["color"], float) / 255 * 1.3,
-                                   1 - SLb["ice"]["transparency"], glow=1.0)
+                                   1 - SLb["ice"]["transparency"], glow=1.0, ground=ground_y)
                 elif SLb["ice"]:
                     draw_solid_box(buf, cam, P, R3, size3, np.array(SLb["ice"]["color"], float) / 255 * 1.15,
-                                   1 - SLb["ice"]["transparency"])
+                                   1 - SLb["ice"]["transparency"], ground=ground_y)
                 else:
-                    draw_solid_box(buf, cam, P, R3, size3, slab_color(spec, SLb))
+                    draw_solid_box(buf, cam, P, R3, size3, slab_color(spec, SLb), ground=ground_y)
                 continue
             am = fade.get(id(obj.L), 1.0)
             if obj.spin:
@@ -1923,6 +1955,8 @@ class CubeSim:
                     c.y1 = gy + c.size * 0.5 + rng.uniform(*c.G["lift"]) * s
                     c.trel = rng.uniform(*c.G["release"])
                 elif c.mode == "blast":
+                    if c.G.get("h"):           # salen a esa altura (p. ej. pedazos que se caen de un cristal)
+                        c.pos[1] += rng.uniform(*c.G["h"]) * s
                     self.launch(c, t)
                 else:
                     c.state = "orbit"

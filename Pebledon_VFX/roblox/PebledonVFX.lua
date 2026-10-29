@@ -834,7 +834,8 @@ end
 -- modelo de Blender en PebledonVFX.Meshes[mesh].
 type Slab = { t: number, x: number, z: number, size: Vector3, rot: CFrame, y0: number, drop: number, hold: number,
 	rise: number, sink: number, ice: any, shatter: boolean, mesh: string?, L: any, part: BasePart?, base: CFrame?,
-	gy: number, gone: boolean, tip: number?, tipPart: BasePart?, full: Vector3?, extra: { SlabExtra }? }
+	gy: number, gone: boolean, tip: number?, tipPart: BasePart?, full: Vector3?, extra: { SlabExtra }?,
+	crumble: boolean, crumbled: boolean? }
 -- los otros bloques de un prisma hexagonal (y sus puntas), girados yaw alrededor del eje de la pieza
 type SlabExtra = { part: BasePart, yaw: number, tip: boolean }
 
@@ -885,7 +886,7 @@ local function makeSlab(SL: any, s: number, x: number, z: number, yaw: number, s
 	return {
 		t = tS, x = x, z = z, size = size, rot = rot, y0 = y0, drop = y0 + top + 0.3 * s,
 		hold = rng:NextNumber(SL.hold[1], SL.hold[2]), rise = SL.rise, sink = SL.sink,
-		ice = if ice then SL.ice else nil, shatter = SL["end"] == "shatter",
+		ice = if ice then SL.ice else nil, shatter = SL["end"] == "shatter", crumble = SL["end"] == "crumble",
 		mesh = if ice and SL.ice.mesh then SL.ice.mesh else SL.mesh, L = SL,
 		part = nil, base = nil, gy = 0, gone = false, full = if SL.hex then Vector3.new(w, th, w) else nil,
 	}
@@ -994,6 +995,12 @@ local function stepSlabs(slabs: { Slab }, holder: BasePart, t: number, exclude: 
 			end
 			continue
 		elseif age < L.rise + L.hold + L.sink then
+			if L.crumble and not L.crumbled then -- crumble: se desmorona hundiéndose (suelta sus partículas al empezar)
+				L.crumbled = true
+				if onShatter then
+					onShatter(L, part.Position)
+				end
+			end
 			local p = (age - L.rise - L.hold) / L.sink
 			y = L.y0 - L.drop * p * p
 		else
@@ -2217,8 +2224,8 @@ local function playCubes(spec: Layer, Z: Zone)
 					c.y1 = gy + c.size * 0.5 + rng:NextNumber(G.lift[1], G.lift[2]) * s
 					c.trel = rng:NextNumber(G.release[1], G.release[2])
 					c.pos = Vector3.new(cx, c.y0, cz)
-				elseif G.mode == "blast" then
-					c.pos = Vector3.new(cx, gy + c.size * 0.5, cz)
+				elseif G.mode == "blast" then -- (h: salen a esa altura, p. ej. pedazos que se caen de un cristal)
+					c.pos = Vector3.new(cx, gy + c.size * 0.5 + (if G.h then rng:NextNumber(G.h[1], G.h[2]) * s else 0), cz)
 					launch(c, t)
 				else
 					c.state = "orbit"
@@ -2538,19 +2545,25 @@ local function runZoneField(F: any, Z: Zone)
 	local slabs: { Slab } = {}
 	local shatterFx: { [any]: { { e: ParticleEmitter, c: Instance, n: number } } } = {}
 	for _, G in F.groups do
-		local n = math.floor(G.count * PebledonVFX.Quality + 0.5)
+		local n = math.floor((if G.pts then #G.pts else G.count) * PebledonVFX.Quality + 0.5)
 		for i = 1, n do
-			local ang: number, r: number
-			if G.ring then
-				ang = 2 * math.pi * (i - 1 + rng:NextNumber(-0.35, 0.35)) / n
-				r = rng:NextNumber(G.r[1], G.r[2])
+			local x: number, z: number, yaw: number, tS: number
+			if G.pts then -- piezas en puntos dados {x, z, yaw, t} (p. ej. a lo largo del camino de un pisotón)
+				local pt = G.pts[math.floor((i - 0.5) * #G.pts / n) + 1] -- (con menos calidad, repartidas igual)
+				x, z, yaw, tS = pt[1], pt[2], pt[3], pt[4] + rng:NextNumber(G.delay[1], G.delay[2])
 			else
-				ang = rng:NextNumber(0, 2 * math.pi)
-				r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2))
+				local ang: number, r: number
+				if G.ring then
+					ang = 2 * math.pi * (i - 1 + rng:NextNumber(-0.35, 0.35)) / n
+					r = rng:NextNumber(G.r[1], G.r[2])
+				else
+					ang = rng:NextNumber(0, 2 * math.pi)
+					r = math.sqrt(rng:NextNumber(G.r[1] ^ 2, G.r[2] ^ 2))
+				end
+				x, z = math.cos(ang) * r * Z.R, math.sin(ang) * r * Z.R
+				yaw = if G.lean == "radial" then ang else rng:NextNumber(0, 2 * math.pi)
+				tS = G.t + (G.sweep or 0) * r + rng:NextNumber(G.delay[1], G.delay[2])
 			end
-			local x, z = math.cos(ang) * r * Z.R, math.sin(ang) * r * Z.R
-			local yaw = if G.lean == "radial" then ang else rng:NextNumber(0, 2 * math.pi)
-			local tS = G.t + (G.sweep or 0) * r + rng:NextNumber(G.delay[1], G.delay[2])
 			local S = makeSlab(G, k, x, z, yaw, 1, tS)
 			if G.end_at then
 				S.hold = math.max(0.05, rng:NextNumber(G.end_at[1], G.end_at[2]) - tS - S.rise)
@@ -2819,6 +2832,28 @@ local function playStompZone(spec: Layer, foot: any, target: any, scale: number?
 		else
 			sp.layers[i] = L
 		end
+	end
+	if spec.zfield then
+		-- piezas a lo largo del camino (path = {u = {u0, u1}, side = {s0, s1}, t0, travel}): salen a un lado u otro,
+		-- inclinadas hacia afuera, cuando pasa la grieta (como si algo avanzara bajo tierra)
+		local F = table.clone(spec.zfield)
+		F.groups = table.create(#spec.zfield.groups)
+		for i, G in spec.zfield.groups do
+			if G.path then
+				local c = table.clone(G)
+				local pts = table.create(G.count)
+				for j = 1, G.count do
+					local u = G.path.u[1] + (G.path.u[2] - G.path.u[1]) * (j - rng:NextNumber(0.2, 0.8)) / G.count
+					local sd = (if j % 2 == 0 then 1 else -1) * rng:NextNumber(G.path.side[1], G.path.side[2]) * s
+					pts[j] = { sd, dist * (1 - u), if sd > 0 then 0 else math.pi, G.path.t0 + G.path.travel * u }
+				end
+				c.pts = pts
+				F.groups[i] = c
+			else
+				F.groups[i] = G
+			end
+		end
+		sp.zfield = F
 	end
 	return playZone(sp, CFrame.lookAt(tp, tp + dir), scale, nil, nil, shake)
 end
@@ -9743,8 +9778,8 @@ PebledonVFX.BlueBreathStop = 3.55
 
 local SPEC_CrystalSpire = {
 	name = "CrystalSpire",
-	duration = 9.2,
-	cleanup = 11.04,
+	duration = 11.6,
+	cleanup = 12.86,
 	layers = {
 		{
 			name = "StompFlash",
@@ -9945,17 +9980,17 @@ local SPEC_CrystalSpire = {
 			accel = {0, -150, 0},
 			lifetime = {0.4, 0.7},
 			size = {
-				{0, 0.8, 0.3},
-				{1, 0.6, 0.2},
+				{0, 1, 0.3},
+				{1, 0.8, 0.2},
 			},
 			color = {
 				{
 					0,
-					{124, 116, 104},
+					{128, 118, 106},
 				},
 				{
 					1,
-					{96, 88, 78},
+					{100, 92, 82},
 				},
 			},
 			rotation = {0, 360},
@@ -10007,18 +10042,20 @@ local SPEC_CrystalSpire = {
 			},
 			light_emission = 1,
 			path_emit = {
-				{0.04, 1, 0.06, 0, 0.18},
-				{0.066, 1, 0.1364, 0, 0.18},
-				{0.092, 1, 0.2127, 0, 0.18},
-				{0.118, 1, 0.2891, 0, 0.18},
-				{0.144, 1, 0.3655, 0, 0.18},
-				{0.17, 1, 0.4418, 0, 0.18},
-				{0.196, 1, 0.5182, 0, 0.18},
-				{0.222, 1, 0.5945, 0, 0.18},
-				{0.248, 1, 0.6709, 0, 0.18},
-				{0.274, 1, 0.7473, 0, 0.18},
-				{0.3, 1, 0.8236, 0, 0.18},
-				{0.326, 1, 0.9, 0, 0.18},
+				{0.044, 1, 0.06, 0, 0.18},
+				{0.07, 1, 0.1262, 0, 0.18},
+				{0.097, 1, 0.1923, 0, 0.18},
+				{0.123, 1, 0.2585, 0, 0.18},
+				{0.15, 1, 0.3246, 0, 0.18},
+				{0.176, 1, 0.3908, 0, 0.18},
+				{0.203, 1, 0.4569, 0, 0.18},
+				{0.229, 1, 0.5231, 0, 0.18},
+				{0.256, 1, 0.5892, 0, 0.18},
+				{0.282, 1, 0.6554, 0, 0.18},
+				{0.309, 1, 0.7215, 0, 0.18},
+				{0.335, 1, 0.7877, 0, 0.18},
+				{0.362, 1, 0.8538, 0, 0.18},
+				{0.388, 1, 0.92, 0, 0.18},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -10063,18 +10100,20 @@ local SPEC_CrystalSpire = {
 			},
 			light_emission = 0.9,
 			path_emit = {
-				{0.04, 1, 0.06, 0, 0.15},
-				{0.066, 1, 0.1364, 0, 0.15},
-				{0.092, 1, 0.2127, 0, 0.15},
-				{0.118, 1, 0.2891, 0, 0.15},
-				{0.144, 1, 0.3655, 0, 0.15},
-				{0.17, 1, 0.4418, 0, 0.15},
-				{0.196, 1, 0.5182, 0, 0.15},
-				{0.222, 1, 0.5945, 0, 0.15},
-				{0.248, 1, 0.6709, 0, 0.15},
-				{0.274, 1, 0.7473, 0, 0.15},
-				{0.3, 1, 0.8236, 0, 0.15},
-				{0.326, 1, 0.9, 0, 0.15},
+				{0.044, 1, 0.06, 0, 0.15},
+				{0.07, 1, 0.1262, 0, 0.15},
+				{0.097, 1, 0.1923, 0, 0.15},
+				{0.123, 1, 0.2585, 0, 0.15},
+				{0.15, 1, 0.3246, 0, 0.15},
+				{0.176, 1, 0.3908, 0, 0.15},
+				{0.203, 1, 0.4569, 0, 0.15},
+				{0.229, 1, 0.5231, 0, 0.15},
+				{0.256, 1, 0.5892, 0, 0.15},
+				{0.282, 1, 0.6554, 0, 0.15},
+				{0.309, 1, 0.7215, 0, 0.15},
+				{0.335, 1, 0.7877, 0, 0.15},
+				{0.362, 1, 0.8538, 0, 0.15},
+				{0.388, 1, 0.92, 0, 0.15},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -10093,12 +10132,12 @@ local SPEC_CrystalSpire = {
 		{
 			name = "PathDark",
 			texture = "pb_vein_cracks",
-			lifetime = {2, 2.4},
+			lifetime = {2.4, 2.8},
 			rotation = {0, 360},
 			size = {
-				{0, 5, 0},
-				{0.08, 16, 2},
-				{1, 17, 2},
+				{0, 6, 0},
+				{0.08, 19, 2},
+				{1, 20, 2},
 			},
 			transparency = {
 				{0, 1, 0},
@@ -10117,18 +10156,20 @@ local SPEC_CrystalSpire = {
 				},
 			},
 			path_emit = {
-				{0.04, 1, 0.06, 0, 0.1},
-				{0.066, 1, 0.1364, 0, 0.1},
-				{0.092, 1, 0.2127, 0, 0.1},
-				{0.118, 1, 0.2891, 0, 0.1},
-				{0.144, 1, 0.3655, 0, 0.1},
-				{0.17, 1, 0.4418, 0, 0.1},
-				{0.196, 1, 0.5182, 0, 0.1},
-				{0.222, 1, 0.5945, 0, 0.1},
-				{0.248, 1, 0.6709, 0, 0.1},
-				{0.274, 1, 0.7473, 0, 0.1},
-				{0.3, 1, 0.8236, 0, 0.1},
-				{0.326, 1, 0.9, 0, 0.1},
+				{0.044, 1, 0.06, 0, 0.1},
+				{0.07, 1, 0.1262, 0, 0.1},
+				{0.097, 1, 0.1923, 0, 0.1},
+				{0.123, 1, 0.2585, 0, 0.1},
+				{0.15, 1, 0.3246, 0, 0.1},
+				{0.176, 1, 0.3908, 0, 0.1},
+				{0.203, 1, 0.4569, 0, 0.1},
+				{0.229, 1, 0.5231, 0, 0.1},
+				{0.256, 1, 0.5892, 0, 0.1},
+				{0.282, 1, 0.6554, 0, 0.1},
+				{0.309, 1, 0.7215, 0, 0.1},
+				{0.335, 1, 0.7877, 0, 0.1},
+				{0.362, 1, 0.8538, 0, 0.1},
+				{0.388, 1, 0.92, 0, 0.1},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -10141,6 +10182,129 @@ local SPEC_CrystalSpire = {
 			brightness = 1,
 			rot_speed = {0, 0},
 			zoffset = 0,
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathDust",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {30, 30},
+			speed = {8, 16},
+			drag = 2,
+			accel = {0, 2, 0},
+			lifetime = {0.8, 1.2},
+			size = {
+				{0, 4, 1},
+				{1, 12, 2},
+			},
+			transparency = {
+				{0, 0.4, 0},
+				{0.4, 0.58, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{160, 150, 136},
+				},
+				{
+					0.5,
+					{138, 128, 116},
+				},
+				{
+					1,
+					{112, 104, 94},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			path_emit = {
+				{0.04, 3, 0.05, 0, 1},
+				{0.067, 3, 0.1169, 0, 1},
+				{0.094, 3, 0.1838, 0, 1},
+				{0.12, 3, 0.2508, 0, 1},
+				{0.147, 3, 0.3177, 0, 1},
+				{0.174, 3, 0.3846, 0, 1},
+				{0.201, 3, 0.4515, 0, 1},
+				{0.227, 3, 0.5185, 0, 1},
+				{0.254, 3, 0.5854, 0, 1},
+				{0.281, 3, 0.6523, 0, 1},
+				{0.308, 3, 0.7192, 0, 1},
+				{0.334, 3, 0.7862, 0, 1},
+				{0.361, 3, 0.8531, 0, 1},
+				{0.388, 3, 0.92, 0, 1},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "PathChunks",
+			texture = "om_cubes_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {35, 35},
+			speed = {20, 40},
+			drag = 0.4,
+			accel = {0, -150, 0},
+			lifetime = {0.5, 0.8},
+			size = {
+				{0, 1.8, 0.7},
+				{1, 1.5, 0.5},
+			},
+			color = {
+				{
+					0,
+					{128, 118, 106},
+				},
+				{
+					1,
+					{100, 92, 82},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-400, 400},
+			path_emit = {
+				{0.04, 4, 0.05, 0, 0.6},
+				{0.067, 4, 0.1169, 0, 0.6},
+				{0.094, 4, 0.1838, 0, 0.6},
+				{0.12, 4, 0.2508, 0, 0.6},
+				{0.147, 4, 0.3177, 0, 0.6},
+				{0.174, 4, 0.3846, 0, 0.6},
+				{0.201, 4, 0.4515, 0, 0.6},
+				{0.227, 4, 0.5185, 0, 0.6},
+				{0.254, 4, 0.5854, 0, 0.6},
+				{0.281, 4, 0.6523, 0, 0.6},
+				{0.308, 4, 0.7192, 0, 0.6},
+				{0.334, 4, 0.7862, 0, 0.6},
+				{0.361, 4, 0.8531, 0, 0.6},
+				{0.388, 4, 0.92, 0, 0.6},
+			},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
 			offset = {0, 0, 0},
 			line_u = 0,
 			emit = {},
@@ -10191,20 +10355,20 @@ local SPEC_CrystalSpire = {
 			brightness = 1.45,
 			rotation = {-10, 10},
 			path_emit = {
-				{0.037, 2, 0.05, 0, 0.6},
-				{0.06, 2, 0.1169, 0, 0.6},
-				{0.083, 2, 0.1838, 0, 0.6},
-				{0.105, 2, 0.2508, 0, 0.6},
-				{0.128, 2, 0.3177, 0, 0.6},
-				{0.151, 2, 0.3846, 0, 0.6},
-				{0.174, 2, 0.4515, 0, 0.6},
-				{0.196, 2, 0.5185, 0, 0.6},
-				{0.219, 2, 0.5854, 0, 0.6},
-				{0.242, 2, 0.6523, 0, 0.6},
-				{0.265, 2, 0.7192, 0, 0.6},
-				{0.287, 2, 0.7862, 0, 0.6},
-				{0.31, 2, 0.8531, 0, 0.6},
-				{0.333, 2, 0.92, 0, 0.6},
+				{0.04, 2, 0.05, 0, 0.6},
+				{0.067, 2, 0.1169, 0, 0.6},
+				{0.094, 2, 0.1838, 0, 0.6},
+				{0.12, 2, 0.2508, 0, 0.6},
+				{0.147, 2, 0.3177, 0, 0.6},
+				{0.174, 2, 0.3846, 0, 0.6},
+				{0.201, 2, 0.4515, 0, 0.6},
+				{0.227, 2, 0.5185, 0, 0.6},
+				{0.254, 2, 0.5854, 0, 0.6},
+				{0.281, 2, 0.6523, 0, 0.6},
+				{0.308, 2, 0.7192, 0, 0.6},
+				{0.334, 2, 0.7862, 0, 0.6},
+				{0.361, 2, 0.8531, 0, 0.6},
+				{0.388, 2, 0.92, 0, 0.6},
 			},
 			drag = 0,
 			rot_speed = {0, 0},
@@ -10250,84 +10414,26 @@ local SPEC_CrystalSpire = {
 			brightness = 1.9,
 			rotation = {0, 45},
 			path_emit = {
-				{0.037, 3, 0.05, 0, 0.8},
-				{0.06, 3, 0.1169, 0, 0.8},
-				{0.083, 3, 0.1838, 0, 0.8},
-				{0.105, 3, 0.2508, 0, 0.8},
-				{0.128, 3, 0.3177, 0, 0.8},
-				{0.151, 3, 0.3846, 0, 0.8},
-				{0.174, 3, 0.4515, 0, 0.8},
-				{0.196, 3, 0.5185, 0, 0.8},
-				{0.219, 3, 0.5854, 0, 0.8},
-				{0.242, 3, 0.6523, 0, 0.8},
-				{0.265, 3, 0.7192, 0, 0.8},
-				{0.287, 3, 0.7862, 0, 0.8},
-				{0.31, 3, 0.8531, 0, 0.8},
-				{0.333, 3, 0.92, 0, 0.8},
+				{0.04, 3, 0.05, 0, 0.8},
+				{0.067, 3, 0.1169, 0, 0.8},
+				{0.094, 3, 0.1838, 0, 0.8},
+				{0.12, 3, 0.2508, 0, 0.8},
+				{0.147, 3, 0.3177, 0, 0.8},
+				{0.174, 3, 0.3846, 0, 0.8},
+				{0.201, 3, 0.4515, 0, 0.8},
+				{0.227, 3, 0.5185, 0, 0.8},
+				{0.254, 3, 0.5854, 0, 0.8},
+				{0.281, 3, 0.6523, 0, 0.8},
+				{0.308, 3, 0.7192, 0, 0.8},
+				{0.334, 3, 0.7862, 0, 0.8},
+				{0.361, 3, 0.8531, 0, 0.8},
+				{0.388, 3, 0.92, 0, 0.8},
 			},
 			transparency = {
 				{0, 0, 0},
 				{1, 0, 0},
 			},
 			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "PathRocks",
-			texture = "pb_rock_2x2",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			direction = "Top",
-			spread = {40, 40},
-			speed = {10, 22},
-			drag = 0.5,
-			accel = {0, -150, 0},
-			lifetime = {0.4, 0.7},
-			size = {
-				{0, 1.1, 0.4},
-				{1, 0.9, 0.3},
-			},
-			transparency = {
-				{0, 0, 0},
-				{0.85, 0, 0},
-				{1, 1, 0},
-			},
-			rotation = {0, 360},
-			rot_speed = {-400, 400},
-			path_emit = {
-				{0.037, 2, 0.05, 0, 0.4},
-				{0.064, 2, 0.1291, 0, 0.4},
-				{0.091, 2, 0.2082, 0, 0.4},
-				{0.118, 2, 0.2873, 0, 0.4},
-				{0.145, 2, 0.3664, 0, 0.4},
-				{0.171, 2, 0.4455, 0, 0.4},
-				{0.198, 2, 0.5245, 0, 0.4},
-				{0.225, 2, 0.6036, 0, 0.4},
-				{0.252, 2, 0.6827, 0, 0.4},
-				{0.279, 2, 0.7618, 0, 0.4},
-				{0.306, 2, 0.8409, 0, 0.4},
-				{0.333, 2, 0.92, 0, 0.4},
-			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					1,
-					{255, 255, 255},
-				},
-			},
-			light_emission = 0,
-			brightness = 1,
 			zoffset = 0,
 			orientation = "FacingCamera",
 			offset = {0, 0, 0},
@@ -10366,7 +10472,7 @@ local SPEC_CrystalSpire = {
 			brightness = 1,
 			zoffset = 4,
 			ring_emit = {
-				{0.38, 1, 0, 0, 6},
+				{0.44, 1, 0, 0, 6},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -10408,7 +10514,7 @@ local SPEC_CrystalSpire = {
 			rotation = {0, 90},
 			zoffset = 5,
 			ring_emit = {
-				{0.5, 1, 0, 0, 18},
+				{0.56, 1, 0, 0, 18},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -10474,7 +10580,7 @@ local SPEC_CrystalSpire = {
 			rot_speed = {-60, 60},
 			radial = false,
 			ring_emit = {
-				{0.38, 20, 0, 0, 1.5},
+				{0.44, 20, 0, 0, 1.5},
 			},
 			zoffset = 0,
 			orientation = "FacingCamera",
@@ -10529,7 +10635,7 @@ local SPEC_CrystalSpire = {
 			brightness = 1.4,
 			radial = false,
 			ring_emit = {
-				{0.4, 16, 0, 0, 2},
+				{0.46, 16, 0, 0, 2},
 			},
 			accel = {0, 0, 0},
 			rotation = {0, 0},
@@ -10541,7 +10647,7 @@ local SPEC_CrystalSpire = {
 		},
 		{
 			name = "EruptRocks",
-			texture = "pb_rock_2x2",
+			texture = "om_cubes_2x2",
 			flipbook = {
 				layout = "Grid2x2",
 				mode = "Loop",
@@ -10555,29 +10661,28 @@ local SPEC_CrystalSpire = {
 			accel = {0, -150, 0},
 			lifetime = {0.8, 1.3},
 			size = {
-				{0, 2.6, 1},
-				{1, 2.2, 0.8},
+				{0, 3, 1},
+				{1, 2.6, 0.8},
 			},
-			transparency = {
-				{0, 0, 0},
-				{0.85, 0, 0},
-				{1, 1, 0},
+			color = {
+				{
+					0,
+					{128, 118, 106},
+				},
+				{
+					1,
+					{100, 92, 82},
+				},
 			},
 			rotation = {0, 360},
 			rot_speed = {-400, 400},
 			radial = false,
 			ring_emit = {
-				{0.38, 28, 0, 0, 2},
+				{0.44, 40, 0, 0, 2},
 			},
-			color = {
-				{
-					0,
-					{255, 255, 255},
-				},
-				{
-					1,
-					{255, 255, 255},
-				},
+			transparency = {
+				{0, 0, 0},
+				{1, 0, 0},
 			},
 			light_emission = 0,
 			brightness = 1,
@@ -10629,20 +10734,20 @@ local SPEC_CrystalSpire = {
 			rotation = {0, 360},
 			rot_speed = {-30, 30},
 			ring_emit = {
-				{0.4, 1, 0, 0.0446, 2},
-				{0.4, 1, 0.0714, 0.0446, 2},
-				{0.4, 1, 0.1429, 0.0446, 2},
-				{0.4, 1, 0.2143, 0.0446, 2},
-				{0.4, 1, 0.2857, 0.0446, 2},
-				{0.4, 1, 0.3571, 0.0446, 2},
-				{0.4, 1, 0.4286, 0.0446, 2},
-				{0.4, 1, 0.5, 0.0446, 2},
-				{0.4, 1, 0.5714, 0.0446, 2},
-				{0.4, 1, 0.6429, 0.0446, 2},
-				{0.4, 1, 0.7143, 0.0446, 2},
-				{0.4, 1, 0.7857, 0.0446, 2},
-				{0.4, 1, 0.8571, 0.0446, 2},
-				{0.4, 1, 0.9286, 0.0446, 2},
+				{0.46, 1, 0, 0.0312, 2},
+				{0.46, 1, 0.0714, 0.0312, 2},
+				{0.46, 1, 0.1429, 0.0312, 2},
+				{0.46, 1, 0.2143, 0.0312, 2},
+				{0.46, 1, 0.2857, 0.0312, 2},
+				{0.46, 1, 0.3571, 0.0312, 2},
+				{0.46, 1, 0.4286, 0.0312, 2},
+				{0.46, 1, 0.5, 0.0312, 2},
+				{0.46, 1, 0.5714, 0.0312, 2},
+				{0.46, 1, 0.6429, 0.0312, 2},
+				{0.46, 1, 0.7143, 0.0312, 2},
+				{0.46, 1, 0.7857, 0.0312, 2},
+				{0.46, 1, 0.8571, 0.0312, 2},
+				{0.46, 1, 0.9286, 0.0312, 2},
 			},
 			light_emission = 0,
 			brightness = 1,
@@ -10655,7 +10760,7 @@ local SPEC_CrystalSpire = {
 		{
 			name = "EruptCracks",
 			texture = "pb_vein_cracks",
-			lifetime = {8.6, 8.6},
+			lifetime = {10.54, 10.54},
 			rotation = {0, 360},
 			size = {
 				{0, 10, 0},
@@ -10680,7 +10785,7 @@ local SPEC_CrystalSpire = {
 			},
 			light_emission = 0.9,
 			ring_emit = {
-				{0.39, 1, 0, 0, 0.2},
+				{0.45, 1, 0, 0, 0.2},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -10699,7 +10804,7 @@ local SPEC_CrystalSpire = {
 		{
 			name = "EruptDark",
 			texture = "pb_vein_cracks",
-			lifetime = {8.8, 8.8},
+			lifetime = {10.74, 10.74},
 			rotation = {0, 360},
 			size = {
 				{0, 12, 0},
@@ -10723,7 +10828,7 @@ local SPEC_CrystalSpire = {
 				},
 			},
 			ring_emit = {
-				{0.39, 1, 0, 0, 0.12},
+				{0.45, 1, 0, 0, 0.12},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -10743,21 +10848,30 @@ local SPEC_CrystalSpire = {
 		{
 			name = "BuffRing",
 			texture = "pb_buff_ring",
-			lifetime = {7.6, 7.6},
+			lifetime = {9.54, 9.54},
 			size = {
-				{0, 42.2111, 0},
-				{0.03, 146.3317, 0},
-				{0.05, 140.7035, 0},
-				{1, 140.7035, 0},
+				{0, 60.3015, 0},
+				{0.02, 207.0352, 0},
+				{0.035, 201.005, 0},
+				{0.9581, 201.005, 0},
+				{0.979, 110.5528, 0},
+				{1, 16.0804, 0},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.02, 0.05, 0},
-				{0.06, 0.25, 0},
-				{0.3, 0.38, 0},
-				{0.5, 0.28, 0},
-				{0.7, 0.38, 0},
-				{0.97, 0.3, 0},
+				{0.015, 0.05, 0},
+				{0.05, 0.25, 0},
+				{0.3, 0.36, 0},
+				{0.55, 0.28, 0},
+				{0.8, 0.36, 0},
+				{0.869, 0.32, 0},
+				{0.8847, 0.75, 0},
+				{0.9004, 0.3, 0},
+				{0.9161, 0.75, 0},
+				{0.9319, 0.3, 0},
+				{0.9476, 0.75, 0},
+				{0.9581, 0.1, 0},
+				{0.979, 0.3, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -10772,7 +10886,7 @@ local SPEC_CrystalSpire = {
 			},
 			light_emission = 1,
 			ring_emit = {
-				{0.45, 1, 0, 0, 0.25},
+				{0.51, 1, 0, 0, 0.25},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -10792,16 +10906,18 @@ local SPEC_CrystalSpire = {
 		{
 			name = "BuffGlow",
 			texture = "fx_glow",
-			lifetime = {7.6, 7.6},
+			lifetime = {9.54, 9.54},
 			size = {
-				{0, 70.3518, 0},
-				{0.03, 133.6683, 0},
-				{1, 133.6683, 0},
+				{0, 100.5025, 0},
+				{0.02, 190.9548, 0},
+				{0.9581, 190.9548, 0},
+				{1, 20.1005, 0},
 			},
 			transparency = {
 				{0, 1, 0},
-				{0.03, 0.82, 0},
-				{0.97, 0.86, 0},
+				{0.02, 0.84, 0},
+				{0.9, 0.88, 0},
+				{0.9581, 0.78, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -10820,7 +10936,7 @@ local SPEC_CrystalSpire = {
 			},
 			light_emission = 1,
 			ring_emit = {
-				{0.45, 1, 0, 0, 0.2},
+				{0.51, 1, 0, 0, 0.2},
 			},
 			decal = true,
 			orientation = "VelocityPerpendicular",
@@ -10889,7 +11005,8 @@ local SPEC_CrystalSpire = {
 			rotation = {-10, 10},
 			radial = false,
 			zstream = {
-				{0.5, 8, 80, 80},
+				{0.56, 8.8, 115, 115},
+				{8.8, 10, 115, 30},
 			},
 			drag = 0,
 			rot_speed = {0, 0},
@@ -10941,7 +11058,8 @@ local SPEC_CrystalSpire = {
 			rotation = {0, 45},
 			radial = false,
 			zstream = {
-				{0.5, 8, 45, 45},
+				{0.56, 8.8, 65, 65},
+				{8.8, 10, 65, 15},
 			},
 			transparency = {
 				{0, 0, 0},
@@ -10958,7 +11076,7 @@ local SPEC_CrystalSpire = {
 			name = "CrystalGlow",
 			texture = "fx_glow",
 			zdist = {
-				r = {0, 0.0149},
+				r = {0, 0.0104},
 				h = {8, 26},
 				area = false,
 			},
@@ -10990,7 +11108,8 @@ local SPEC_CrystalSpire = {
 			brightness = 1,
 			radial = false,
 			zstream = {
-				{0.52, 8, 8, 8},
+				{0.58, 8.8, 8, 8},
+				{8.8, 10, 8, 22},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -11015,7 +11134,7 @@ local SPEC_CrystalSpire = {
 				startRandom = true,
 			},
 			zdist = {
-				r = {0.0557, 0.1337},
+				r = {0.039, 0.0936},
 				h = {0.2, 0.6},
 				area = false,
 			},
@@ -11057,8 +11176,9 @@ local SPEC_CrystalSpire = {
 			rotation = {-15, 15},
 			radial = false,
 			zstream = {
-				{0.5, 1, 80, 40},
-				{1, 8, 40, 40},
+				{0.56, 1.06, 80, 40},
+				{1.06, 10, 40, 40},
+				{10, 10.7, 40, 0},
 			},
 			drag = 0,
 			rot_speed = {0, 0},
@@ -11078,7 +11198,7 @@ local SPEC_CrystalSpire = {
 				startRandom = true,
 			},
 			zdist = {
-				r = {0.0557, 0.1486},
+				r = {0.039, 0.104},
 				h = {0.2, 0.5},
 				area = false,
 			},
@@ -11120,7 +11240,7 @@ local SPEC_CrystalSpire = {
 			rotation = {-10, 10},
 			radial = false,
 			zstream = {
-				{0.5, 8, 16, 16},
+				{0.56, 10, 16, 16},
 			},
 			drag = 0,
 			rot_speed = {0, 0},
@@ -11134,7 +11254,7 @@ local SPEC_CrystalSpire = {
 			name = "CrystalEmbers",
 			texture = "fx_spark002",
 			zdist = {
-				r = {0, 0.13},
+				r = {0, 0.091},
 				h = {0.5, 3},
 				area = false,
 			},
@@ -11172,7 +11292,7 @@ local SPEC_CrystalSpire = {
 			rotation = {0, 45},
 			radial = false,
 			zstream = {
-				{0.6, 8, 18, 18},
+				{0.66, 10, 18, 18},
 			},
 			transparency = {
 				{0, 0, 0},
@@ -11189,7 +11309,7 @@ local SPEC_CrystalSpire = {
 			name = "CrystalGlints",
 			texture = "kk_star_09",
 			zdist = {
-				r = {0, 0.052},
+				r = {0, 0.0364},
 				h = {3, 28},
 				area = false,
 			},
@@ -11223,7 +11343,8 @@ local SPEC_CrystalSpire = {
 			zoffset = 6,
 			radial = false,
 			zstream = {
-				{0.7, 8, 4, 4},
+				{0.76, 8.8, 4, 4},
+				{8.8, 10, 6, 18},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -11241,17 +11362,69 @@ local SPEC_CrystalSpire = {
 			emit = {},
 		},
 		{
-			name = "ShatterFlash",
+			name = "CrystalCracks",
+			texture = "pb_vein_cracks",
+			zdist = {
+				r = {0, 0.0156},
+				h = {3, 28},
+				area = false,
+			},
+			lifetime = {0.25, 0.45},
+			size = {
+				{0, 2, 0},
+				{0.15, 6, 1.5},
+				{1, 6.5, 1.5},
+			},
+			transparency = {
+				{0, 0.6, 0},
+				{0.2, 0.15, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{255, 255, 255},
+				},
+				{
+					0.5,
+					{205, 255, 250},
+				},
+				{
+					1,
+					{120, 235, 228},
+				},
+			},
+			light_emission = 1,
+			brightness = 1.8,
+			rotation = {0, 360},
+			zoffset = 6,
+			radial = false,
+			zstream = {
+				{8.8, 10, 6, 30},
+			},
+			speed = {0, 0},
+			spread = {0, 0},
+			direction = "Top",
+			accel = {0, 0, 0},
+			drag = 0,
+			rot_speed = {0, 0},
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CrumbleGlow",
 			texture = "fx_glow",
-			lifetime = {0.3, 0.3},
+			lifetime = {0.4, 0.4},
 			size = {
 				{0, 10, 0},
-				{0.25, 38, 0},
-				{1, 42, 0},
+				{0.25, 30, 0},
+				{1, 32, 0},
 			},
 			transparency = {
 				{0, 0.5, 0},
-				{0.5, 0.72, 0},
+				{0.5, 0.75, 0},
 				{1, 1, 0},
 			},
 			color = {
@@ -11272,7 +11445,7 @@ local SPEC_CrystalSpire = {
 			brightness = 0.9,
 			zoffset = 4,
 			ring_emit = {
-				{8, 1, 0, 0, 14},
+				{10, 1, 0, 0, 14},
 			},
 			speed = {0, 0},
 			spread = {0, 0},
@@ -11287,7 +11460,7 @@ local SPEC_CrystalSpire = {
 			emit = {},
 		},
 		{
-			name = "ShatterDust",
+			name = "CrumbleDust",
 			texture = "fx_smoke_2x2",
 			flipbook = {
 				layout = "Grid2x2",
@@ -11296,15 +11469,15 @@ local SPEC_CrystalSpire = {
 				startRandom = true,
 			},
 			direction = "Front",
-			pitch = 20,
+			pitch = 18,
 			spread = {15, 10},
-			speed = {18, 36},
+			speed = {14, 30},
 			drag = 2.5,
 			accel = {0, 3, 0},
-			lifetime = {0.9, 1.3},
+			lifetime = {1, 1.5},
 			size = {
-				{0, 5, 1},
-				{1, 15, 3},
+				{0, 6, 1},
+				{1, 17, 3},
 			},
 			transparency = {
 				{0, 0.4, 0},
@@ -11328,16 +11501,70 @@ local SPEC_CrystalSpire = {
 			rotation = {0, 360},
 			rot_speed = {-30, 30},
 			ring_emit = {
-				{8.02, 1, 0, 0.0371, 3},
-				{8.02, 1, 0.1, 0.0371, 3},
-				{8.02, 1, 0.2, 0.0371, 3},
-				{8.02, 1, 0.3, 0.0371, 3},
-				{8.02, 1, 0.4, 0.0371, 3},
-				{8.02, 1, 0.5, 0.0371, 3},
-				{8.02, 1, 0.6, 0.0371, 3},
-				{8.02, 1, 0.7, 0.0371, 3},
-				{8.02, 1, 0.8, 0.0371, 3},
-				{8.02, 1, 0.9, 0.0371, 3},
+				{10.1, 1, 0, 0.026, 2},
+				{10.1, 1, 0.0833, 0.026, 2},
+				{10.1, 1, 0.1667, 0.026, 2},
+				{10.1, 1, 0.25, 0.026, 2},
+				{10.1, 1, 0.3333, 0.026, 2},
+				{10.1, 1, 0.4167, 0.026, 2},
+				{10.1, 1, 0.5, 0.026, 2},
+				{10.1, 1, 0.5833, 0.026, 2},
+				{10.1, 1, 0.6667, 0.026, 2},
+				{10.1, 1, 0.75, 0.026, 2},
+				{10.1, 1, 0.8333, 0.026, 2},
+				{10.1, 1, 0.9167, 0.026, 2},
+			},
+			light_emission = 0,
+			brightness = 1,
+			zoffset = 0,
+			orientation = "FacingCamera",
+			offset = {0, 0, 0},
+			line_u = 0,
+			emit = {},
+		},
+		{
+			name = "CrumbleColumn",
+			texture = "fx_smoke_2x2",
+			flipbook = {
+				layout = "Grid2x2",
+				mode = "Loop",
+				fps = 0.001,
+				startRandom = true,
+			},
+			direction = "Top",
+			spread = {25, 25},
+			speed = {8, 18},
+			drag = 2,
+			accel = {0, 3, 0},
+			lifetime = {1, 1.4},
+			size = {
+				{0, 8, 2},
+				{1, 20, 3},
+			},
+			transparency = {
+				{0, 0.5, 0},
+				{0.4, 0.62, 0},
+				{1, 1, 0},
+			},
+			color = {
+				{
+					0,
+					{160, 150, 136},
+				},
+				{
+					0.5,
+					{138, 128, 116},
+				},
+				{
+					1,
+					{112, 104, 94},
+				},
+			},
+			rotation = {0, 360},
+			rot_speed = {-30, 30},
+			radial = false,
+			ring_emit = {
+				{10.15, 6, 0, 0, 3},
 			},
 			light_emission = 0,
 			brightness = 1,
@@ -11350,16 +11577,17 @@ local SPEC_CrystalSpire = {
 	},
 	shakes = {
 		{0, 0.6, 0.3},
-		{0.38, 1, 0.55},
-		{8, 0.6, 0.4},
+		{0.1, 0.35, 0.4},
+		{0.44, 1, 0.55},
+		{10, 0.45, 0.8},
 	},
 	zone = {
-		radius = 70,
+		radius = 100,
 		height = 40,
 	},
 	lights = {
 		{
-			t = 0.38,
+			t = 0.44,
 			h = 6,
 			color = {94, 229, 224},
 			brightness = 7,
@@ -11369,31 +11597,32 @@ local SPEC_CrystalSpire = {
 			fall = 0.5,
 		},
 		{
-			t = 0.4,
+			t = 0.46,
 			h = 18,
 			color = {94, 229, 224},
 			brightness = 2.5,
 			range = 45,
 			rise = 0.25,
-			hold = 7.35,
-			fall = 0.3,
+			hold = 9.29,
+			fall = 0.8,
 		},
 		{
-			t = 8,
-			h = 14,
+			t = 10,
+			h = 12,
 			color = {94, 229, 224},
-			brightness = 6,
-			range = 50,
-			rise = 0.03,
-			hold = 0.08,
-			fall = 0.5,
+			brightness = 3.5,
+			range = 45,
+			rise = 0.05,
+			hold = 0.1,
+			fall = 0.6,
 		},
 	},
 	times = {
 		Stomp = 0,
-		Erupt = 0.38,
-		Crystal = 0.54,
-		Shatter = 8,
+		Erupt = 0.44,
+		Crystal = 0.6,
+		Warning = 8.8,
+		End = 10,
 	},
 	cubes = {
 		gravity = 170,
@@ -11416,28 +11645,43 @@ local SPEC_CrystalSpire = {
 			{
 				name = "Erupt",
 				mode = "blast",
-				count = 60,
-				t = {0.38, 0.43},
-				r = {0.0074, 0.1486},
-				size = {0.5, 2.8},
-				skew = 2.4,
+				count = 110,
+				t = {0.44, 0.49},
+				r = {0.0052, 0.117},
+				size = {0.8, 3.6},
+				skew = 2.2,
 				out = {18, 55},
 				up = {45, 100},
 				dissolve = 0.35,
-				neon = 0.2,
+				neon = 0.18,
 			},
 			{
-				name = "Shatter",
+				name = "CrumbleTop",
 				mode = "blast",
-				count = 40,
-				t = {8, 8.05},
-				r = {0, 0.0743},
-				size = {0.5, 2.2},
-				skew = 2.2,
-				out = {25, 70},
-				up = {25, 70},
-				dissolve = 0.45,
-				neon = 0.7,
+				count = 16,
+				t = {10, 10.15},
+				r = {0, 0.026},
+				h = {14, 26},
+				size = {1.2, 3.4},
+				skew = 1.6,
+				out = {8, 24},
+				up = {4, 22},
+				dissolve = 0.4,
+				neon = 0.85,
+			},
+			{
+				name = "CrumbleLow",
+				mode = "blast",
+				count = 18,
+				t = {10.1, 10.5},
+				r = {0, 0.0364},
+				h = {2, 13},
+				size = {0.8, 2.8},
+				skew = 1.8,
+				out = {10, 28},
+				up = {8, 26},
+				dissolve = 0.4,
+				neon = 0.8,
 			},
 		},
 		fx = {
@@ -11488,7 +11732,7 @@ local SPEC_CrystalSpire = {
 		groups = {
 			{
 				hold = {1, 1},
-				sink = 0.4,
+				sink = 0.9,
 				name = "PebledonCrystal",
 				count = 1,
 				r = {0, 0},
@@ -11505,10 +11749,10 @@ local SPEC_CrystalSpire = {
 				pitch = 0,
 				show = 0.93,
 				rise = 0.14,
-				t = 0.4,
+				t = 0.46,
 				delay = {0, 0},
-				end_at = {8, 8},
-				["end"] = "shatter",
+				end_at = {10, 10},
+				["end"] = "crumble",
 				ice = {
 					color = {94, 229, 224},
 					material = "Glass",
@@ -11537,7 +11781,7 @@ local SPEC_CrystalSpire = {
 						},
 						direction = "Top",
 						spread = {80, 80},
-						speed = {18, 45},
+						speed = {14, 38},
 						drag = 0.5,
 						accel = {0, -110, 0},
 						lifetime = {0.6, 1.1},
@@ -11688,11 +11932,67 @@ local SPEC_CrystalSpire = {
 						offset = {0, 0, 0},
 						line_u = 0,
 					},
+					{
+						name = "ShardDust",
+						texture = "fx_smoke_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 6},
+						},
+						shape = {
+							type = "Box",
+							size = {8, 26, 8},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {60, 60},
+						speed = {4, 10},
+						drag = 2,
+						accel = {0, 2, 0},
+						lifetime = {0.8, 1.2},
+						size = {
+							{0, 4, 1},
+							{1, 11, 2},
+						},
+						transparency = {
+							{0, 0.45, 0},
+							{0.4, 0.6, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{160, 150, 136},
+							},
+							{
+								0.5,
+								{138, 128, 116},
+							},
+							{
+								1,
+								{112, 104, 94},
+							},
+						},
+						rotation = {0, 360},
+						rot_speed = {-30, 30},
+						light_emission = 0,
+						brightness = 1,
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
 				},
 			},
 			{
 				hold = {1, 1},
-				sink = 0.4,
+				sink = 0.9,
 				name = "CrystalCore",
 				count = 1,
 				r = {0, 0},
@@ -11707,10 +12007,10 @@ local SPEC_CrystalSpire = {
 				pitch = 0,
 				show = 0.93,
 				rise = 0.14,
-				t = 0.4,
+				t = 0.46,
 				delay = {0, 0},
-				end_at = {8, 8},
-				["end"] = "shatter",
+				end_at = {10, 10},
+				["end"] = "crumble",
 				ice = {
 					color = {60, 205, 205},
 					material = "Neon",
@@ -11721,11 +12021,11 @@ local SPEC_CrystalSpire = {
 			},
 			{
 				hold = {1, 1},
-				sink = 0.4,
+				sink = 0.6,
 				name = "CrystalShards",
 				count = 6,
 				ring = true,
-				r = {0.0557, 0.0817},
+				r = {0.039, 0.0572},
 				hex = true,
 				lean = "radial",
 				wid = {4, 5.6},
@@ -11736,10 +12036,10 @@ local SPEC_CrystalSpire = {
 				pitch = 6,
 				show = 0.86,
 				rise = 0.13,
-				t = 0.45,
+				t = 0.51,
 				delay = {0, 0.07},
-				end_at = {7.96, 8.04},
-				["end"] = "shatter",
+				end_at = {9.6, 9.95},
+				["end"] = "crumble",
 				ice = {
 					color = {110, 236, 232},
 					material = "Glass",
@@ -11768,7 +12068,7 @@ local SPEC_CrystalSpire = {
 						},
 						direction = "Top",
 						spread = {80, 80},
-						speed = {18, 45},
+						speed = {14, 38},
 						drag = 0.5,
 						accel = {0, -110, 0},
 						lifetime = {0.6, 1.1},
@@ -11919,6 +12219,62 @@ local SPEC_CrystalSpire = {
 						offset = {0, 0, 0},
 						line_u = 0,
 					},
+					{
+						name = "ShardDust",
+						texture = "fx_smoke_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 2},
+						},
+						shape = {
+							type = "Box",
+							size = {4, 12, 4},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {60, 60},
+						speed = {4, 10},
+						drag = 2,
+						accel = {0, 2, 0},
+						lifetime = {0.8, 1.2},
+						size = {
+							{0, 4, 1},
+							{1, 11, 2},
+						},
+						transparency = {
+							{0, 0.45, 0},
+							{0.4, 0.6, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{160, 150, 136},
+							},
+							{
+								0.5,
+								{138, 128, 116},
+							},
+							{
+								1,
+								{112, 104, 94},
+							},
+						},
+						rotation = {0, 360},
+						rot_speed = {-30, 30},
+						light_emission = 0,
+						brightness = 1,
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
 				},
 			},
 			{
@@ -11926,7 +12282,7 @@ local SPEC_CrystalSpire = {
 				sink = 0.4,
 				name = "CrystalShards",
 				count = 12,
-				r = {0.0891, 0.1857},
+				r = {0.0624, 0.13},
 				hex = true,
 				lean = "radial",
 				wid = {1.8, 3},
@@ -11937,10 +12293,10 @@ local SPEC_CrystalSpire = {
 				pitch = 8,
 				show = 0.82,
 				rise = 0.12,
-				t = 0.48,
-				sweep = 0.4038,
+				t = 0.54,
+				sweep = 0.5769,
 				delay = {0, 0.08},
-				end_at = {7.98, 8.08},
+				end_at = {9.3, 9.7},
 				["end"] = "shatter",
 				ice = {
 					color = {94, 229, 224},
@@ -11970,7 +12326,7 @@ local SPEC_CrystalSpire = {
 						},
 						direction = "Top",
 						spread = {80, 80},
-						speed = {18, 45},
+						speed = {14, 38},
 						drag = 0.5,
 						accel = {0, -110, 0},
 						lifetime = {0.6, 1.1},
@@ -12121,35 +12477,171 @@ local SPEC_CrystalSpire = {
 						offset = {0, 0, 0},
 						line_u = 0,
 					},
+					{
+						name = "ShardDust",
+						texture = "fx_smoke_2x2",
+						flipbook = {
+							layout = "Grid2x2",
+							mode = "Loop",
+							fps = 0.001,
+							startRandom = true,
+						},
+						emit = {
+							{0, 2},
+						},
+						shape = {
+							type = "Box",
+							size = {2, 6, 2},
+							style = "Volume",
+							inout = "Outward",
+						},
+						direction = "Top",
+						spread = {60, 60},
+						speed = {4, 10},
+						drag = 2,
+						accel = {0, 2, 0},
+						lifetime = {0.8, 1.2},
+						size = {
+							{0, 4, 1},
+							{1, 11, 2},
+						},
+						transparency = {
+							{0, 0.45, 0},
+							{0.4, 0.6, 0},
+							{1, 1, 0},
+						},
+						color = {
+							{
+								0,
+								{160, 150, 136},
+							},
+							{
+								0.5,
+								{138, 128, 116},
+							},
+							{
+								1,
+								{112, 104, 94},
+							},
+						},
+						rotation = {0, 360},
+						rot_speed = {-30, 30},
+						light_emission = 0,
+						brightness = 1,
+						zoffset = 0,
+						orientation = "FacingCamera",
+						offset = {0, 0, 0},
+						line_u = 0,
+					},
 				},
+			},
+			{
+				hold = {1, 1},
+				sink = 0.6,
+				name = "SpireBlocks",
+				count = 16,
+				r = {0.052, 0.143},
+				lean = "radial",
+				wid = {2.8, 4.8},
+				thick = {3, 6},
+				len = {2.8, 4.8},
+				tilt = {18, 42},
+				yaw = 20,
+				pitch = 12,
+				show = 0.7,
+				rise = 0.1,
+				t = 0.46,
+				sweep = 0.3846,
+				delay = {0, 0.05},
+				end_at = {10.2, 10.6},
+				ground = true,
+				mesh = "SpireBlocks",
 			},
 			{
 				hold = {1, 1},
 				sink = 0.5,
 				name = "SpireSlabs",
-				count = 36,
-				r = {0.0594, 0.3714},
+				count = 48,
+				r = {0.0416, 0.26},
 				lean = "radial",
-				wid = {2.6, 5.2},
-				thick = {0.7, 1.4},
-				len = {2.6, 5.2},
+				wid = {3, 6},
+				thick = {1.2, 2.4},
+				len = {3, 6},
 				tilt = {18, 46},
 				yaw = 14,
 				pitch = 10,
 				show = 0.6,
 				rise = 0.08,
-				t = 0.38,
-				sweep = 0.3231,
+				t = 0.44,
+				sweep = 0.4615,
 				delay = {0, 0.04},
-				end_at = {8.3, 8.7},
+				end_at = {10.3, 10.8},
 				ground = true,
 				mesh = "SpireSlabs",
+			},
+			{
+				hold = {1.8, 2.8},
+				sink = 0.55,
+				name = "PathSlabs",
+				count = 26,
+				path = {
+					u = {0.08, 0.9},
+					t0 = 0.02,
+					travel = 0.4,
+					side = {1.4, 4.6},
+				},
+				r = {0, 0},
+				t = 0.42,
+				wid = {2.2, 4.2},
+				thick = {1, 2.4},
+				len = {2.2, 4.6},
+				tilt = {26, 56},
+				yaw = 22,
+				pitch = 14,
+				show = 0.62,
+				rise = 0.09,
+				delay = {0, 0.03},
+				big = {
+					frac = 0.3,
+					k = 1.45,
+				},
+				ground = true,
+				mesh = "PathSlabs",
+			},
+			{
+				hold = {1.8, 2.8},
+				sink = 0.6,
+				name = "PathBlocks",
+				count = 12,
+				path = {
+					u = {0.08, 0.9},
+					t0 = 0.02,
+					travel = 0.4,
+					side = {2.2, 6.2},
+				},
+				r = {0, 0},
+				t = 0.42,
+				wid = {2.2, 4.4},
+				thick = {2.2, 4.6},
+				len = {2.2, 4.4},
+				tilt = {14, 40},
+				yaw = 30,
+				pitch = 18,
+				show = 0.64,
+				rise = 0.1,
+				delay = {0, 0.04},
+				big = {
+					frac = 0.25,
+					k = 1.5,
+				},
+				ground = true,
+				mesh = "PathBlocks",
 			},
 		},
 	},
 }
 
--- PEBLEDON SKILL 3 (Pilar de cristal): pisa fuerte y una grieta turquesa corre por el suelo hasta el punto elegido; ahí el suelo revienta y brota duro un pilar de cristal como los de su espalda (unos 33 studs), con cristales más chicos, fuego cian, rocas y losas. Queda un círculo que marca la mejora y el cristal brilla hasta que revienta en esquirlas (CrystalSpireTimes). El golpe al brotar llega a CrystalSpireHitRadius studs × escala; la mejora, a CrystalSpireRadius studs × escala.
+-- PEBLEDON SKILL 3 (Pilar de cristal): pisa fuerte y algo avanza bajo tierra hasta el punto elegido (se levantan losas y bloques por el camino); ahí el suelo revienta y brota duro un pilar de cristal como los de su espalda (unos 33 studs), con cristales más chicos, fuego cian y bloques de roca. Queda un círculo grande que marca la mejora y dura 10 s: al final avisa (titila y el círculo parpadea) y se desmorona hundiéndose (CrystalSpireTimes). El golpe al brotar llega a CrystalSpireHitRadius studs × escala; la mejora, a CrystalSpireRadius studs × escala.
 -- foot = el pie que pisa (Vector3 o CFrame; llámalo cuando el pie toca el suelo). target = dónde brota
 -- (Vector3 o CFrame, en el suelo). La grieta corre del pie hasta ahí y ahí brota todo.
 function PebledonVFX.CrystalSpire(foot: any, target: any, scale: number?, shake: number?): Part
@@ -12158,12 +12650,13 @@ end
 -- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la mejora
 PebledonVFX.CrystalSpireTimes = {
 	Stomp = 0,
-	Erupt = 0.38,
-	Crystal = 0.54,
-	Shatter = 8,
+	Erupt = 0.44,
+	Crystal = 0.6,
+	Warning = 8.8,
+	End = 10,
 }
--- radio alrededor del centro (studs a escala 1; multiplícalo por la escala): el círculo de la mejora (cerca del cristal, Pebledon gira y corre más rápido)
-PebledonVFX.CrystalSpireRadius = 70
+-- radio alrededor del centro (studs a escala 1; multiplícalo por la escala): el círculo de la mejora (dentro, Pebledon y sus compañeros giran y corren más rápido)
+PebledonVFX.CrystalSpireRadius = 100
 -- hasta dónde golpea al brotar (studs a escala 1; multiplícalo por la escala): a quien esté ahí lo empuja y lo manda a volar (eso lo hace el servidor)
 PebledonVFX.CrystalSpireHitRadius = 12
 

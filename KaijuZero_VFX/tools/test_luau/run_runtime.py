@@ -577,7 +577,16 @@ do
 	R.reset()
 	R.workspace = R.Instance.new("Workspace")
 	local holder = PEB.CrystalSpire(R.Vector3.new(0, 0, 0), R.Vector3.new(0, 0, -50), 1, 1)
-	stepFor(2)
+	stepFor(0.6)
+	-- lo que avanza bajo tierra: losas y bloques a los dos lados del camino, del pie hacia el cristal
+	local side = { [-1] = 0, [1] = 0 }
+	for _, p in R.livePositions("Slab") do
+		if p.Z > -22 and p.Z < -3 and math.abs(p.X) > 0.5 and math.abs(p.X) < 12 then
+			side[if p.X > 0 then 1 else -1] += 1
+		end
+	end
+	assert(side[-1] >= 4 and side[1] >= 4, ("CrystalSpire: no se levantaron losas por el camino (%d | %d)"):format(side[-1], side[1]))
+	stepFor(1.4)
 	-- el pilar (un prisma de tres bloques) se llama PebledonCrystal: el aliento lo puede tocar
 	local crystal = R.liveNamed("PebledonCrystal")
 	assert(crystal == 3, "CrystalSpire: el pilar no es un prisma de tres bloques con su nombre (" .. crystal .. ")")
@@ -589,7 +598,23 @@ do
 	end
 	assert(path >= 10, "CrystalSpire: la grieta no corrió del pie al cristal")
 	assert(near >= 5, "CrystalSpire: el fuego de la base no salió alrededor del cristal")
-	stepFor(9.5)
+	-- a los 10 s se desmorona: se hunde en el suelo (y suelta sus esquirlas)
+	local function top()
+		local y = -math.huge
+		for _, p in R.livePositions("PebledonCrystal") do y = math.max(y, p.Y) end
+		return y
+	end
+	stepFor(7.9)
+	local y1 = top()
+	assert(R.liveNamed("PebledonCrystal") == 3, "CrystalSpire: el pilar se fue antes de los 10 s")
+	stepFor(0.5)
+	local shards = 0
+	for _, nm in R.stats.emitNames do
+		if nm == "ShardBurst" then shards += 1 end
+	end
+	assert(R.liveNamed("PebledonCrystal") == 3 and top() < y1 - 2, "CrystalSpire: el pilar no se hundió al desmoronarse")
+	assert(shards >= 1, "CrystalSpire: el pilar no soltó esquirlas al desmoronarse")
+	stepFor(3)
 	local dl, wt, hb, rs = R.pending()
 	print(("%-17s emits=%d particulas=%d cristales y losas=%d puntas=%d pedazos=%d decals=%d | grieta=%d base=%d | vivos=%d holderDestruido=%s"):format(
 		"CrystalSpire", R.stats.emits, R.stats.emitted, R.stats.slabs, R.stats.tips, R.stats.cubes, R.stats.decals, path,
@@ -598,8 +623,8 @@ do
 	assert(R.stats.decals >= 30, "CrystalSpire: faltan las grietas o el círculo")
 	assert(R.liveNamed("PebledonCrystal") == 0 and R.liveNamed("Slab") == 0, "CrystalSpire: quedaron piezas")
 	assert(R.isDestroyed(holder) and hb == 0 and rs == 0, "CrystalSpire: no se limpió")
-	assert(PEB.CrystalSpireTimes.Erupt == 0.38 and PEB.CrystalSpireTimes.Shatter == 8 and PEB.CrystalSpireRadius == 70
-		and PEB.CrystalSpireHitRadius == 12, "CrystalSpire: faltan los tiempos o los radios")
+	assert(PEB.CrystalSpireTimes.Erupt == 0.44 and PEB.CrystalSpireTimes.Warning == 8.8 and PEB.CrystalSpireTimes.End == 10
+		and PEB.CrystalSpireRadius == 100 and PEB.CrystalSpireHitRadius == 12, "CrystalSpire: faltan los tiempos o los radios")
 end
 -- la refracción: un rayo del cristal a cada objetivo; SetTargets cambia a quiénes y Stop los corta
 do
@@ -628,7 +653,7 @@ do
 	end
 	assert(alive == 1, "CrystalRefract: SetTargets no cortó los rayos que sobran")
 	rf:Stop()
-	stepFor(10)
+	stepFor(12)
 	local dl, wt, hb, rs = R.pending()
 	print(("%-17s   refracción: 3 rayos, quedan %d al cambiar de objetivos | cortados: activo=%s limpio=%s heartbeat=%d render=%d"):format(
 		"CrystalRefract", alive, tostring(rf.Active), tostring(R.isDestroyed(spire)), hb, rs))

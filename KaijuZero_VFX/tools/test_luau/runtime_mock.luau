@@ -429,6 +429,14 @@ function M.liveNamed(name)
 	end
 	return n
 end
+-- dónde están las Parts vivas con ese nombre
+function M.livePositions(name)
+	local out = {}
+	for _, o in live do
+		if rawget(o, "__props").Name == name and not isDestroyed(o) then table.insert(out, o.Position) end
+	end
+	return out
+end
 function M.liveCount()
 	local n = 0
 	for _, o in live do
