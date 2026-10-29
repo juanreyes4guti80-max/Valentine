@@ -871,6 +871,8 @@ def draw_box(buf, cam, pr_):
         ImageDraw.Draw(m).polygon([(x - x0, y - y0) for x, y in zip(xs, ys)], fill=255)
         mm = np.asarray(m, np.float32)[..., None] / 255
         shade = 0.45 + 0.55 * max(0.0, float(n @ CubeSim.SUN))
+        if pr_.get("glow"):            # cristal que brilla solo (p. ej. las placas de Pebledon): casi sin sombra
+            shade = pr_["glow"] * (0.85 + 0.15 * shade)
         dst = buf[y0:y1, x0:x1]
         dst[:] = dst * (1 - mm) + col * shade * mm
 
@@ -1274,7 +1276,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
             if lz is not None:
                 items.append((cam.to_cam(lz[0])[2], 2, lz, None, None))
         for pr_ in (props or []) if draw else []:
-            d = cam.to_cam(np.asarray(pr_["pos"], float))
+            d = cam.to_cam(np.asarray(pr_["pos"], float) + np.array([0.0, pr_["size"][1] / 2, 0.0]))
             if d[2] > 0.5:
                 items.append((d[2], 3, pr_, d, None))
         if draw and spec.get("beams"):

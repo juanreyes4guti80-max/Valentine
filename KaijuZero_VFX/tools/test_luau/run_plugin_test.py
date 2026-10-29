@@ -12,7 +12,7 @@ main, png, indice = src(top), src(kids["Png"]), src(kids["Indice"])
 data = {c.find("Properties/string").text: src(c) for c in kids["Texturas"].findall("Item")}
 mods = {n: open(f"{R}/{d}/roblox/{n}.lua").read() for n, d in
         [("KaijuFireVFX", "KaijuZero_VFX"), ("OmnivoraVFX", "Omnivora_VFX"), ("AstralColossusVFX", "AstralColossus_VFX"),
-         ("MoonfangVFX", "Moonfang_VFX")]}
+         ("MoonfangVFX", "Moonfang_VFX"), ("PebledonVFX", "Pebledon_VFX")]}
 L = lambda s: "[==[" + s + "]==]"
 b = r'''
 local Enum = setmetatable({}, { __index = function(_, k) return setmetatable({}, { __index = function(_, v) return k .. "." .. v end }) end })

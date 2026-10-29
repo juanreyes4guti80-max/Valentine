@@ -112,6 +112,7 @@ KaijuZero_VFX/
                              vfx_aura, vfx_cataclysm)
     vfx_astral.py            specs de Astral Colossus; SPECS -> AstralColossusVFX
     vfx_moonfang.py          specs de Moonfang (todo su kit); SPECS -> MoonfangVFX. Texturas: gen_moonfang_textures.py
+    vfx_pebledon.py          specs de Pebledon (se hace por partes); SPECS -> PebledonVFX. Texturas: gen_pebledon_textures.py
     gen_luau.py              EL MOTOR Luau (texto dentro del .py) + el generador. Escribe los 3 módulos
     vfx_sim.py               simulador general (render, render_beam, render_aura, to_mp4)
     vfx_cataclysm_sim.py     simulador propio de la ULTIMATE de Omnívora
@@ -119,7 +120,7 @@ KaijuZero_VFX/
     import_kenney.py, import_effekseer.py, import_astral.py, import_omnivora.py  importan texturas CC0
     gen_plugin.py, plugin_studio/   el plugin que sube texturas
     test_luau/               pruebas: runtime_mock.luau (Roblox simulado), run_runtime.py, run_plugin_test.py
-Omnivora_VFX/, AstralColossus_VFX/, Moonfang_VFX/   lo mismo por personaje (guía, roblox/, textures/, preview/)
+Omnivora_VFX/, AstralColossus_VFX/, Moonfang_VFX/, Pebledon_VFX/   lo mismo por personaje (guía, roblox/, textures/, preview/)
 Plugin_Studio/               el plugin listo para la carpeta de Plugins de Studio
 KaijuZero_Habilidades/       desglose del video de referencia de las animaciones (pendientes)
 ```
@@ -153,7 +154,8 @@ Claves especiales que activan otros modos del motor; mira el archivo de ejemplo 
 | `beam`, `beams`, `hit` | rayo apuntable (Beams + Raycast cada cuadro) | `vfx_beam.py`, `vfx_cosmicbeam.py` |
 | `rocks` | efecto que sale de las rocas que le pasas | `vfx_pillars.py` (H3) |
 | `line` + `blade` | una media luna de energía hecha de trazos finos de Beams que vuela de canto por la línea, con su estela (`emitters`), el corte del suelo (`gash`), las losas que saltan a los lados (`slabs`) y el cráter del final (`crater`); lo demás se sincroniza con eventos a lo largo del camino | `vfx_moonfang.py` (`CRESCENT_WAVE`) |
-| `cone` (+ `front`, `field`) | onda en forma de triángulo hacia adelante. Con `front`, emisores que viajan con el frente (sale rápido y se frena: `wave` = T0, TW, freno) y dejan una estela; con `field`, bloques y losas sólidos que brotan donde pasa el frente (los de hielo revientan al final) | `vfx_astral.py`, `vfx_moonfang.py` (`ICE_WAVE`) |
+| `cone` (+ `front`, `field`) | onda en forma de triángulo hacia adelante. Con `front`, emisores que viajan con el frente (sale rápido y se frena: `wave` = T0, TW, freno) y dejan una estela; con `field`, bloques y losas sólidos que brotan donde pasa el frente (los de hielo revientan al final; `mesh` = el nombre en `Meshes`) | `vfx_astral.py`, `vfx_moonfang.py` (`ICE_WAVE`) |
+| `cone` con `head: True` | el triángulo sale **de la cabeza** (un rugido): la función recibe la boca o la cabeza, busca el suelo debajo con un Raycast y pone el triángulo ahí, en horizontal hacia donde mira. Las capas con `head=True` salen de la boca (su `offset` es relativo a ella); las demás, del vértice en el suelo. Exporta `<Efecto>Length`, `<Efecto>Angle`, `<Efecto>Times` y `<Efecto>FrontTime(distancia, largo)` (cuándo pasa el frente por cada punto, para el daño) | `vfx_pebledon.py` (`SEISMIC_ROAR`) |
 | `aura` | aura que se adapta a cualquier modelo (Highlight + emisores por parte). **Al usuario no le gustó** ("un delineado y un filtro raro con partículas sueltas"). Tampoco le gustó el aura de contorno que probamos después (abajo, en el estado de Moonfang). Antes de hacer otra aura, pregúntale qué quiere | `vfx_aura.py` |
 | `cataclysm` | la ULTIMATE de Omnívora (campo gravitacional, geometría, plan para el servidor) | `vfx_cataclysm.py` |
 
@@ -322,7 +324,7 @@ Cuando el prototipo te guste, **pásalo a spec** (cada emisor es una capa; cada 
 ```bash
 cd KaijuZero_VFX/tools
 
-# regenerar los tres módulos (.lua, .rbxmx y texturas_necesarias.txt)
+# regenerar los módulos de todos los kaijus (.lua, .rbxmx y texturas_necesarias.txt)
 python gen_luau.py ../roblox
 
 # regenerar el plugin (después de cambiar texturas o el código del plugin)
@@ -375,6 +377,13 @@ Para Omnívora importa primero `vfx_omnivora`. La ULTIMATE usa `vfx_cataclysm_si
   - **ULTIMATE `GravitationalCataclysm`**: 23 s, radio de 500 m (1786 studs), 8 fases, plan para el servidor, escena de prueba `CataclysmDemo.client.lua`.
 - **Astral Colossus** (`AstralColossusVFX`): `AstralClash`.
 - **Moonfang** (`MoonfangVFX`): `MoonBite` y `MoonBiteFinisher` (M1, mordiscos), `MoonGuardHit` (cada golpe bloqueado), `MoonFang` (pesado), `CrescentWave` (skill 1), `IceWave` (skill 2), `FrostRoar` (skill 3) y `Eclipse` (skill 4, la ULTIMATE). **El usuario dio el kit por terminado.** Ver `Moonfang_VFX/GUIA_INSTALACION.md`.
+- **Pebledon** (`PebledonVFX`), kaiju de piedra tipo Godzilla con venas de energía turquesa y placas dorsales de cristal cian. **Se hace por partes:** una skill, el video y el visto bueno del usuario antes de la siguiente. Ver `Pebledon_VFX/GUIA_INSTALACION.md`.
+  - Paleta (sacada de su imagen): cristal claro `94, 229, 224`, medio `52, 147, 152`, oscuro `39, 121, 127`; roca `93, 85, 76`; panza `164, 148, 133`.
+  - **Skill 1 `SeismicRoar` (Rugido sísmico), hecha.** Lo pidió como "un grito hacia adelante que expone a los enemigos, los ralentiza y los empuja un poquito para atrás", con daño moderado, más detallado que el rugido de Moonfang, en sus colores, con "uno que otro efectillo de partícula de fuego" y que **destruya el suelo a medida que avanza y se lleve rocas consigo**. Es un `cone` con `head`: ondas de sonido turquesa que viajan con el frente, fuego cian, losas, rocas que saltan delante del frente y grietas con venas turquesa de las que brota fuego. Su primera reacción a los cuadros: "tiene pintaza".
+  - **Skill 2, por hacer:** un rayo azul tipo aliento de Godzilla, del color de las placas, **más delgado** que los de Kaiju Zero y Omnívora y sin tantos efectos alrededor ("solamente un rayo azul"), que dure unos **3 s** y llegue a **3 veces su tamaño**.
+  - **Skill 3, por hacer:** un pisotón; a la distancia brota un **cristal gigante** (de su tamaño o un poco más) con efectos de fuego cian y el suelo roto alrededor. Si Pebledon se acerca al cristal, gira y se mueve más rápido (eso es gameplay: exporta el radio y la duración). El cristal es una pieza para Blender: deja un marcador decente con `Meshes`.
+  - **ULTIMATE, por elegir:** el usuario pidió ideas y que la barra siga alta.
+  - La figura de prueba para los videos son cajas (unos 25 studs de alto, boca a ~20 studs, mira hacia +X) con las placas que brillan (`glow` en los props del simulador).
 - **Plugin** `SubirTexturasVFX`.
 
 **Pendiente o por verificar (tu terreno):**

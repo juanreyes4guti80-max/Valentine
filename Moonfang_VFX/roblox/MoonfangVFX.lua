@@ -8,12 +8,11 @@
 		MoonfangVFX.MoonBite(rival, 1, 1)                        -- M1 mordiscos 1-3
 		MoonfangVFX.MoonBiteFinisher(rival, 1, 1)                -- M1 mordisco 4 (remate)
 		MoonfangVFX.MoonFang(rival, 1, 1)                        -- pesado
-		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
 		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado
 		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 130, 1, 1)   -- skill 1
 		MoonfangVFX.IceWave(CFrame.lookAt(origen, origen + direccion), nil, nil, 1, 1)  -- skill 2
-		MoonfangVFX.LunarHowl(cabeza.CFrame, 1, 1)               -- skill 3 (y LunarAura para la mejora)
-		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), 26, 150, 1, 1)   -- skill 4
+		MoonfangVFX.FrostRoar(cabeza.CFrame, 1, 1)               -- skill 3 (el empujón: FrostRoarImpact / FrostRoarRadius)
+		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), nil, nil, 1, 1)   -- skill 4 (ulti)
 
 	ANTES DE USARLO:
 	  1) Sube las imágenes de la carpeta textures/ (Asset Manager > Images > Bulk Import).
@@ -1243,6 +1242,31 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 	end
 	finish(spec, holder, s, shake, lights)
 	return holder
+end
+
+-- triángulo que sale de la cabeza (p. ej. un rugido): el triángulo va por el suelo bajo la boca, mirando hacia donde
+-- mira la cabeza (en horizontal), y las capas "head" salen de la boca (su offset es relativo a ella)
+local function _playConeHead(spec: Layer, head: CFrame, scale: number?, length: number?, shake: number?,
+	angle: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local look = Vector3.new(head.LookVector.X, 0, head.LookVector.Z)
+	look = if look.Magnitude > 1e-3 then look.Unit else Vector3.new(0, 0, -1)
+	local _, _, gy = groundLook(head.Position, {}, 80 * s)
+	local base = Vector3.new(head.Position.X, gy or (head.Position.Y - (spec.cone.mouth_h or 20) * s), head.Position.Z)
+	local cf = CFrame.lookAt(base, base + look)
+	local rel = cf:PointToObjectSpace(head.Position) / s
+	local sp = table.clone(spec)
+	sp.layers = table.create(#spec.layers)
+	for i, L in spec.layers do
+		if L.head then
+			local c = table.clone(L)
+			c.offset = { L.offset[1] + rel.X, L.offset[2] + rel.Y, L.offset[3] + rel.Z }
+			sp.layers[i] = c
+		else
+			sp.layers[i] = L
+		end
+	end
+	return play(sp, cf, scale, length, shake, angle)
 end
 
 -- efecto sobre las rocas del juego: todas detonan a la vez (con una diferencia mínima)

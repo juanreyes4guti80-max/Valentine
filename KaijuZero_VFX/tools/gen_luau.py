@@ -217,7 +217,7 @@ def norm_field(F):
     out = {"wave": list(F["wave"]) + ([1.0] if len(F["wave"]) < 3 else []), "groups": []}
     for G in F["groups"]:
         g = {k: plain(v) for k, v in G.items() if k not in ("shatter", "preview_color")}
-        g["mesh"] = G["name"]
+        g["mesh"] = G.get("mesh", G["name"])      # el nombre en Meshes (varios grupos pueden usar el mismo modelo)
         if G.get("shatter"):
             g["shatter"] = [norm_layer(L) for L in G["shatter"]]
         out["groups"].append(g)
@@ -347,12 +347,18 @@ DOC_MOONFANG = """	MoonfangVFX — VFX del lobo kaiju lunar de cristal (plata, h
 		MoonfangVFX.MoonBite(rival, 1, 1)                        -- M1 mordiscos 1-3
 		MoonfangVFX.MoonBiteFinisher(rival, 1, 1)                -- M1 mordisco 4 (remate)
 		MoonfangVFX.MoonFang(rival, 1, 1)                        -- pesado
-		local guardia = MoonfangVFX.MoonGuard(moonfang)          -- bloqueo (guardia:Stop() al soltar)
 		MoonfangVFX.MoonGuardHit(moonfang, 1, 1)                 -- cada golpe bloqueado
 		MoonfangVFX.CrescentWave(CFrame.lookAt(origen, origen + direccion), 130, 1, 1)   -- skill 1
 		MoonfangVFX.IceWave(CFrame.lookAt(origen, origen + direccion), nil, nil, 1, 1)  -- skill 2
-		MoonfangVFX.LunarHowl(cabeza.CFrame, 1, 1)               -- skill 3 (y LunarAura para la mejora)
-		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), 26, 150, 1, 1)   -- skill 4"""
+		MoonfangVFX.FrostRoar(cabeza.CFrame, 1, 1)               -- skill 3 (el empujón: FrostRoarImpact / FrostRoarRadius)
+		MoonfangVFX.Eclipse(CFrame.new(centroEnElSuelo), nil, nil, 1, 1)   -- skill 4 (ulti)"""
+
+DOC_PEBLEDON = """	PebledonVFX — VFX del kaiju de piedra con venas de energía turquesa y placas de cristal cian para PEBLEDON
+	(generado automáticamente desde vfx_pebledon.py; edita allí y regenera)
+
+	USO (en el CLIENTE, por ejemplo al recibir un RemoteEvent del servidor):
+		local PebledonVFX = require(ReplicatedStorage.PebledonVFX)
+		PebledonVFX.SeismicRoar(boca.WorldCFrame, nil, nil, 1, 1)   -- skill 1 (o la CFrame de la cabeza)"""
 
 DOC_ASTRAL = """	AstralColossusVFX — VFX cósmicos (galaxia: morado, azul y blanco) para ASTRAL COLOSSUS
 	(generado automáticamente desde vfx_astral.py; edita allí y regenera)
@@ -1558,6 +1564,31 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 	end
 	finish(spec, holder, s, shake, lights)
 	return holder
+end
+
+-- triángulo que sale de la cabeza (p. ej. un rugido): el triángulo va por el suelo bajo la boca, mirando hacia donde
+-- mira la cabeza (en horizontal), y las capas "head" salen de la boca (su offset es relativo a ella)
+local function playConeHead(spec: Layer, head: CFrame, scale: number?, length: number?, shake: number?,
+	angle: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local look = Vector3.new(head.LookVector.X, 0, head.LookVector.Z)
+	look = if look.Magnitude > 1e-3 then look.Unit else Vector3.new(0, 0, -1)
+	local _, _, gy = groundLook(head.Position, {}, 80 * s)
+	local base = Vector3.new(head.Position.X, gy or (head.Position.Y - (spec.cone.mouth_h or 20) * s), head.Position.Z)
+	local cf = CFrame.lookAt(base, base + look)
+	local rel = cf:PointToObjectSpace(head.Position) / s
+	local sp = table.clone(spec)
+	sp.layers = table.create(#spec.layers)
+	for i, L in spec.layers do
+		if L.head then
+			local c = table.clone(L)
+			c.offset = { L.offset[1] + rel.X, L.offset[2] + rel.Y, L.offset[3] + rel.Z }
+			sp.layers[i] = c
+		else
+			sp.layers[i] = L
+		end
+	end
+	return play(sp, cf, scale, length, shake, angle)
 end
 
 -- efecto sobre las rocas del juego: todas detonan a la vez (con una diferencia mínima)
@@ -5432,6 +5463,28 @@ def build(specs, name, doc):
                 "-- Todas detonan en el instante de la llamada; el pilar gigante sale en la roca más lejana.\n" + \
                 f"function KaijuFireVFX.{key}(rocks: {{ any }}, scale: number?, shake: number?): Part?\n" \
                 f"\treturn playRocks(SPEC_{key}, rocks, scale, shake)\nend\n\n"
+        elif spec.get("cone") and spec["cone"].get("head"):
+            c = spec["cone"]
+            T0, TW = c["wave"][0], c["wave"][1]
+            ease = c["wave"][2] if len(c["wave"]) > 2 else 1
+            out += head + \
+                "-- head = la boca (Attachment.WorldCFrame) o la CFrame de la cabeza, mirando hacia adelante: el efecto sale\n" \
+                "-- de ahí y el triángulo va por el suelo debajo (lo busca con un rayo; ignora los modelos con Humanoid).\n" \
+                f"-- length = largo del triángulo en studs (por defecto {c['length']:g} × escala); " \
+                f"angle = apertura en grados (por defecto {c['angle']:g}).\n" + \
+                f"function KaijuFireVFX.{key}(head: CFrame, length: number?, angle: number?, scale: number?, shake: number?): Part\n" \
+                f"\treturn playConeHead(SPEC_{key}, head, scale, length or {c['length']:g} * (scale or 1), shake, " \
+                f"angle or {c['angle']:g})\nend\n" \
+                "-- largo y apertura por defecto (studs a escala 1 y grados): para el área del daño en el servidor\n" \
+                f"KaijuFireVFX.{key}Length = {c['length']:g}\nKaijuFireVFX.{key}Angle = {c['angle']:g}\n"
+            if spec.get("times"):
+                out += "-- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la cámara\n" + \
+                    f"KaijuFireVFX.{key}Times = " + lua(spec["times"]) + "\n"
+            out += "-- segundos (desde la llamada) en que el frente pasa a `distance` studs del vértice (usa el mismo length\n" \
+                "-- con que llamaste el efecto): para aplicar el daño a cada enemigo cuando la onda lo alcanza\n" \
+                f"function KaijuFireVFX.{key}FrontTime(distance: number, length: number?): number\n" \
+                f"\tlocal u = math.clamp(distance / (length or {c['length']:g}), 0, 1)\n" \
+                f"\treturn {T0:g} + {TW:g} * (1 - (1 - u) ^ (1 / {ease:g}))\nend\n\n"
         elif spec.get("cone"):
             c = spec["cone"]
             out += head + \
@@ -5594,19 +5647,22 @@ def build(specs, name, doc):
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def main(out_kaiju, out_astral=None, out_omnivora=None, out_moonfang=None):
-    """Genera los módulos: KaijuFireVFX (Kaiju Zero), AstralColossusVFX (Astral Colossus), OmnivoraVFX (Omnívora) y
-    MoonfangVFX (Moonfang)."""
+def main(out_kaiju, out_astral=None, out_omnivora=None, out_moonfang=None, out_pebledon=None):
+    """Genera los módulos: KaijuFireVFX (Kaiju Zero), AstralColossusVFX (Astral Colossus), OmnivoraVFX (Omnívora),
+    MoonfangVFX (Moonfang) y PebledonVFX (Pebledon)."""
     import vfx_astral as VA
     import vfx_omnivora as VO
     import vfx_moonfang as VM
+    import vfx_pebledon as VP
     out_astral = out_astral or os.path.join(REPO, "AstralColossus_VFX", "roblox")
     out_omnivora = out_omnivora or os.path.join(REPO, "Omnivora_VFX", "roblox")
     out_moonfang = out_moonfang or os.path.join(REPO, "Moonfang_VFX", "roblox")
+    out_pebledon = out_pebledon or os.path.join(REPO, "Pebledon_VFX", "roblox")
     for out, specs, name, doc in ((out_kaiju, SP.SPECS, "KaijuFireVFX", DOC_KAIJU),
                                   (out_astral, VA.SPECS, "AstralColossusVFX", DOC_ASTRAL),
                                   (out_omnivora, VO.SPECS, "OmnivoraVFX", DOC_OMNIVORA),
-                                  (out_moonfang, VM.SPECS, "MoonfangVFX", DOC_MOONFANG)):
+                                  (out_moonfang, VM.SPECS, "MoonfangVFX", DOC_MOONFANG),
+                                  (out_pebledon, VP.SPECS, "PebledonVFX", DOC_PEBLEDON)):
         os.makedirs(out, exist_ok=True)
         src, tex = build(specs, name, doc)
         write_outputs(out, src, tex, name)

@@ -1226,6 +1226,31 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 	return holder
 end
 
+-- triángulo que sale de la cabeza (p. ej. un rugido): el triángulo va por el suelo bajo la boca, mirando hacia donde
+-- mira la cabeza (en horizontal), y las capas "head" salen de la boca (su offset es relativo a ella)
+local function _playConeHead(spec: Layer, head: CFrame, scale: number?, length: number?, shake: number?,
+	angle: number?): Part
+	local s = (scale or 1) * (spec.scale_mult or 1)
+	local look = Vector3.new(head.LookVector.X, 0, head.LookVector.Z)
+	look = if look.Magnitude > 1e-3 then look.Unit else Vector3.new(0, 0, -1)
+	local _, _, gy = groundLook(head.Position, {}, 80 * s)
+	local base = Vector3.new(head.Position.X, gy or (head.Position.Y - (spec.cone.mouth_h or 20) * s), head.Position.Z)
+	local cf = CFrame.lookAt(base, base + look)
+	local rel = cf:PointToObjectSpace(head.Position) / s
+	local sp = table.clone(spec)
+	sp.layers = table.create(#spec.layers)
+	for i, L in spec.layers do
+		if L.head then
+			local c = table.clone(L)
+			c.offset = { L.offset[1] + rel.X, L.offset[2] + rel.Y, L.offset[3] + rel.Z }
+			sp.layers[i] = c
+		else
+			sp.layers[i] = L
+		end
+	end
+	return play(sp, cf, scale, length, shake, angle)
+end
+
 -- efecto sobre las rocas del juego: todas detonan a la vez (con una diferencia mínima)
 local function _playRocks(spec: Layer, rocks: { any }, scale: number?, shake: number?): Part?
 	if #rocks == 0 then

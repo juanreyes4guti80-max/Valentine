@@ -275,7 +275,7 @@ Sus texturas propias salen de `KaijuZero_VFX/tools/gen_moonfang_textures.py`.
 
 Para regenerar, desde `KaijuZero_VFX/tools`:
 
-1. `python gen_luau.py ../roblox` escribe los cuatro módulos.
+1. `python gen_luau.py ../roblox` escribe los módulos de todos los kaijus.
 2. Si cambiaste texturas, `python gen_plugin.py` actualiza el plugin.
 
 La prueba `KaijuZero_VFX/tools/test_luau/run_runtime.py` ejecuta todo el kit contra un Roblox simulado. Comprueba:

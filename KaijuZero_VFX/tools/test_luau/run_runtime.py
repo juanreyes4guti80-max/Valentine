@@ -10,6 +10,8 @@ omni = open(os.path.join(d, "..", "..", "..", "Omnivora_VFX", "roblox", "Omnivor
     .replace("--!nonstrict", "")
 moon = open(os.path.join(d, "..", "..", "..", "Moonfang_VFX", "roblox", "MoonfangVFX.lua")).read() \
     .replace("--!nonstrict", "")
+peb = open(os.path.join(d, "..", "..", "..", "Pebledon_VFX", "roblox", "PebledonVFX.lua")).read() \
+    .replace("--!nonstrict", "")
 G = ["Vector3", "Vector2", "CFrame", "Color3", "NumberRange", "NumberSequence", "NumberSequenceKeypoint",
      "ColorSequence", "ColorSequenceKeypoint", "TweenInfo", "Random", "Enum", "Instance", "workspace", "game", "task", "time",
      "typeof", "RaycastParams", "UDim2"]
@@ -531,6 +533,39 @@ print(("%-17s   tiempos: %s"):format("", (function()
 	table.sort(o)
 	return table.concat(o, " ")
 end)()))
+-- ---------------------------------------------------------------- Pebledon
+local PEB = loadPebledon()
+-- la boca a 21 studs, mirando un poco hacia abajo: el triángulo igual va por el suelo, en horizontal
+run("SeismicRoar", function()
+	return PEB.SeismicRoar(R.CFrame.lookAt(R.Vector3.new(0, 21, 0), R.Vector3.new(0, 19, -10)), nil, nil, 1, 1)
+end, 6)
+assert(PEB.SeismicRoarTimes.Roar == 0.36 and PEB.SeismicRoarLength == 100 and PEB.SeismicRoarAngle == 42,
+	"SeismicRoar: faltan los tiempos, el largo o la apertura")
+assert(math.abs(PEB.SeismicRoarFrontTime(0) - 0.39) < 1e-6 and math.abs(PEB.SeismicRoarFrontTime(100) - 1.24) < 1e-6
+	and PEB.SeismicRoarFrontTime(50) > 0.39 and PEB.SeismicRoarFrontTime(50) < 0.39 + 0.85 / 2,
+	"SeismicRoar: FrontTime no sigue al frente (sale rápido y se frena)")
+assert(R.stats.slabs >= 40, "SeismicRoar: casi no saltaron losas del suelo")
+assert(R.stats.rocks >= 30, "SeismicRoar: casi no salieron rocas arrastradas")
+assert(R.stats.maxRate > 10, "SeismicRoar: el frente no soltó su polvo")
+assert(R.stats.decals >= 40, "SeismicRoar: no quedaron las grietas")
+assert(R.liveNamed("Slab") == 0, "SeismicRoar: quedaron losas en el suelo")
+do -- lo de la boca sale a la altura de la boca; lo del suelo, en el piso y hacia adelante (-Z)
+	local mouth, floor, cone, fwd = 0, 0, 0, math.huge
+	for i, p in R.stats.emitPos do
+		local nm = R.stats.emitNames[i]
+		if (nm == "MouthFlash" or nm == "SonicRings" or nm == "RoarFlames") and math.abs(p.Y - 21) < 1 then mouth += 1 end
+		if nm == "FloorDust" and p.Y > 1 and p.Y < 3 then floor += 1 end
+		if nm == "CrackFlames" and p.Y > 0 and p.Y < 1.5 then
+			cone += 1
+			fwd = math.min(fwd, p.Z)
+		end
+	end
+	assert(mouth >= 3, "SeismicRoar: el rugido no salió de la boca")
+	assert(floor >= 16, "SeismicRoar: el polvo bajo él no salió en el piso")
+	assert(cone >= 60 and fwd < -85, "SeismicRoar: el fuego de las grietas no cubre el triángulo en el suelo")
+	print(("%-17s   rugido: boca=%d piso=%d fuego en grietas=%d (llega a z=%.0f) losas=%d rocas=%d grietas=%d"):format(
+		"", mouth, floor, cone, fwd, R.stats.slabs, R.stats.rocks, R.stats.decals))
+end
 print("RUNTIME OK")
 '''
 b = "local R = (function()\n" + mock + "\nend)()\n"
@@ -540,7 +575,8 @@ for k in G:
 b += "local function loadModule()\n" + mod + "\nend\n"
 b += "local function loadAstral()\n" + astral + "\nend\n"
 b += "local function loadOmnivora()\n" + omni + "\nend\n"
-b += "local function loadMoonfang()\n" + moon + "\nend\n" + test
+b += "local function loadMoonfang()\n" + moon + "\nend\n"
+b += "local function loadPebledon()\n" + peb + "\nend\n" + test
 with tempfile.NamedTemporaryFile("w", suffix=".luau", delete=False) as f:
     f.write(b)
 sys.exit(subprocess.run([luau, f.name]).returncode)
