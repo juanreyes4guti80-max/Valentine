@@ -20,11 +20,11 @@ Si solo quieres un archivo (por ejemplo el módulo actualizado), ábrelo en GitH
 | Archivo | Para qué |
 |---|---|
 | `roblox/OmnivoraVFX.rbxmx` | El módulo con todos los efectos, también la ULTIMATE. |
-| `textures/` | Las 43 imágenes que hay que subir a Roblox. |
+| `textures/` | Las 46 imágenes que hay que subir a Roblox. |
 | `roblox/CataclysmDemo.client.lua` | La escena de prueba de la ULTIMATE (opcional). |
 | `SubirTexturasVFX.rbxmx` | El plugin que sube las texturas y pega los IDs por ti. Viene aparte: te lo mando en el chat y en GitHub está en la carpeta `Plugin_Studio`. |
 
-**Si ya tenías una versión anterior del módulo**, cópiate los IDs de su tabla `TEXTURES` antes de borrarlo. Los nombres no cambian, así que los pegas igual en el módulo nuevo y solo subes las imágenes que te falten (compara con `roblox/texturas_necesarias.txt`). La ULTIMATE no trae texturas nuevas: usa las mismas 43. Si usas también los módulos de Kaiju Zero o de Astral Colossus, actualízalos a la vez: los tres comparten la sacudida de cámara.
+**Si ya tenías una versión anterior del módulo**, cópiate los IDs de su tabla `TEXTURES` antes de borrarlo. Los nombres no cambian, así que los pegas igual en el módulo nuevo y solo subes las imágenes que te falten (compara con `roblox/texturas_necesarias.txt`). La ULTIMATE no trae texturas nuevas. El M1 3 (Empuje gravitatorio) trae tres: `om_scrape`, `om_scrape_line` y `om_grav_band`. Por eso ahora son 46. Si usas también los módulos de Kaiju Zero o de Astral Colossus, actualízalos a la vez: los tres comparten la sacudida de cámara.
 
 ## Qué hay aquí
 
@@ -33,8 +33,8 @@ Si solo quieres un archivo (por ejemplo el módulo actualizado), ábrelo en GitH
 | `roblox/OmnivoraVFX.rbxmx` | El ModuleScript listo para insertar en Studio. |
 | `roblox/OmnivoraVFX.lua` | El mismo código en texto, si prefieres copiar y pegar. |
 | `roblox/CataclysmDemo.client.lua` | La escena de prueba de la ULTIMATE: la ves completa sin el modelo de Omnívora, desde una cámara fija, y puedes saltar a cualquier fase. |
-| `roblox/texturas_necesarias.txt` | Las 43 imágenes que usa el módulo. |
-| `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 43). |
+| `roblox/texturas_necesarias.txt` | Las 46 imágenes que usa el módulo. |
+| `textures/` | Las imágenes que hay que subir a Roblox (son exactamente esas 46). |
 | `preview/` | Videos simulados de los efectos. |
 
 Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los módulos de Kaiju Zero, Astral Colossus y Omnívora.
@@ -47,6 +47,7 @@ Los generadores están en `KaijuZero_VFX/tools/`: el mismo motor genera los mód
 | `BlackHole(boca, enemigos, escala, sacudida, radio)` | **Agujero negro**, la habilidad que **golpea a dos enemigos a la vez**. Se forma frente a la boca de Omnívora: la energía y las estrellas se absorben y nace un núcleo negro con su anillo de luz. Después **avanza creciendo** en un arco suave hacia los enemigos. Lleva un disco de acreción que gira (azul celeste y púrpura), materia y estrellas que caen hacia él, una estela de nebulosa oscura con estrellas y ondas de gravedad. **Distorsiona el fondo** detrás de él y levanta polvo y cubitos del suelo. Al llegar **implosiona y detona en medio de los enemigos**: destello, nebulosa que se expande, anillos, rayos, estrellas, ondas y grietas de luz en el suelo, y la **destrucción de cubos** (los que el agujero ya levantaba salen despedidos con los demás). | 3.5 s (los cubos se desvanecen hasta los 5.6 s) |
 | `CosmicBeam(origen, objetivo, escala, sacudida, ignorar)` | **Rayo cósmico** de 3 s que **se puede apuntar** mientras dura. La boca de Omnívora **devora energía y estrellas** un instante (estelas que caen hacia ella, un disco púrpura que gira) y suelta un rayo de **nebulosa**: un cuerpo denso de azul muy oscuro con venas celestes, manchas púrpura y estrellas, envuelto en hebras de energía celestes y púrpura, con el núcleo blanco. En la boca gira el disco púrpura y se abren anillos. A lo largo del rayo **viajan anillos y remolinos**, saltan relámpagos y suben auroras, y deja una **estela cósmica** de nebulosa y estrellas que se queda flotando cuando lo mueves. Se corta en la **primera superficie que toca** y, si no toca nada, llega a su **largo máximo de 124 studs** × escala. Donde pega: destello, halo, ondas, la nebulosa que estalla, estelas, **cubitos** que salen volando y **grietas de luz** en el suelo. Si **barres el suelo** deja una estela de grietas. | 3.6 s (las marcas del suelo se borran unos 3 s después de hechas) |
 | `CosmicAura(modelo, escala, duración, intensidad)` | **Aura cósmica** que se adapta a cualquier modelo. Delinea todo el cuerpo en celeste que respira hacia el púrpura y de toda su silueta emanan lenguas de nebulosa azul muy oscura con venas celestes, energía celeste y púrpura, estrellas y chispas; a los pies, anillos y destellos que suben. | hasta que la apagues |
+| `GravityPush(cf, largo, ángulo, escala, sacudida)` | **M1 3: Empuje gravitatorio**, el tercer golpe básico (el que remata el combo). Omnívora empuja hacia adelante y la **gravedad sale por el suelo en triángulo**. En el golpe, un núcleo oscuro se traga la luz y las motas caen hacia él. Después sale el frente: una **banda oscura de gravedad** con bordes de luz finos y nítidos, rayas de compresión y estrellitas, con una línea de luz pegada al suelo y dos ondas más débiles detrás. Sale rápido y se va frenando hasta apagarse en el borde lejano. A su paso **raspa el suelo**: queda una **marca negra** con rayas en la dirección del empuje y surcos largos, que se dibuja detrás del frente. También **desplaza** rocas pequeñas (Parts del color y material del suelo), piedritas, polvo que se abre hacia los lados y ráfagas de aire. Los toques cósmicos son **sutiles**: polvo de estrellas, destellos sobre la marca, un poco del púrpura de la boca y piedritas que flotan un momento. La cámara se sacude en el golpe y mientras pasa el frente. | 0.48 s el empuje; la marca se borra a los 3.4 s (todo se limpia a los 4.2 s) |
 | `GravitationalCataclysm(epicentro, víctimas, opciones)` | **ULTIMATE: Cataclismo gravitacional** en un radio de **500 m** (1786 studs). La gravedad desaparece y el terreno se levanta. La materia forma una tormenta cósmica colosal, sobre el epicentro nace una singularidad que se traga la tormenta y a las víctimas, acumula energía hasta un destello blanco y detona, y las víctimas se estrellan contra el suelo. Todo lo mueve **una sola fuerza gravitacional**. Tiene su propia sección más abajo. | 23 s: 17.6 s de habilidad y 5.4 s de secuelas |
 | `CataclysmImpact(cf, escala, sacudida)` | El impacto de una víctima contra el suelo. Lo usa la ULTIMATE, pero también lo puedes llamar tú. | 5.6 s |
 | `Shake(intensidad, duración)` | Sacudida de cámara corta. Solo funciona en el cliente. Si se juntan varias sacudidas, de este módulo o de los de Kaiju Zero y Astral Colossus, se suman y al terminar la cámara vuelve exacta a su sitio. | — |
@@ -91,6 +92,16 @@ El agujero siempre tarda lo mismo en llegar, estén los enemigos cerca o lejos: 
 | 0.4 – 3.3 s | El rayo se sostiene y lo puedes mover. |
 | 3.3 s | Se **corta** solo (o antes, si llamas `rayo:Stop()`): se adelgaza y se apaga en 0.3 s, con un último destello y estrellas en la punta. Es `OmnivoraVFX.CosmicBeamStop`. |
 | después | La estela de nebulosa y estrellas se disipa en 1 – 1.5 s. Las marcas del suelo se borran solas unos 3 s después de hechas. |
+
+### Empuje gravitatorio (M1 3): tiempos
+
+| Momento | Qué pasa |
+|---|---|
+| 0 s | El golpe: el núcleo oscuro, el destello y el anillo en el suelo. **Llama la función en el instante del golpe de la animación.** Es `OmnivoraVFX.GravityPushTimes.Hit`. |
+| 0.06 s | Sale el frente desde el vértice. Es `GravityPushTimes.Push`. |
+| 0.06 – 0.48 s | El frente cruza el triángulo: sale rápido y se va frenando. Llega a la mitad del largo a los 0.21 s. A un enemigo a `d` studs del vértice lo alcanza a los `OmnivoraVFX.GravityPushFrontTime(d, largo)` s. |
+| 0.48 s | Llega al borde lejano y se apaga: el polvo rueda por encima y quedan unas estrellitas. Es `GravityPushTimes.Reach`. |
+| hasta 3.4 s | La marca negra se queda y se desvanece. Las rocas quedan clavadas un segundo y se deshacen. |
 
 ### La destrucción de cubos
 
@@ -337,9 +348,80 @@ task.delay(0.5, function()
 end)
 ```
 
+### Empuje gravitatorio (M1 3): cómo llamarlo
+
+- **`cf`**: el **vértice del triángulo, en el suelo**, mirando hacia adelante: el empuje sale hacia `cf.LookVector`. El módulo **no busca el suelo** en este efecto, así que pásale un punto del suelo (en el ejemplo, con un rayo). Ponlo unos studs delante de los pies de Omnívora.
+- **`largo`**: largo del triángulo en studs. Si no lo pasas, vale `66 × escala`.
+- **`ángulo`**: apertura en grados. Si no lo pasas, vale `46`.
+- **`escala`**: tamaño de las partículas y de las rocas (y del largo, si no lo pasas).
+- **`sacudida`**: `0` o `nil` la desactiva, `1` es normal y `2` es fuerte.
+
+Es un M1, así que se llama seguido. Cada llamada crea su propio efecto, que se limpia solo a los 4.2 s.
+
+```lua
+-- en el CLIENTE, cuando el servidor avisa el golpe (le manda el vértice y hacia dónde empuja)
+local OmnivoraVFX = require(ReplicatedStorage.OmnivoraVFX)
+
+local function sueloBajo(p: Vector3, ignorar: { Instance }): Vector3
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = ignorar
+	local hit = workspace:Raycast(p + Vector3.new(0, 10, 0), Vector3.new(0, -200, 0), params)
+	return if hit then hit.Position else p
+end
+
+efectoM1Tres.OnClientEvent:Connect(function(omnivora: Model, vertice: Vector3, adelante: Vector3)
+	local v = sueloBajo(vertice, { omnivora })
+	OmnivoraVFX.GravityPush(CFrame.lookAt(v, v + adelante), nil, nil, 1, 1)
+end)
+```
+
+### El empuje lo pone tu código (M1 3)
+
+El módulo solo dibuja el efecto: el daño y el empujón van en tu script del servidor. Usa el mismo vértice, largo y ángulo, y aplica cada golpe cuando el frente llega a ese enemigo, con `GravityPushFrontTime`:
+
+```lua
+local OmnivoraVFX = require(ReplicatedStorage.OmnivoraVFX)
+local LARGO, ANGULO = OmnivoraVFX.GravityPushLength, OmnivoraVFX.GravityPushAngle   -- 66 y 46 (a escala 1)
+
+-- ¿el punto cae dentro del triángulo? Devuelve también la distancia hacia adelante desde el vértice
+local function enTriangulo(vertice: Vector3, adelante: Vector3, p: Vector3): (boolean, number)
+	local rel = Vector3.new(p.X - vertice.X, 0, p.Z - vertice.Z)
+	local d = rel:Dot(adelante)
+	if d < 0 or d > LARGO then
+		return false, d
+	end
+	local lado = math.abs(rel:Dot(Vector3.new(-adelante.Z, 0, adelante.X)))
+	return lado <= d * math.tan(math.rad(ANGULO / 2)) + 4, d     -- +4: margen por el tamaño del enemigo
+end
+
+local function m1Tres(omnivora: Model, enemigos: { Model })
+	local raiz = omnivora.HumanoidRootPart
+	local adelante = Vector3.new(raiz.CFrame.LookVector.X, 0, raiz.CFrame.LookVector.Z).Unit
+	local vertice = raiz.Position + adelante * 8
+	efectoM1Tres:FireAllClients(omnivora, vertice, adelante)       -- tu RemoteEvent: cada cliente dibuja el efecto
+	for _, enemigo in enemigos do
+		local er = enemigo:FindFirstChild("HumanoidRootPart")
+		if not er then
+			continue
+		end
+		local dentro, d = enTriangulo(vertice, adelante, er.Position)
+		if dentro then
+			-- el frente lo alcanza a los GravityPushFrontTime(d) s (entre 0.06 y 0.48 s)
+			task.delay(OmnivoraVFX.GravityPushFrontTime(d, LARGO), function()
+				hacerDanio(enemigo, 25)                                -- tu función y tus valores
+				empujar(enemigo, adelante * 60 * (1 - 0.5 * d / LARGO))  -- tu knockback: más cerca, más fuerte
+			end)
+		end
+	end
+end
+```
+
+`OmnivoraVFX.GravityPushTimes` tiene los momentos (`Hit` 0, `Push` 0.06 y `Reach` 0.48) por si quieres sincronizar un sonido o tu animación. Si llamas el efecto con otro largo, pásale ese mismo largo a `GravityPushFrontTime`.
+
 ### Rendimiento
 
-En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 97 emisores. El agujero negro llega a unas 400 partículas y 180 cubos. El aura tiene unas 370 partículas encendidas y un emisor por capa en cada parte (hasta 30 partes). El rayo cósmico se mantiene en unas 370 partículas, con 6 Beams; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. La ULTIMATE es mucho más grande: su sección tiene sus números. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
+En el pico, el pilar tiene unas 800 partículas, unos 220 cubos (Parts, movidos todos juntos con `BulkMoveTo`) y unos 97 emisores. El agujero negro llega a unas 400 partículas y 180 cubos. El aura tiene unas 370 partículas encendidas y un emisor por capa en cada parte (hasta 30 partes). El rayo cósmico se mantiene en unas 370 partículas, con 6 Beams; al barrer el suelo deja hasta unas 10 marcas por segundo (Decals), que se borran solas. El M1 3 llega a unas 480 partículas en su pico (a los 0.47 s), con 27 Decals (la marca negra), 21 rocas (Parts) y unos 80 emisores, y se limpia solo a los 4.2 s. La ULTIMATE es mucho más grande: su sección tiene sus números. `OmnivoraVFX.Quality = 0.6` reduce las partículas y la cantidad de cubos, por ejemplo en celulares.
 
 ## ULTIMATE: Cataclismo gravitacional
 
@@ -546,6 +628,9 @@ Es la habilidad más pesada, pero está pensada para Roblox:
 - Los muñecos grises del video solo marcan dónde estarían los dos enemigos (y, en el rayo, Omnívora y el rival).
 - El cuerpo del **rayo cósmico** son 6 **Beams** de Roblox entre la boca y la punta: el halo azul, el cuerpo de nebulosa (`om_beam_nebula`, que trae sus propios colores, por eso su `Color` es blanco), las hebras celestes y púrpura (`om_beam_flow`), el polvo de estrellas (`om_beam_stars`) y el núcleo blanco. Usan `FaceCamera` y sus texturas corren hacia la punta a distintas velocidades: la nebulosa deriva despacio y las hebras corren rápido. Cada cuadro, un Raycast desde la boca decide hasta dónde llega la punta; las piezas del efecto tienen `CanQuery` apagado, así que ni ese Raycast ni el mouse las tocan.
 - En el video, el rayo sigue un recorrido de prueba: pega en el rival, baja y barre el suelo (se acorta), sube al cielo (llega a su máximo) y vuelve al rival. Abajo a la izquierda se ve cuánto mide en cada momento.
+- **La marca negra del M1 3** son Decals en el plano del vértice (suelo plano). Cada parche va girado hacia afuera desde el vértice, por eso sus rayas y sus surcos siguen la dirección del empuje.
+- **El frente del M1 3** son partículas que miran a la cámara y quedan acostadas: la banda `om_grav_band` ya es horizontal y las líneas finas son `kk_trace_01` con `Rotation` 90. Por eso se ven nítidas desde cualquier lado.
+- En el video del M1 3, las cajas rojas son enemigos de prueba. El empujón que se ve es el que haría tu servidor con `GravityPushFrontTime`: el módulo no mueve a nadie. La sacudida del video es la misma que el módulo le aplica a la cámara.
 - **El video de la ULTIMATE** se ve desde las mismas tres cámaras fijas de `CataclysmDemo`: dentro del área, lejos (todo el radio de 500 m) y cerca de un impacto. Al final repite en cámara lenta desde la masa crítica hasta los impactos. Abajo se ve la fase, el segundo y una línea con las 8 fases. La sacudida del video es la misma que el módulo le aplica a la cámara.
 - En la ULTIMATE, el ambiente se oscurece durante la tormenta y se aclara en la masa crítica. Eso lo hace un `ColorCorrectionEffect` que el efecto pone en `Lighting` y quita al terminar. Si tu juego ya usa uno, los dos se combinan.
 - El agujero de la ULTIMATE es una esfera negra (`Neon` negro), con discos de acreción inclinados y anillos de luz que siempre miran a la cámara. Las corrientes de la tormenta, los brazos de polvo y las ondas son cadenas de Beams que se desvanecen solas cuando pasan muy cerca de la cámara, para no taparte la vista.
@@ -554,11 +639,13 @@ Es la habilidad más pesada, pero está pensada para Roblox:
 
 - **Kenney Particle Pack** (`kk_*`): CC0, de kenney.nl. El crédito es opcional. Ver `textures/KENNEY_LICENSE.txt`.
 - **Muestras oficiales de Effekseer** (`fx_*`): CC0. Agradecen el crédito a "Effekseer" y a los autores de las muestras. Ver `textures/EFFEKSEER_SAMPLES_LICENSE_CC0.txt`.
-- **`om_*` y `kz_*`**: generadas para este proyecto (los cubitos, las grietas, el cuerpo del pilar, el núcleo del agujero negro, la marca del suelo, las del rayo cósmico (`om_beam_*`) y las del aura, `om_aura_wisp_2x2` y `fx_aura_tongue_2x2`), son tuyas.
+- **`om_*` y `kz_*`**: generadas para este proyecto (los cubitos, las grietas, el cuerpo del pilar, el núcleo del agujero negro, la marca del suelo, las del rayo cósmico (`om_beam_*`), las del aura, `om_aura_wisp_2x2` y `fx_aura_tongue_2x2`, y las del M1 3, `om_scrape`, `om_scrape_line` y `om_grav_band`), son tuyas.
 
 ## Si quieres cambiar algo
 
 El pilar está en `KaijuZero_VFX/tools/vfx_omnivora.py`: colores, tiempos de la carga y del pilar, cantidad y tamaño de los cubos (`CUBES`), oleadas, luces. El agujero negro está en `KaijuZero_VFX/tools/vfx_blackhole.py`: tiempos de la formación, del avance y de la detonación, tamaño, altura, arco, la lente, las capas del agujero y los cubos (`CUBES_BH`). El rayo cósmico está en `KaijuZero_VFX/tools/vfx_cosmicbeam.py`: arriba los tiempos (`START`, `GROW`, `STOP`, `FADE`), en `BEAMS` el ancho, el color y la velocidad de cada capa del rayo, y al final, en `"beam"`, el largo máximo (`max_len`: 124), cada cuánto deja marcas al barrer (`trail_every`, `trail_move`) y el tiempo mínimo entre impactos (`rehit`). Sus texturas (`om_beam_*`) salen de `KaijuZero_VFX/tools/gen_cosmic_beam_textures.py`. El aura está en `KaijuZero_VFX/tools/vfx_aura.py` (la misma receta que el aura carmesí de Kaiju Zero; `COSMIC` es su paleta y en `aura_cfg` están el delineado, las oleadas y los tiempos) y sus texturas salen de `KaijuZero_VFX/tools/gen_aura_textures.py`.
+
+El M1 3 (Empuje gravitatorio) está en `KaijuZero_VFX/tools/vfx_gravitypush.py`. Arriba están el largo y la apertura (`GL`, `GA`), los tiempos del frente (`T0`, `TW` y el freno `EASE`) y los colores. En `scrape_layers` está la marca negra: `SCRAPE_ROWS` son las filas de parches, `GOUGES` los surcos y `SCRAPE_LIFE` cuánto dura. En `rock_layers` están las rocas (cantidad, tamaño y velocidad) y al final, en `gravity_push_spec`, la sacudida (`shakes`) y la luz. Sus texturas salen de `KaijuZero_VFX/tools/gen_gravity_textures.py`.
 
 La ULTIMATE está en `KaijuZero_VFX/tools/vfx_cataclysm.py`. Arriba están:
 
@@ -589,6 +676,8 @@ En el agujero negro prueba dos enemigos, enemigos como Parts y Models con escala
 En el rayo cósmico comprueba que sin nada delante llegue a su largo máximo (124), que se corte en el suelo, que se acorte y deje marcas al barrer el suelo, que vuelva a su máximo al apuntar al cielo, que siga a un objetivo que se mueve y a un origen nuevo, y que `Stop()` lo apague y se limpie todo.
 
 En el aura comprueba que salga de las partes visibles del cuerpo (no de la raíz ni de hitboxes invisibles), que su tamaño siga el alto del modelo, que haya oleadas, que siga al modelo si se mueve y que se limpie al apagarla, al acabar su duración o si el modelo desaparece.
+
+En el M1 3 prueba dos largos y ángulos y comprueba que todo caiga dentro del triángulo, que quede la marca negra (Decals), que salgan rocas, que el frente suelte su polvo, que se limpie todo y que `GravityPushFrontTime` y `GravityPushTimes` cuadren con el frente.
 
 En la ULTIMATE corre la secuencia completa con tres víctimas y comprueba:
 - que se levanten las rocas;

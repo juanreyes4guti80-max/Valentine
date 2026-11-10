@@ -268,6 +268,26 @@ def wave_time(wave, u):
     return wave[0] + wave[1] * (1 - (1 - min(max(u, 0.0), 1.0)) ** (1 / ease))
 
 
+def cone_exports(key, spec):
+    """Lo que el servidor necesita de un triángulo: largo y apertura por defecto, los momentos (times) y cuándo pasa
+    el frente a cierta distancia del vértice (FrontTime). Los efectos que salen de la cabeza siempre lo traen; los
+    demás, si el spec tiene front_time."""
+    c = spec["cone"]
+    T0, TW = c["wave"][0], c["wave"][1]
+    ease = c["wave"][2] if len(c["wave"]) > 2 else 1
+    out = "-- largo y apertura por defecto (studs a escala 1 y grados): para el área del daño en el servidor\n" \
+        f"KaijuFireVFX.{key}Length = {c['length']:g}\nKaijuFireVFX.{key}Angle = {c['angle']:g}\n"
+    if spec.get("times"):
+        out += "-- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la cámara\n" + \
+            f"KaijuFireVFX.{key}Times = " + lua(spec["times"]) + "\n"
+    out += "-- segundos (desde la llamada) en que el frente pasa a `distance` studs del vértice (usa el mismo length\n" \
+        "-- con que llamaste el efecto): para aplicar el daño a cada enemigo cuando la onda lo alcanza\n" \
+        f"function KaijuFireVFX.{key}FrontTime(distance: number, length: number?): number\n" \
+        f"\tlocal u = math.clamp(distance / (length or {c['length']:g}), 0, 1)\n" \
+        f"\treturn {T0:g} + {TW:g} * (1 - (1 - u) ^ (1 / {ease:g}))\nend\n\n"
+    return out
+
+
 def norm_front(Fr):
     """Los emisores que viajan con el frente de la ola (capas normalizadas, con su tasa, altura e inclinación)."""
     w = list(Fr["wave"]) + ([1.0] if len(Fr["wave"]) < 3 else [])
@@ -5789,8 +5809,6 @@ def build(specs, name, doc):
                 f"\treturn playRocks(SPEC_{key}, rocks, scale, shake)\nend\n\n"
         elif spec.get("cone") and spec["cone"].get("head"):
             c = spec["cone"]
-            T0, TW = c["wave"][0], c["wave"][1]
-            ease = c["wave"][2] if len(c["wave"]) > 2 else 1
             out += head + \
                 "-- head = la boca (Attachment.WorldCFrame) o la CFrame de la cabeza, mirando hacia adelante: el efecto sale\n" \
                 "-- de ahí y el triángulo va por el suelo debajo (lo busca con un rayo; ignora los modelos con Humanoid).\n" \
@@ -5798,24 +5816,15 @@ def build(specs, name, doc):
                 f"angle = apertura en grados (por defecto {c['angle']:g}).\n" + \
                 f"function KaijuFireVFX.{key}(head: CFrame, length: number?, angle: number?, scale: number?, shake: number?): Part\n" \
                 f"\treturn playConeHead(SPEC_{key}, head, scale, length or {c['length']:g} * (scale or 1), shake, " \
-                f"angle or {c['angle']:g})\nend\n" \
-                "-- largo y apertura por defecto (studs a escala 1 y grados): para el área del daño en el servidor\n" \
-                f"KaijuFireVFX.{key}Length = {c['length']:g}\nKaijuFireVFX.{key}Angle = {c['angle']:g}\n"
-            if spec.get("times"):
-                out += "-- segundos (desde la llamada) de cada momento: para sincronizar el daño, el sonido o la cámara\n" + \
-                    f"KaijuFireVFX.{key}Times = " + lua(spec["times"]) + "\n"
-            out += "-- segundos (desde la llamada) en que el frente pasa a `distance` studs del vértice (usa el mismo length\n" \
-                "-- con que llamaste el efecto): para aplicar el daño a cada enemigo cuando la onda lo alcanza\n" \
-                f"function KaijuFireVFX.{key}FrontTime(distance: number, length: number?): number\n" \
-                f"\tlocal u = math.clamp(distance / (length or {c['length']:g}), 0, 1)\n" \
-                f"\treturn {T0:g} + {TW:g} * (1 - (1 - u) ^ (1 / {ease:g}))\nend\n\n"
+                f"angle or {c['angle']:g})\nend\n" + cone_exports(key, spec)
         elif spec.get("cone"):
             c = spec["cone"]
             out += head + \
                 f"-- length = largo del triángulo en studs (por defecto {c['length']} × escala); " \
                 f"angle = apertura en grados (por defecto {c['angle']}).\n" + \
                 f"function KaijuFireVFX.{key}(cf: CFrame, length: number?, angle: number?, scale: number?, shake: number?): Part\n" \
-                f"\treturn play(SPEC_{key}, cf, scale, length or {c['length']} * (scale or 1), shake, angle or {c['angle']})\nend\n\n"
+                f"\treturn play(SPEC_{key}, cf, scale, length or {c['length']} * (scale or 1), shake, angle or {c['angle']})\nend\n" + \
+                (cone_exports(key, spec) if spec.get("front_time") else "\n")
         elif spec.get("beam"):
             b = spec["beam"]
             hit = round(b["start"] + b["grow"], 3)

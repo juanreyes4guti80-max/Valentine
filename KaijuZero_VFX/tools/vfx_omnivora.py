@@ -484,3 +484,6 @@ SPECS["CosmicAura"] = _AU.COSMIC_AURA
 import vfx_cataclysm as _CC  # noqa: E402
 SPECS["CataclysmImpact"] = _CC.IMPACT
 SPECS["GravitationalCataclysm"] = _CC.CATACLYSM
+# el M1 3: empuje gravitatorio en triángulo (vfx_gravitypush.py)
+import vfx_gravitypush as _GP  # noqa: E402
+SPECS["GravityPush"] = _GP.GRAVITY_PUSH

@@ -39,5 +39,8 @@ om_beam_nebula.png
 om_beam_stars.png
 om_cracks.png
 om_cubes_2x2.png
+om_grav_band.png
 om_hole.png
 om_nebula_2x2.png
+om_scrape.png
+om_scrape_line.png

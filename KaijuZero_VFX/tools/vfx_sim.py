@@ -1279,7 +1279,13 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                 if L.get("type") == "meteor":
                     meteors.append(spawn_meteor(L, o, rng, scale, Rv))
                 else:
-                    parts.append(spawn(L, o, rng, scale if kk is None else kk, Rv, length, zone))
+                    p_ = spawn(L, o, rng, scale if kk is None else kk, Rv, length, zone)
+                    if L.get("decal") and L.get("cone_emit") and Re is not None:
+                        # como en el módulo: el Decal del triángulo va girado hacia afuera desde el vértice, así el
+                        # eje vertical de su textura (las rayas del raspón) queda en la dirección del abanico
+                        f_ = Re @ np.array([0.0, 0.0, -1.0])
+                        p_.rot += math.degrees(math.atan2(-f_[0], -f_[2]))
+                    parts.append(p_)
             ei += 1
         # emisión continua
         for st_ in streams:
