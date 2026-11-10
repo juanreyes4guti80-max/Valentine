@@ -508,7 +508,7 @@ def draw_beam(buf, tb, cam, Bm, A, Bp, w, fade, t, scale):
     th, tw = T.shape[:2]
     v = q / np.maximum(wl, 1e-6) + 0.5
     if Bm["mode"] == "Wrap":
-        u = (sl / (Bm["tex_len"] * scale) - Bm["speed"] * t) % 1.0
+        u = ((sl + Bm.get("sl0", 0.0)) / (Bm["tex_len"] * scale) - Bm["speed"] * t) % 1.0
     else:
         u = fr
     ix = np.clip((u * tw).astype(int), 0, tw - 1)
@@ -664,6 +664,63 @@ class ConeFront:
                 while self.acc[key] >= 1.0:
                     self.acc[key] -= 1.0
                     out.append(spawn(E, P, rng, self.s, Rf @ Ry @ Rx, self.len))
+        return out
+
+
+class ConeArcs:
+    """Los arcos del frente (lo mismo que runFrontArcs en el módulo): un Beam curvo por arco que mira a la cámara y
+    cruza el triángulo por el frente; el centro va en el frente y las puntas `bulge` × medio ancho más atrás. La curva
+    es el Bézier de Roblox: P1 = P0 + eje X de Attachment0 × CurveSize0 y P2 = P3 − eje X de Attachment1 × CurveSize1.
+    Aquí se parte en `segments` tramos rectos (la textura sigue corrida de un tramo al otro)."""
+
+    def __init__(self, Fa, length, angle, scale):
+        self.Fa, self.len, self.s = Fa, length, scale
+        self.tanH = math.tan(math.radians(angle / 2))
+
+    def pieces(self, t, o0, Rf):
+        """Por arco visible: lista de (Bm, A, B, ancho) de sus tramos."""
+        W = self.Fa["wave"]
+        T0, TW, ease = W[0], W[1], (W[2] if len(W) > 2 else 1.0)
+        s, out = self.s, []
+        for A in self.Fa["arcs"]:
+            ta = t - A["delay"] - T0
+            vis = min(max(ta / 0.05, 0.0), 1.0) * (1 - min(max((ta - TW) / max(A["fade"], 1e-3), 0.0), 1.0))
+            if vis <= 0.01:
+                continue
+            u = 1 - (1 - min(max(ta / TW, 0.0), 1.0)) ** ease
+            d = max(u, 0.03) * self.len + A["ahead"] * s
+            w = d * self.tanH * A["s_max"] / (1 + A["bulge"] * self.tanH * A["s_max"])
+            lag = A["bulge"] * w
+            beta = 2 * math.atan2(lag, w)
+            h = (4 / 3) * lag / math.sin(beta) if beta > 1e-3 else w * 2 / 3
+            y, z = A["up"] * s, lag - d
+            P0, P3 = np.array([-w, y, z]), np.array([w, y, z])
+            P1 = P0 + np.array([math.cos(beta), 0.0, -math.sin(beta)]) * h
+            P2 = P3 - np.array([math.cos(beta), 0.0, math.sin(beta)]) * h
+            n = int(A["segments"])
+            pts = []
+            for k in range(n + 1):
+                q = k / n
+                L = (1 - q) ** 3 * P0 + 3 * (1 - q) ** 2 * q * P1 + 3 * (1 - q) * q * q * P2 + q ** 3 * P3
+                pts.append(o0 + Rf @ L)
+            wd = A["width"] * s * (A["grow0"] + (1 - A["grow0"]) * u)
+            tr = 1 - (1 - A["transparency"]) * vis
+            e = A["ends"]
+            prof = [(0, 1.0), (e, tr), (1 - e, tr), (1, 1.0)]
+            keys = [k_[0] for k_ in A["color"]]
+            acc = 0.0
+            for k in range(n):
+                f0, f1 = k / n, (k + 1) / n
+                c0 = [np.interp(f0, keys, [k_[1][c] for k_ in A["color"]]) for c in range(3)]
+                c1 = [np.interp(f1, keys, [k_[1][c] for k_ in A["color"]]) for c in range(3)]
+                t0_ = float(np.interp(f0, [p[0] for p in prof], [p[1] for p in prof]))
+                t1_ = float(np.interp(f1, [p[0] for p in prof], [p[1] for p in prof]))
+                Bm = {"texture": A["texture"], "mode": "Wrap", "tex_len": A["tex_len"], "speed": A["speed"],
+                      "light_emission": A["light_emission"], "brightness": A["brightness"], "sl0": acc,
+                      "color": [(0, tuple(c0)), (1, tuple(c1))], "w0": 1.0, "w1": 1.0,
+                      "transparency": [(0, t0_), (1, t1_)], "zoffset": A["zoffset"]}
+                out.append((Bm, pts[k], pts[k + 1], wd))
+                acc += float(np.linalg.norm(pts[k + 1] - pts[k]))
         return out
 
 
@@ -1201,6 +1258,7 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
     blade_acc = {}
     field = ConeField(spec["field"], length, cone_angle, scale) if spec.get("field") else None
     front = ConeFront(spec["front"], length, cone_angle, scale) if spec.get("front") else None
+    arcs = ConeArcs(spec["front_arcs"], length, cone_angle, scale) if spec.get("front_arcs") else None
     shattered = set()
     streams = []   # (L, origin, t_base)
     for L in spec["layers"]:
@@ -1484,6 +1542,11 @@ def render(spec, tex_folder, out_dir, cam, origin=(0, 2, 0), scale=1.0, duration
                     dz = cam.to_cam((pts[i] + pts[i + 1]) * 0.5)[2] - BL.get("zoffset", 0.0) * scale
                     if dz > 0.6:
                         items.append((dz, 4, (Bm, pts[i], pts[i + 1], 1.0, 0.0), None, None))
+        if draw and arcs is not None:            # los arcos del frente (Beams curvos que miran a la cámara)
+            for Bm, Pa, Pb, wd in arcs.pieces(t, o0, Rf):
+                dz = cam.to_cam((Pa + Pb) * 0.5)[2] - Bm["zoffset"] * scale
+                if dz > 0.6:
+                    items.append((dz, 4, (Bm, Pa, Pb, wd, 0.0), None, None))
         for m in (meteors if draw else []):
             if not m.dead and m.L["sprite"].get("cube"):
                 d = cam.to_cam(m.pos)

@@ -94,6 +94,11 @@ M.CFrame = {
 		return mat({ r.X, u.X, -f.X, r.Y, u.Y, -f.Y, r.Z, u.Z, -f.Z }, at)
 	end,
 	identity = mat(I, v3()),
+	-- columnas X, Y y Z (si no viene Z, es X × Y), como en Roblox
+	fromMatrix = function(pos, vX, vY, vZ)
+		local z = vZ or vX:Cross(vY).Unit
+		return mat({ vX.X, vY.X, z.X, vX.Y, vY.Y, z.Y, vX.Z, vY.Z, z.Z }, pos)
+	end,
 	fromAxisAngle = function(ax, ang)
 		local u = ax.Unit; local c, s = math.cos(ang), math.sin(ang); local t = 1 - c
 		return mat({ t * u.X * u.X + c, t * u.X * u.Y - s * u.Z, t * u.X * u.Z + s * u.Y,

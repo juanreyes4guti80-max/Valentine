@@ -73,7 +73,6 @@ OmnivoraVFX.TEXTURES = {
 	om_beam_stars = "rbxassetid://0",
 	om_cracks = "rbxassetid://0",
 	om_cubes_2x2 = "rbxassetid://0",
-	om_grav_band = "rbxassetid://0",
 	om_hole = "rbxassetid://0",
 	om_nebula_2x2 = "rbxassetid://0",
 	om_scrape = "rbxassetid://0",
@@ -1163,6 +1162,109 @@ local function runField(F: any, holder: BasePart, s: number, len: number, tanH: 
 	end)
 end
 
+-- ---------------------------------------------------------------- los arcos del frente (Omnívora: Empuje gravitatorio)
+-- Cada arco es un Beam curvo que mira a la cámara y cruza el triángulo por el frente de la ola (sale rápido y se
+-- frena: wave = {T0, TW, freno}). El centro va en el frente y las puntas quedan `bulge` × medio ancho más atrás, justo
+-- dentro del triángulo: la curva es un Bézier entre las dos puntas, con las asas a lo largo del eje X de cada
+-- Attachment (CurveSize0 y CurveSize1). Va a `up` studs del suelo y `delay` s detrás del frente, se ensancha al
+-- avanzar (de grow0 a 1), sus puntas se desvanecen (`ends`) y se apaga en `fade` s al llegar al final.
+type FrontArc = { A: any, a0: Attachment, a1: Attachment, beam: Beam, tr: number, on: boolean }
+
+local function arcTransparency(ends: number, tr: number): NumberSequence
+	return NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(ends, tr),
+		NumberSequenceKeypoint.new(1 - ends, tr),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+end
+
+local function runFrontArcs(Fa: any, holder: BasePart, s: number, len: number, tanH: number)
+	local T0, TW, ease = Fa.wave[1], Fa.wave[2], Fa.wave[3] or 1
+	local arcs: { FrontArc } = {}
+	local tEnd = 0
+	for _, A in Fa.arcs do
+		local a0 = Instance.new("Attachment")
+		a0.Name = A.name
+		a0.Parent = holder
+		local a1 = Instance.new("Attachment")
+		a1.Name = A.name
+		a1.Parent = holder
+		local b = Instance.new("Beam")
+		b.Name = A.name
+		b.Attachment0 = a0
+		b.Attachment1 = a1
+		b.Texture = OmnivoraVFX.TEXTURES[A.texture] or ""
+		b.TextureMode = Enum.TextureMode.Wrap
+		b.TextureLength = math.max(A.tex_len * s, 0.1)
+		b.TextureSpeed = A.speed
+		b.LightEmission = A.light_emission
+		b.LightInfluence = 0
+		b.Brightness = A.brightness
+		b.Color = colorSeq(A.color)
+		b.FaceCamera = true
+		b.Segments = A.segments
+		b.ZOffset = A.zoffset * s
+		b.Width0 = 0
+		b.Width1 = 0
+		b.Transparency = NumberSequence.new(1)
+		b.Enabled = false
+		b.Parent = holder
+		table.insert(arcs, { A = A, a0 = a0, a1 = a1, beam = b, tr = 2, on = false })
+		tEnd = math.max(tEnd, T0 + TW + A.delay + A.fade)
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = time() - t0
+		for _, c in arcs do
+			local A = c.A
+			local ta = t - A.delay - T0
+			local vis = math.clamp(ta / 0.05, 0, 1) * (1 - math.clamp((ta - TW) / math.max(A.fade, 1e-3), 0, 1))
+			local on = vis > 0.01
+			if on ~= c.on then
+				c.on = on
+				c.beam.Enabled = on
+			end
+			if on then
+				local u = 1 - (1 - math.clamp(ta / TW, 0, 1)) ^ ease
+				local d = math.max(u, 0.03) * len + A.ahead * s
+				-- medio ancho: las puntas (que quedan lag studs más atrás) caen justo dentro del triángulo
+				local w = d * tanH * A.s_max / (1 + A.bulge * tanH * A.s_max)
+				local lag = A.bulge * w
+				local beta = 2 * math.atan2(lag, w)
+				local h = w * 2 / 3
+				if beta > 1e-3 then
+					h = (4 / 3) * lag / math.sin(beta)
+				end
+				local y = A.up * s
+				local z = lag - d
+				c.a0.CFrame = CFrame.fromMatrix(Vector3.new(-w, y, z), Vector3.new(math.cos(beta), 0, -math.sin(beta)),
+					Vector3.yAxis)
+				c.a1.CFrame = CFrame.fromMatrix(Vector3.new(w, y, z), Vector3.new(math.cos(beta), 0, math.sin(beta)),
+					Vector3.yAxis)
+				c.beam.CurveSize0 = h
+				c.beam.CurveSize1 = h
+				local wd = A.width * s * (A.grow0 + (1 - A.grow0) * u)
+				c.beam.Width0 = wd
+				c.beam.Width1 = wd
+				local tr = 1 - (1 - A.transparency) * vis
+				if math.abs(tr - c.tr) > 0.01 then
+					c.tr = tr
+					c.beam.Transparency = arcTransparency(A.ends, tr)
+				end
+			end
+		end
+		if t > tEnd then
+			conn:Disconnect()
+		end
+	end)
+end
+
 local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?,
 	groundY: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
@@ -1314,6 +1416,9 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 	end
 	if spec.front then
 		runFront(spec.front, holder, s, len, tanH)
+	end
+	if spec.front_arcs then
+		runFrontArcs(spec.front_arcs, holder, s, len, tanH)
 	end
 	if spec.field then
 		runField(spec.field, holder, s, len, tanH)
@@ -20150,304 +20255,6 @@ local SPEC_GravityPush = {
 			line_u = 0,
 		},
 		{
-			name = "GravBand",
-			texture = "om_grav_band",
-			flipbook = {
-				layout = "Grid2x2",
-				mode = "Loop",
-				fps = 0.001,
-				startRandom = true,
-			},
-			direction = "Front",
-			speed_len = {4.322, 4.409},
-			drag = 4.87,
-			lifetime = {0.4, 0.42},
-			size = {
-				{0, 5, 0},
-				{0.3, 12, 0},
-				{1, 18, 0},
-			},
-			transparency = {
-				{0, 0.6, 0},
-				{0.12, 0.05, 0},
-				{0.8, 0.18, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{175, 215, 255},
-				},
-				{
-					0.5,
-					{135, 185, 255},
-				},
-				{
-					1,
-					{95, 145, 245},
-				},
-			},
-			light_emission = 0.05,
-			brightness = 1.6,
-			zoffset = 0.5,
-			cone_emit = {
-				{0.07, 1, 0.02, -0.97, 6},
-				{0.07, 1, 0.02, -0.754, 6},
-				{0.07, 1, 0.02, -0.539, 6},
-				{0.07, 1, 0.02, -0.323, 6},
-				{0.07, 1, 0.02, -0.108, 6},
-				{0.07, 1, 0.02, 0.108, 6},
-				{0.07, 1, 0.02, 0.323, 6},
-				{0.07, 1, 0.02, 0.539, 6},
-				{0.07, 1, 0.02, 0.754, 6},
-				{0.07, 1, 0.02, 0.97, 6},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			rotation = {0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "GravRim",
-			texture = "kk_trace_01",
-			direction = "Front",
-			speed_len = {4.322, 4.409},
-			drag = 4.87,
-			lifetime = {0.4, 0.42},
-			size = {
-				{0, 3, 0},
-				{0.3, 6, 0},
-				{1, 8, 0},
-			},
-			transparency = {
-				{0, 0.45, 0},
-				{0.12, 0.1, 0},
-				{0.8, 0.3, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{190, 225, 255},
-				},
-				{
-					0.3,
-					{120, 180, 255},
-				},
-				{
-					1,
-					{60, 110, 235},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.7,
-			rotation = {90, 90},
-			zoffset = 1,
-			cone_emit = {
-				{0.06, 1, 0.02, -0.97, 0.9},
-				{0.06, 1, 0.02, -0.911, 0.9},
-				{0.06, 1, 0.02, -0.852, 0.9},
-				{0.06, 1, 0.02, -0.794, 0.9},
-				{0.06, 1, 0.02, -0.735, 0.9},
-				{0.06, 1, 0.02, -0.676, 0.9},
-				{0.06, 1, 0.02, -0.617, 0.9},
-				{0.06, 1, 0.02, -0.558, 0.9},
-				{0.06, 1, 0.02, -0.5, 0.9},
-				{0.06, 1, 0.02, -0.441, 0.9},
-				{0.06, 1, 0.02, -0.382, 0.9},
-				{0.06, 1, 0.02, -0.323, 0.9},
-				{0.06, 1, 0.02, -0.265, 0.9},
-				{0.06, 1, 0.02, -0.206, 0.9},
-				{0.06, 1, 0.02, -0.147, 0.9},
-				{0.06, 1, 0.02, -0.088, 0.9},
-				{0.06, 1, 0.02, -0.029, 0.9},
-				{0.06, 1, 0.02, 0.029, 0.9},
-				{0.06, 1, 0.02, 0.088, 0.9},
-				{0.06, 1, 0.02, 0.147, 0.9},
-				{0.06, 1, 0.02, 0.206, 0.9},
-				{0.06, 1, 0.02, 0.265, 0.9},
-				{0.06, 1, 0.02, 0.323, 0.9},
-				{0.06, 1, 0.02, 0.382, 0.9},
-				{0.06, 1, 0.02, 0.441, 0.9},
-				{0.06, 1, 0.02, 0.5, 0.9},
-				{0.06, 1, 0.02, 0.558, 0.9},
-				{0.06, 1, 0.02, 0.617, 0.9},
-				{0.06, 1, 0.02, 0.676, 0.9},
-				{0.06, 1, 0.02, 0.735, 0.9},
-				{0.06, 1, 0.02, 0.794, 0.9},
-				{0.06, 1, 0.02, 0.852, 0.9},
-				{0.06, 1, 0.02, 0.911, 0.9},
-				{0.06, 1, 0.02, 0.97, 0.9},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			rot_speed = {0, 0},
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "GravRipple0",
-			texture = "kk_trace_01",
-			direction = "Front",
-			speed_len = {4.322, 4.409},
-			drag = 4.87,
-			lifetime = {0.4, 0.42},
-			size = {
-				{0, 3, 0},
-				{0.3, 5.5, 0},
-				{1, 7.5, 0},
-			},
-			transparency = {
-				{0, 0.8, 0},
-				{0.15, 0.4, 0},
-				{0.75, 0.5, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{190, 225, 255},
-				},
-				{
-					0.3,
-					{120, 180, 255},
-				},
-				{
-					1,
-					{60, 110, 235},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.5,
-			rotation = {90, 90},
-			cone_emit = {
-				{0.12, 1, 0.02, -0.97, 0.9},
-				{0.12, 1, 0.02, -0.903, 0.9},
-				{0.12, 1, 0.02, -0.836, 0.9},
-				{0.12, 1, 0.02, -0.769, 0.9},
-				{0.12, 1, 0.02, -0.702, 0.9},
-				{0.12, 1, 0.02, -0.636, 0.9},
-				{0.12, 1, 0.02, -0.569, 0.9},
-				{0.12, 1, 0.02, -0.502, 0.9},
-				{0.12, 1, 0.02, -0.435, 0.9},
-				{0.12, 1, 0.02, -0.368, 0.9},
-				{0.12, 1, 0.02, -0.301, 0.9},
-				{0.12, 1, 0.02, -0.234, 0.9},
-				{0.12, 1, 0.02, -0.167, 0.9},
-				{0.12, 1, 0.02, -0.1, 0.9},
-				{0.12, 1, 0.02, -0.033, 0.9},
-				{0.12, 1, 0.02, 0.033, 0.9},
-				{0.12, 1, 0.02, 0.1, 0.9},
-				{0.12, 1, 0.02, 0.167, 0.9},
-				{0.12, 1, 0.02, 0.234, 0.9},
-				{0.12, 1, 0.02, 0.301, 0.9},
-				{0.12, 1, 0.02, 0.368, 0.9},
-				{0.12, 1, 0.02, 0.435, 0.9},
-				{0.12, 1, 0.02, 0.502, 0.9},
-				{0.12, 1, 0.02, 0.569, 0.9},
-				{0.12, 1, 0.02, 0.636, 0.9},
-				{0.12, 1, 0.02, 0.702, 0.9},
-				{0.12, 1, 0.02, 0.769, 0.9},
-				{0.12, 1, 0.02, 0.836, 0.9},
-				{0.12, 1, 0.02, 0.903, 0.9},
-				{0.12, 1, 0.02, 0.97, 0.9},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
-			name = "GravRipple1",
-			texture = "kk_trace_01",
-			direction = "Front",
-			speed_len = {4.322, 4.409},
-			drag = 4.87,
-			lifetime = {0.4, 0.42},
-			size = {
-				{0, 3, 0},
-				{0.3, 5.5, 0},
-				{1, 7.5, 0},
-			},
-			transparency = {
-				{0, 0.8, 0},
-				{0.15, 0.6, 0},
-				{0.75, 0.7, 0},
-				{1, 1, 0},
-			},
-			color = {
-				{
-					0,
-					{190, 225, 255},
-				},
-				{
-					0.3,
-					{120, 180, 255},
-				},
-				{
-					1,
-					{60, 110, 235},
-				},
-			},
-			light_emission = 1,
-			brightness = 1.5,
-			rotation = {90, 90},
-			cone_emit = {
-				{0.18, 1, 0.02, -0.97, 0.9},
-				{0.18, 1, 0.02, -0.903, 0.9},
-				{0.18, 1, 0.02, -0.836, 0.9},
-				{0.18, 1, 0.02, -0.769, 0.9},
-				{0.18, 1, 0.02, -0.702, 0.9},
-				{0.18, 1, 0.02, -0.636, 0.9},
-				{0.18, 1, 0.02, -0.569, 0.9},
-				{0.18, 1, 0.02, -0.502, 0.9},
-				{0.18, 1, 0.02, -0.435, 0.9},
-				{0.18, 1, 0.02, -0.368, 0.9},
-				{0.18, 1, 0.02, -0.301, 0.9},
-				{0.18, 1, 0.02, -0.234, 0.9},
-				{0.18, 1, 0.02, -0.167, 0.9},
-				{0.18, 1, 0.02, -0.1, 0.9},
-				{0.18, 1, 0.02, -0.033, 0.9},
-				{0.18, 1, 0.02, 0.033, 0.9},
-				{0.18, 1, 0.02, 0.1, 0.9},
-				{0.18, 1, 0.02, 0.167, 0.9},
-				{0.18, 1, 0.02, 0.234, 0.9},
-				{0.18, 1, 0.02, 0.301, 0.9},
-				{0.18, 1, 0.02, 0.368, 0.9},
-				{0.18, 1, 0.02, 0.435, 0.9},
-				{0.18, 1, 0.02, 0.502, 0.9},
-				{0.18, 1, 0.02, 0.569, 0.9},
-				{0.18, 1, 0.02, 0.636, 0.9},
-				{0.18, 1, 0.02, 0.702, 0.9},
-				{0.18, 1, 0.02, 0.769, 0.9},
-				{0.18, 1, 0.02, 0.836, 0.9},
-				{0.18, 1, 0.02, 0.903, 0.9},
-				{0.18, 1, 0.02, 0.97, 0.9},
-			},
-			speed = {0, 0},
-			spread = {0, 0},
-			accel = {0, 0, 0},
-			rot_speed = {0, 0},
-			zoffset = 0,
-			orientation = "FacingCamera",
-			offset = {0, 0, 0},
-			line_u = 0,
-			emit = {},
-		},
-		{
 			name = "AirLines",
 			texture = "kk_trace_01",
 			orientation = "VelocityParallel",
@@ -22299,6 +22106,251 @@ local SPEC_GravityPush = {
 				rate = 8,
 				up = 2.5,
 				pitch = 0,
+			},
+		},
+	},
+	front_arcs = {
+		wave = {0.06, 0.42, 1.6},
+		arcs = {
+			{
+				name = "GravAura",
+				texture = "om_beam_glow",
+				color = {
+					{
+						0,
+						{40, 80, 210},
+					},
+					{
+						1,
+						{30, 60, 180},
+					},
+				},
+				width = 20,
+				up = 10,
+				delay = 0,
+				fade = 0.12,
+				ahead = 0,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.74,
+				light_emission = 1,
+				brightness = 0.8,
+				tex_len = 40,
+				speed = 0.4,
+				segments = 24,
+				zoffset = -2,
+			},
+			{
+				name = "GravBody",
+				texture = "om_beam_nebula",
+				color = {
+					{
+						0,
+						{255, 255, 255},
+					},
+					{
+						1,
+						{235, 240, 255},
+					},
+				},
+				width = 11,
+				up = 5.8,
+				delay = 0,
+				fade = 0.12,
+				ahead = 0,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.14,
+				light_emission = 0.1,
+				brightness = 1,
+				tex_len = 18,
+				speed = 0.6,
+				segments = 24,
+				zoffset = 0,
+			},
+			{
+				name = "GravStrands",
+				texture = "om_beam_flow",
+				color = {
+					{
+						0,
+						{150, 210, 255},
+					},
+					{
+						1,
+						{110, 185, 255},
+					},
+				},
+				width = 9,
+				up = 5.8,
+				delay = 0,
+				fade = 0.12,
+				ahead = 0,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.36,
+				light_emission = 0.9,
+				brightness = 1,
+				tex_len = 13,
+				speed = 2.4,
+				segments = 24,
+				zoffset = 0.2,
+			},
+			{
+				name = "GravStrandsPurple",
+				texture = "om_beam_flow",
+				color = {
+					{
+						0,
+						{220, 130, 255},
+					},
+					{
+						1,
+						{180, 80, 245},
+					},
+				},
+				width = 7,
+				up = 5.8,
+				delay = 0,
+				fade = 0.12,
+				ahead = 0,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.5,
+				light_emission = 1,
+				brightness = 1,
+				tex_len = 15,
+				speed = -1.5,
+				segments = 24,
+				zoffset = 0.25,
+			},
+			{
+				name = "GravStars",
+				texture = "om_beam_stars",
+				color = {
+					{
+						0,
+						{255, 255, 255},
+					},
+					{
+						1,
+						{200, 230, 255},
+					},
+				},
+				width = 8.5,
+				up = 5.8,
+				delay = 0,
+				fade = 0.12,
+				ahead = 0,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.45,
+				light_emission = 1,
+				brightness = 1.3,
+				tex_len = 17,
+				speed = 0.7,
+				segments = 24,
+				zoffset = 0.3,
+			},
+			{
+				name = "GravEdge",
+				texture = "om_beam_glow",
+				color = {
+					{
+						0,
+						{175, 222, 255},
+					},
+					{
+						1,
+						{150, 205, 255},
+					},
+				},
+				width = 3.2,
+				up = 1.6,
+				delay = 0,
+				fade = 0.12,
+				ahead = 0.8,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.22,
+				light_emission = 1,
+				brightness = 1.5,
+				tex_len = 30,
+				speed = 0,
+				segments = 24,
+				zoffset = 0.4,
+			},
+			{
+				name = "GravRipple0",
+				texture = "om_beam_glow",
+				color = {
+					{
+						0,
+						{120, 180, 255},
+					},
+					{
+						1,
+						{90, 150, 250},
+					},
+				},
+				width = 2.6,
+				up = 1.3,
+				delay = 0.07,
+				fade = 0.12,
+				ahead = 0,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.55,
+				light_emission = 1,
+				brightness = 1.3,
+				tex_len = 30,
+				speed = 0,
+				segments = 24,
+				zoffset = 0,
+			},
+			{
+				name = "GravRipple1",
+				texture = "om_beam_glow",
+				color = {
+					{
+						0,
+						{100, 160, 255},
+					},
+					{
+						1,
+						{70, 120, 240},
+					},
+				},
+				width = 2.4,
+				up = 1.2,
+				delay = 0.14,
+				fade = 0.12,
+				ahead = 0,
+				bulge = 0.38,
+				s_max = 0.97,
+				grow0 = 0.3,
+				ends = 0.16,
+				transparency = 0.7,
+				light_emission = 1,
+				brightness = 1.2,
+				tex_len = 30,
+				speed = 0,
+				segments = 24,
+				zoffset = 0,
 			},
 		},
 	},

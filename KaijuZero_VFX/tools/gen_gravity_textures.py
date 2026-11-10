@@ -6,9 +6,6 @@
                   con un borde suave de tierra removida y las puntas afiladas.
 Las dos son cuadradas (en Roblox van en un Decal sobre una Part cuadrada): la forma alargada va dentro de la imagen.
 En el módulo, las rayas quedan en la dirección del empuje (desde el vértice hacia afuera).
-  om_grav_band    (2x2, cuatro variantes) la banda del frente de gravedad: dos líneas finas y nítidas, rayas
-                  horizontales de compresión adentro (oscuro y translúcido) y estrellitas; mira a la cámara y queda
-                  acostada, así muchos trozos en fila forman la pared que avanza.
 uso: python -I gen_gravity_textures.py <carpeta Omnivora_VFX/textures>"""
 import os
 import sys
@@ -81,48 +78,7 @@ def scrape_line(dst, n=512, seed=9):
     save(gray, gaussian_filter(a, 0.5), dst)
 
 
-def grav_band_cell(n, seed):
-    """Un trozo de la banda: dos líneas finas y nítidas (la de abajo más fuerte), rayas horizontales de compresión
-    adentro (oscuro y translúcido) y unas estrellitas. Los extremos izquierdo y derecho se desvanecen para que los
-    trozos vecinos se junten en una banda continua."""
-    rng = np.random.default_rng(seed)
-    y = (np.arange(n)[:, None] + 0.5) / n
-    x = (np.arange(n)[None, :] + 0.5) / n
-    ph = rng.uniform(0, 1, 2)
-    yt = 0.27 + rng.uniform(-0.008, 0.008) + 0.004 * np.sin(2 * np.pi * (1.3 * x + ph[0]))
-    yb = 0.73 + rng.uniform(-0.008, 0.008) + 0.004 * np.sin(2 * np.pi * (1.1 * x + ph[1]))
-
-    def line(y0, w):
-        return np.exp(-((y - y0) / w) ** 2)
-    flick = 0.8 + 0.2 * noise(rng, 1, n, 1, 6)              # brillo que cambia un poco a lo largo
-    top = (0.95 * line(yt, 0.0055) + 0.3 * line(yt, 0.022)) * flick * 0.7
-    bot = (1.0 * line(yb, 0.006) + 0.4 * line(yb, 0.026)) * flick
-    inside = smoothstep(0.0, 0.02, y - yt) * (1 - smoothstep(-0.02, 0.0, y - yb))
-    streak = noise(rng, n, n, 0.7, 24)                       # rayas finas y largas (horizontales)
-    lines = np.clip((streak - 0.55) / 0.3, 0, 1) ** 1.5
-    pts = (rng.random((n, n)) > 0.9986).astype(float)
-    stars = np.clip(gaussian_filter(pts, 0.55) * 7, 0, 1) * inside
-    ex = smoothstep(0.0, 0.22, x) * (1 - smoothstep(0.78, 1.0, x))
-    v = np.clip((y - yt) / (yb - yt), 0, 1)                    # 0 arriba .. 1 abajo (abajo empuja más)
-    gray = np.clip(np.maximum.reduce([0.03 + 0.3 * lines, np.clip((top + bot) * 1.4, 0, 1), stars]), 0, 1)
-    a = np.maximum.reduce([inside * (0.22 + 0.4 * v ** 1.3 + 0.22 * lines), np.clip(top + bot, 0, 1), stars])
-    return gray, np.clip(a * ex, 0, 1)
-
-
-def grav_band(dst, cell=256):
-    """om_grav_band (2x2): la banda del frente de gravedad, en cuatro variantes."""
-    g = np.zeros((2 * cell, 2 * cell))
-    a = np.zeros((2 * cell, 2 * cell))
-    for k in range(4):
-        gc, ac = grav_band_cell(cell, 31 + k)
-        r, c = divmod(k, 2)
-        g[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell] = gc
-        a[r * cell:(r + 1) * cell, c * cell:(c + 1) * cell] = ac
-    save(g, a, dst)
-
-
 if __name__ == "__main__":
     out = sys.argv[1]
     scrape(os.path.join(out, "om_scrape.png"))
     scrape_line(os.path.join(out, "om_scrape_line.png"))
-    grav_band(os.path.join(out, "om_grav_band.png"))

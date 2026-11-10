@@ -187,6 +187,8 @@ def spec_end(spec):
         end = max(end, field_end(spec["field"]))
     if spec.get("front"):
         end = max(end, front_end(spec["front"]))
+    if spec.get("front_arcs"):
+        end = max(end, front_arcs_end(spec["front_arcs"]))
     if spec.get("zbeams"):
         end = max(end, max(max(B["width_t"][-1][0], B["alpha_t"][-1][0]) for B in spec["zbeams"]))
     if spec.get("zfield"):
@@ -1501,6 +1503,7 @@ local function runField(F: any, holder: BasePart, s: number, len: number, tanH: 
 	end)
 end
 
+__FRONT_ARCS_FN__
 local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, shake: number?, angle: number?,
 	groundY: number?): Part
 	local s = (scale or 1) * (spec.scale_mult or 1)
@@ -1653,6 +1656,7 @@ local function play(spec: Layer, cf: CFrame, scale: number?, length: number?, sh
 	if spec.front then
 		runFront(spec.front, holder, s, len, tanH)
 	end
+__FRONT_ARCS_CALL__
 	if spec.field then
 		runField(spec.field, holder, s, len, tanH)
 	end
@@ -5748,7 +5752,7 @@ def walk_textures(v):
 def spec_textures(spec):
     extra = [spec["cubes"]["fx"]] if spec.get("cubes", {}).get("fx") else []
     tex = textures_of(spec["layers"] + extra + spec.get("beams", []))
-    for k in ("cataclysm", "blade", "field", "front", "zbeams", "zfield"):
+    for k in ("cataclysm", "blade", "field", "front", "front_arcs", "zbeams", "zfield"):
         if spec.get(k):
             tex |= walk_textures(spec[k])
     return tex | set(spec.get("textures", []))
@@ -5762,11 +5766,139 @@ def prefix_unused(src):
     return src
 
 
+# Los arcos del frente (cone + front_arcs): solo van en los módulos que los usan, así los demás no cambian.
+FRONT_ARCS_FN = r'''-- ---------------------------------------------------------------- los arcos del frente (Omnívora: Empuje gravitatorio)
+-- Cada arco es un Beam curvo que mira a la cámara y cruza el triángulo por el frente de la ola (sale rápido y se
+-- frena: wave = {T0, TW, freno}). El centro va en el frente y las puntas quedan `bulge` × medio ancho más atrás, justo
+-- dentro del triángulo: la curva es un Bézier entre las dos puntas, con las asas a lo largo del eje X de cada
+-- Attachment (CurveSize0 y CurveSize1). Va a `up` studs del suelo y `delay` s detrás del frente, se ensancha al
+-- avanzar (de grow0 a 1), sus puntas se desvanecen (`ends`) y se apaga en `fade` s al llegar al final.
+type FrontArc = { A: any, a0: Attachment, a1: Attachment, beam: Beam, tr: number, on: boolean }
+
+local function arcTransparency(ends: number, tr: number): NumberSequence
+	return NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(ends, tr),
+		NumberSequenceKeypoint.new(1 - ends, tr),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+end
+
+local function runFrontArcs(Fa: any, holder: BasePart, s: number, len: number, tanH: number)
+	local T0, TW, ease = Fa.wave[1], Fa.wave[2], Fa.wave[3] or 1
+	local arcs: { FrontArc } = {}
+	local tEnd = 0
+	for _, A in Fa.arcs do
+		local a0 = Instance.new("Attachment")
+		a0.Name = A.name
+		a0.Parent = holder
+		local a1 = Instance.new("Attachment")
+		a1.Name = A.name
+		a1.Parent = holder
+		local b = Instance.new("Beam")
+		b.Name = A.name
+		b.Attachment0 = a0
+		b.Attachment1 = a1
+		b.Texture = KaijuFireVFX.TEXTURES[A.texture] or ""
+		b.TextureMode = Enum.TextureMode.Wrap
+		b.TextureLength = math.max(A.tex_len * s, 0.1)
+		b.TextureSpeed = A.speed
+		b.LightEmission = A.light_emission
+		b.LightInfluence = 0
+		b.Brightness = A.brightness
+		b.Color = colorSeq(A.color)
+		b.FaceCamera = true
+		b.Segments = A.segments
+		b.ZOffset = A.zoffset * s
+		b.Width0 = 0
+		b.Width1 = 0
+		b.Transparency = NumberSequence.new(1)
+		b.Enabled = false
+		b.Parent = holder
+		table.insert(arcs, { A = A, a0 = a0, a1 = a1, beam = b, tr = 2, on = false })
+		tEnd = math.max(tEnd, T0 + TW + A.delay + A.fade)
+	end
+	local t0 = time()
+	local conn: RBXScriptConnection
+	conn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = time() - t0
+		for _, c in arcs do
+			local A = c.A
+			local ta = t - A.delay - T0
+			local vis = math.clamp(ta / 0.05, 0, 1) * (1 - math.clamp((ta - TW) / math.max(A.fade, 1e-3), 0, 1))
+			local on = vis > 0.01
+			if on ~= c.on then
+				c.on = on
+				c.beam.Enabled = on
+			end
+			if on then
+				local u = 1 - (1 - math.clamp(ta / TW, 0, 1)) ^ ease
+				local d = math.max(u, 0.03) * len + A.ahead * s
+				-- medio ancho: las puntas (que quedan lag studs más atrás) caen justo dentro del triángulo
+				local w = d * tanH * A.s_max / (1 + A.bulge * tanH * A.s_max)
+				local lag = A.bulge * w
+				local beta = 2 * math.atan2(lag, w)
+				local h = w * 2 / 3
+				if beta > 1e-3 then
+					h = (4 / 3) * lag / math.sin(beta)
+				end
+				local y = A.up * s
+				local z = lag - d
+				c.a0.CFrame = CFrame.fromMatrix(Vector3.new(-w, y, z), Vector3.new(math.cos(beta), 0, -math.sin(beta)),
+					Vector3.yAxis)
+				c.a1.CFrame = CFrame.fromMatrix(Vector3.new(w, y, z), Vector3.new(math.cos(beta), 0, math.sin(beta)),
+					Vector3.yAxis)
+				c.beam.CurveSize0 = h
+				c.beam.CurveSize1 = h
+				local wd = A.width * s * (A.grow0 + (1 - A.grow0) * u)
+				c.beam.Width0 = wd
+				c.beam.Width1 = wd
+				local tr = 1 - (1 - A.transparency) * vis
+				if math.abs(tr - c.tr) > 0.01 then
+					c.tr = tr
+					c.beam.Transparency = arcTransparency(A.ends, tr)
+				end
+			end
+		end
+		if t > tEnd then
+			conn:Disconnect()
+		end
+	end)
+end
+
+'''
+FRONT_ARCS_CALL = "\tif spec.front_arcs then\n\t\trunFrontArcs(spec.front_arcs, holder, s, len, tanH)\n\tend\n"
+FRONT_ARC_KEYS = ("name", "texture", "color", "width", "up", "delay", "fade", "ahead", "bulge", "s_max", "grow0",
+                  "ends", "transparency", "light_emission", "brightness", "tex_len", "speed", "segments", "zoffset")
+
+
+def norm_front_arcs(Fa):
+    """Los arcos del frente para el módulo (cada arco trae todas sus claves: las pone el spec)."""
+    w = list(Fa["wave"]) + ([1.0] if len(Fa["wave"]) < 3 else [])
+    arcs = []
+    for A in Fa["arcs"]:
+        missing = [k for k in FRONT_ARC_KEYS if k not in A]
+        assert not missing, f"arco {A.get('name')}: faltan {missing}"
+        arcs.append(plain({k: A[k] for k in FRONT_ARC_KEYS}))
+    return {"wave": w, "arcs": arcs}
+
+
+def front_arcs_end(Fa):
+    return Fa["wave"][0] + Fa["wave"][1] + max(A["delay"] + A["fade"] for A in Fa["arcs"])
+
+
 def build(specs, name, doc):
     """Texto del ModuleScript `name` con los efectos de `specs`."""
     tex = sorted(set().union(*(spec_textures(spec) for spec in specs.values())))
     tex_lines = "\n".join(f'\t{t} = "rbxassetid://0",' for t in tex)
     out = HEADER.replace("__DOC__", doc).replace("__TEXTURES__", tex_lines)
+    arcs = any(spec.get("front_arcs") for spec in specs.values())
+    out = out.replace("__FRONT_ARCS_FN__\n", FRONT_ARCS_FN if arcs else "")
+    out = out.replace("__FRONT_ARCS_CALL__\n", FRONT_ARCS_CALL if arcs else "")
     for key, spec in specs.items():
         data = {"name": spec["name"], "duration": spec["duration"],
                 "cleanup": round(max(spec["duration"], spec_end(spec)) + 0.3, 2),
@@ -5790,6 +5922,8 @@ def build(specs, name, doc):
             data["field"] = norm_field(spec["field"])
         if spec.get("front"):
             data["front"] = norm_front(spec["front"])
+        if spec.get("front_arcs"):
+            data["front_arcs"] = norm_front_arcs(spec["front_arcs"])
         if spec.get("zbeams"):
             data["zbeams"] = [norm_zbeam(B) for B in spec["zbeams"]]
         if spec.get("zfield"):

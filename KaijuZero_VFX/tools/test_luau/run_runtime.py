@@ -256,11 +256,13 @@ runZone("CosmicPillar", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0
 runZone("Pillar 30/80", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), 30, 80, 1, 0) end, 5, 30, 80)
 runZone("Pillar 10/200 x1.5", function() return OMNI.CosmicPillar(R.CFrame.new(0, 0, 0), 10, 200, 1.5, 2) end, 5, 10, 200)
 -- M1 3 (Empuje gravitatorio): todo cae dentro del triángulo (con cualquier largo/ángulo), deja la marca negra
--- (Decals), lanza rocas, y exporta largo, apertura, tiempos y FrontTime para el servidor
+-- (Decals), lanza rocas, los arcos del frente (Beams curvos) crecen y se apagan, y exporta largo, apertura,
+-- tiempos y FrontTime para el servidor
 runCone("GravityPush", function() return OMNI.GravityPush(R.CFrame.new(0, 0, 0), nil, nil, 1, 1) end, 4.5, 66, 46)
 assert(R.stats.decals >= 25, "GravityPush: casi no quedó la marca negra del raspón")
 assert(R.stats.rocks >= 15, "GravityPush: casi no salieron rocas")
 assert(R.stats.maxRate > 5, "GravityPush: el frente no soltó su polvo")
+assert(R.stats.beamMaxW >= 15 and R.stats.beamsOff >= 16, "GravityPush: los arcos del frente no crecieron o no se apagaron")
 runCone("GravityPush 90/30 x1.4", function() return OMNI.GravityPush(R.CFrame.new(0, 0, 0), 90, 30, 1.4, 0) end, 4.5, 90, 30)
 assert(OMNI.GravityPushLength == 66 and OMNI.GravityPushAngle == 46, "GravityPush: largo y apertura por defecto")
 assert(math.abs(OMNI.GravityPushFrontTime(0) - 0.06) < 1e-6 and math.abs(OMNI.GravityPushFrontTime(66) - 0.48) < 1e-6

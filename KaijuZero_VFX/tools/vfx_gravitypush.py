@@ -1,8 +1,9 @@
 """OMNÍVORA — M1 3 "Empuje gravitatorio" (el tercer golpe básico: el que remata el combo).
 
-Omnívora empuja hacia adelante y la GRAVEDAD sale por el suelo en TRIÁNGULO: un frente oscuro (se traga la luz) con
-un borde fino de luz celeste y dos ondas más débiles detrás, que sale rápido y se va frenando hasta apagarse en el
-borde lejano. A su paso:
+Omnívora empuja hacia adelante y la GRAVEDAD sale por el suelo en TRIÁNGULO: una onda CURVA (el centro adelante y
+las puntas atrás) hecha con Beams curvos que miran a la cámara (FRONT_ARCS: nebulosa, hebras celestes y púrpura,
+estrellas, halo y un borde de luz con grosor pegado al suelo; detrás, dos ondas más débiles). Sale rápido y se va
+frenando hasta apagarse en el borde lejano. A su paso:
   - RASPA el suelo: queda una marca NEGRA con rayas en la dirección del empuje y surcos largos (los arrastres), que
     se dibuja detrás del frente, dura unos segundos y se desvanece. Un brillo azul muy tenue corre por los surcos.
   - DESPLAZA lo que hay: rocas (Parts del color y material del suelo) salen empujadas hacia adelante, piedritas que
@@ -26,16 +27,11 @@ T0, TW, EASE = 0.06, 0.42, 1.6      # el frente sale, tarda en cruzar y cuánto 
 WAVE = (T0, TW, EASE)
 TEND = round(T0 + TW, 3)            # llega al borde lejano (ya casi quieto)
 STRIKE = (0, 5, -3)                 # el golpe: un poco adelante y arriba del vértice
-# las partículas del borde del frente salen del vértice y se frenan con Drag para ir con el frente
-# (Drag = mitad de velocidad cada 1/Drag s): recorren el 98 % del largo en TW, igual que el frente con su freno
-RIM_DRAG = 4.87
-RIM_SPEED = 0.98 * RIM_DRAG * math.log(2) / (1 - 2 ** (-RIM_DRAG * TW))     # en largos por segundo
+BULGE = 0.38                        # las puntas del frente quedan 0.38 × medio ancho detrás del centro
 
 # ----------------------------------------------------------------------------- colores (los de Omnívora)
 SCRAPE = [(0, (18, 20, 38)), (0.5, (12, 14, 30)), (1, (10, 12, 26))]       # la marca: casi negra, un toque azul
 GROOVE = [(0, (6, 7, 16)), (1, (8, 9, 20))]                               # los surcos, más oscuros todavía
-BANDC = [(0, (175, 215, 255)), (0.5, (135, 185, 255)), (1, (95, 145, 245))]  # la banda (lo oscuro va en la textura)
-RIM = [(0, (190, 225, 255)), (0.3, (120, 180, 255)), (1, (60, 110, 235))]  # borde de luz del frente
 WINDC = [(0, (232, 242, 255)), (0.5, (175, 208, 255)), (1, (120, 160, 245))]
 PEBBLE = [(0, (128, 126, 134)), (1, (104, 102, 110))]
 HAZE = [(0, (30, 40, 96)), (0.5, (20, 28, 72)), (1, (14, 20, 52))]        # neblina azul muy oscura
@@ -57,11 +53,6 @@ def samples(g, n, u0=0.05, u1=1.0, s_max=0.95, up=(0.3, 0.3), delay=(0.0, 0.0), 
         out.append((round(front_t(u) + g.uniform(*delay), 3), k, round(u, 4), round(g.uniform(-s_max, s_max), 3),
                     round(g.uniform(*up), 2)))
     return sorted(out)
-
-
-def fan(n, t, up):
-    """n puntos a lo ancho, junto al vértice: cada partícula sale hacia afuera y entre todas forman el arco."""
-    return [(round(t, 3), 1, 0.02, round(-0.97 + 1.94 * j / (n - 1), 3), up) for j in range(n)]
 
 
 def at(t, n=1, off=STRIKE):
@@ -127,31 +118,45 @@ PUSH_FRONT = {
 }
 
 
+def arc(name, texture, width, color, transparency, le, bright, tex_len, speed, up, delay=0.0, ahead=0.0,
+        zoffset=0.0):
+    """Un arco del frente (un Beam curvo que mira a la cámara; ver runFrontArcs en gen_luau.py)."""
+    return {"name": name, "texture": texture, "width": width, "color": color, "transparency": transparency,
+            "light_emission": le, "brightness": bright, "tex_len": tex_len, "speed": speed, "up": up,
+            "delay": delay, "ahead": ahead, "zoffset": zoffset, "fade": 0.12, "bulge": BULGE, "s_max": 0.97,
+            "grow0": 0.3, "ends": 0.16, "segments": 24}
+
+
+# el frente de gravedad: una onda CURVA (el centro adelante y las puntas atrás) hecha con las texturas del rayo
+# cósmico: un cuerpo de nebulosa, hebras de energía celestes y púrpura que corren por la curva, estrellas, un halo
+# azul y, pegado al suelo, un borde de luz con grosor; detrás, dos ondas más débiles
+FRONT_ARCS = {
+    "wave": WAVE,
+    "arcs": [
+        arc("GravAura", "om_beam_glow", 20, [(0, (40, 80, 210)), (1, (30, 60, 180))], 0.74, 1.0, 0.8, 40, 0.4, 10.0,
+            zoffset=-2),
+        arc("GravBody", "om_beam_nebula", 11, [(0, (255, 255, 255)), (1, (235, 240, 255))], 0.14, 0.1, 1.0, 18,
+            0.6, 5.8),
+        arc("GravStrands", "om_beam_flow", 9, [(0, (150, 210, 255)), (1, (110, 185, 255))], 0.36, 0.9, 1.0, 13,
+            2.4, 5.8, zoffset=0.2),
+        arc("GravStrandsPurple", "om_beam_flow", 7, [(0, (220, 130, 255)), (1, (180, 80, 245))], 0.5, 1.0, 1.0,
+            15, -1.5, 5.8, zoffset=0.25),
+        arc("GravStars", "om_beam_stars", 8.5, [(0, (255, 255, 255)), (1, (200, 230, 255))], 0.45, 1.0, 1.3, 17,
+            0.7, 5.8, zoffset=0.3),
+        arc("GravEdge", "om_beam_glow", 3.2, [(0, (175, 222, 255)), (1, (150, 205, 255))], 0.22, 1.0, 1.5, 30,
+            0.0, 1.6, ahead=0.8, zoffset=0.4),
+        arc("GravRipple0", "om_beam_glow", 2.6, [(0, (120, 180, 255)), (1, (90, 150, 250))], 0.55, 1.0, 1.3, 30,
+            0.0, 1.3, delay=0.07),
+        arc("GravRipple1", "om_beam_glow", 2.4, [(0, (100, 160, 255)), (1, (70, 120, 240))], 0.7, 1.0, 1.2, 30,
+            0.0, 1.2, delay=0.14),
+    ],
+}
+
+
 def wave_layers(g):
-    """El frente de gravedad: una banda oscura con líneas finas y nítidas (arcos de partículas que salen del vértice
-    y se frenan con el frente), una línea de luz pegada al suelo y dos ondas más débiles detrás, más el viento que
-    barre el triángulo. Las líneas son kk_trace_01 acostado (Rotation 90): miran a la cámara y quedan
-    horizontales."""
-    spd = (round(RIM_SPEED * 0.99, 3), round(RIM_SPEED * 1.01, 3))
-    life = (round(TW - 0.02, 3), round(TW, 3))
-    flat = (90, 90)
-    L = [
-        # la pared de gravedad: trozos de banda (om_grav_band) que, en fila, forman una pared oscura y translúcida
-        # con dos líneas nítidas, rayas de compresión y estrellitas
-        dict(name="GravBand", texture="om_grav_band", flipbook=STATIC2x2, direction="Front", speed_len=spd,
-             drag=RIM_DRAG, lifetime=life, size=[(0, 5), (0.3, 12), (1, 18)],
-             transparency=[(0, 0.6), (0.12, 0.05), (0.8, 0.18), (1, 1)], color=BANDC, light_emission=0.05,
-             brightness=1.6, zoffset=0.5, cone_emit=fan(10, T0 + 0.01, 6.0)),
-        # la línea de luz donde el frente toca el suelo (el borde del raspón)
-        dict(name="GravRim", texture="kk_trace_01", direction="Front", speed_len=spd, drag=RIM_DRAG, lifetime=life,
-             size=[(0, 3), (0.3, 6), (1, 8)], transparency=[(0, 0.45), (0.12, 0.1), (0.8, 0.3), (1, 1)],
-             color=RIM, light_emission=1.0, brightness=1.7, rotation=flat, zoffset=1, cone_emit=fan(34, T0, 0.9)),
-    ]
-    for k, (dt, tr) in enumerate(((0.06, 0.4), (0.12, 0.6))):
-        L.append(dict(name=f"GravRipple{k}", texture="kk_trace_01", direction="Front", speed_len=spd, drag=RIM_DRAG,
-                      lifetime=life, size=[(0, 3), (0.3, 5.5), (1, 7.5)],
-                      transparency=[(0, 0.8), (0.15, tr), (0.75, tr + 0.1), (1, 1)], color=RIM, light_emission=1.0,
-                      brightness=1.5, rotation=flat, cone_emit=fan(30, T0 + dt, 0.9)))
+    """Lo que acompaña al frente (los arcos van en FRONT_ARCS): el viento que barre el triángulo, el polvo que se abre
+    en los bordes y el final, donde el empuje se apaga."""
+    L = []
     # líneas de aire que salen del vértice y corren con el frente
     lines = sorted((round(T0 + g.uniform(0, 0.03), 3), 1, 0.02, round(g.uniform(-0.95, 0.95), 3),
                     round(g.uniform(1.0, 6.0), 2)) for _ in range(14))
@@ -324,6 +329,7 @@ def gravity_push_spec():
         "front_time": True,
         "times": {"Hit": 0.0, "Push": T0, "Reach": TEND},
         "front": PUSH_FRONT,
+        "front_arcs": FRONT_ARCS,
         "light": {"color": (90, 140, 255), "brightness": 4, "range": 34, "time": 0.45},
         "shakes": [(0.0, 0.8, 0.3), (T0 + 0.04, 0.45, 0.45)],
         "layers": L,
